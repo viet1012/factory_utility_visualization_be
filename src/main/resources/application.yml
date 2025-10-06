@@ -1,0 +1,27 @@
+spring:
+  application:
+    name: visualization_be
+
+
+  datasource:
+    url: jdbc:sqlserver://192.168.122.2:1433;databaseName=F2Database;encrypt=false;trustServerCertificate=true
+    username: admin
+    password: Buitanphat0201@
+    driver-class-name: com.microsoft.sqlserver.jdbc.SQLServerDriver
+    hikari:
+      maximum-pool-size: 40
+      minimum-idle: 5
+      idle-timeout: 30000  # 30s kh�ng d�ng th� tr? connection v? pool
+      max-lifetime: 1800000  # 30 ph�t reset connection
+      connection-timeout: 5000  # 5s timeout n?u kh�ng l?y ???c connection
+
+  jpa:
+    database-platform: org.hibernate.dialect.SQLServerDialect
+    show-sql: true
+    hibernate:
+      naming:
+        physical-strategy: org.hibernate.boot.model.naming.PhysicalNamingStrategyStandardImpl
+
+server:
+  address: 0.0.0.0
+  port: ${SERVER_PORT:9999}
