@@ -3,6 +3,7 @@ package com.example.factory_utility_visualization_be.service;
 
 
 import com.example.factory_utility_visualization_be.dto.*;
+import com.example.factory_utility_visualization_be.dto.mapper.MinutePointView;
 import com.example.factory_utility_visualization_be.model.*;
 import com.example.factory_utility_visualization_be.repository.*;
 import com.example.factory_utility_visualization_be.request.*;
@@ -10,6 +11,7 @@ import com.example.factory_utility_visualization_be.response.*;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -189,6 +191,27 @@ public class UtilityQueryService {
                 .boxId(r.getBoxId())
                 .build()
         ).toList();
+    }
+
+    public List<MinutePointView> getSeriesByMinute(
+            LocalDateTime fromTs,
+            LocalDateTime toTs,
+            String boxDeviceId,
+            String plcAddress,
+            List<String> cateIds
+    ) {
+        List<String> cateIdsNorm = (cateIds == null) ? List.of()
+                : cateIds.stream().filter(s -> s != null && !s.isBlank()).toList();
+
+        int useCateIds = cateIdsNorm.isEmpty() ? 0 : 1;
+        List<String> safeCateIds = useCateIds == 1 ? cateIdsNorm : List.of("__NO_CATE__");
+
+        return historyRepo.seriesByMinuteLast( // hoặc Avg
+                fromTs, toTs,
+                blankToNull(boxDeviceId),
+                blankToNull(plcAddress),
+                useCateIds, safeCateIds
+        );
     }
 
 

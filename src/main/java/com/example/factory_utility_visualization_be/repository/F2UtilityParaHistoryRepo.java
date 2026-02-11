@@ -2,6 +2,7 @@ package com.example.factory_utility_visualization_be.repository;
 
 
 import com.example.factory_utility_visualization_be.dto.mapper.LatestRecordView;
+import com.example.factory_utility_visualization_be.dto.mapper.MinutePointView;
 import com.example.factory_utility_visualization_be.model.F2UtilityParaHistory;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -100,5 +101,79 @@ public interface F2UtilityParaHistoryRepo extends JpaRepository<F2UtilityParaHis
             @Param("useCateIds") int useCateIds,
             @Param("cateIds") List<String> cateIds
     );
+
+    @Query(value = """
+    SELECT
+        DATEADD(MINUTE, DATEDIFF(MINUTE, 0, h.recorded_at), 0) AS ts,
+        AVG(CAST(h.value AS decimal(18,6)))                   AS value,
+        h.box_device_id                                       AS boxDeviceId,
+        h.plc_address                                         AS plcAddress,
+        p.cate_id                                             AS cateId
+    FROM f2_utility_para_history h
+    LEFT JOIN f2_utility_para p
+           ON p.box_device_id = h.box_device_id
+          AND p.plc_address   = h.plc_address
+    WHERE
+        h.recorded_at >= :fromTs
+        AND h.recorded_at <  :toTs
+        AND (:boxDeviceId IS NULL OR h.box_device_id = :boxDeviceId)
+        AND (:plcAddress  IS NULL OR h.plc_address   = :plcAddress)
+        AND (:useCateIds  = 0 OR p.cate_id IN (:cateIds))
+    GROUP BY
+        DATEADD(MINUTE, DATEDIFF(MINUTE, 0, h.recorded_at), 0),
+        h.box_device_id,
+        h.plc_address,
+        p.cate_id
+    ORDER BY ts
+    """, nativeQuery = true)
+    List<MinutePointView> seriesByMinuteAvg(
+            @Param("fromTs") LocalDateTime fromTs,
+            @Param("toTs") LocalDateTime toTs,
+            @Param("boxDeviceId") String boxDeviceId,
+            @Param("plcAddress") String plcAddress,
+            @Param("useCateIds") int useCateIds,
+            @Param("cateIds") List<String> cateIds
+    );
+
+    @Query(value = """
+    WITH t AS (
+        SELECT
+            DATEADD(MINUTE, DATEDIFF(MINUTE, 0, h.recorded_at), 0) AS ts,
+            h.box_device_id AS boxDeviceId,
+            h.plc_address   AS plcAddress,
+            p.cate_id       AS cateId,
+            h.value         AS value,
+            ROW_NUMBER() OVER (
+                PARTITION BY
+                    h.box_device_id,
+                    h.plc_address,
+                    DATEADD(MINUTE, DATEDIFF(MINUTE, 0, h.recorded_at), 0)
+                ORDER BY h.recorded_at DESC, h.id DESC
+            ) rn
+        FROM f2_utility_para_history h
+        LEFT JOIN f2_utility_para p
+               ON p.box_device_id = h.box_device_id
+              AND p.plc_address   = h.plc_address
+        WHERE
+            h.recorded_at >= :fromTs
+            AND h.recorded_at <  :toTs
+            AND (:boxDeviceId IS NULL OR h.box_device_id = :boxDeviceId)
+            AND (:plcAddress  IS NULL OR h.plc_address   = :plcAddress)
+            AND (:useCateIds  = 0 OR p.cate_id IN (:cateIds))
+    )
+    SELECT ts, value, boxDeviceId, plcAddress, cateId
+    FROM t
+    WHERE rn = 1
+    ORDER BY ts
+    """, nativeQuery = true)
+    List<MinutePointView> seriesByMinuteLast(
+            @Param("fromTs") LocalDateTime fromTs,
+            @Param("toTs") LocalDateTime toTs,
+            @Param("boxDeviceId") String boxDeviceId,
+            @Param("plcAddress") String plcAddress,
+            @Param("useCateIds") int useCateIds,
+            @Param("cateIds") List<String> cateIds
+    );
+
 }
 
