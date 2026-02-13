@@ -3,6 +3,8 @@ package com.example.factory_utility_visualization_be.dto;
 
 import lombok.*;
 
+import java.math.BigDecimal;
+
 @Getter @Setter @NoArgsConstructor @AllArgsConstructor @Builder
 public class ParamDto {
     private Long id;
@@ -15,7 +17,8 @@ public class ParamDto {
     private String nameEn;
     private Boolean isImportant;
     private Boolean isAlert;
-
+    private String cateName;  // ✅ new
+    private BigDecimal pickHour;  // ✅ new
     // enrich từ join (optional)
     private String cateId;
 

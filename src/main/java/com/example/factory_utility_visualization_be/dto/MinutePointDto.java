@@ -8,5 +8,8 @@ public record MinutePointDto(
 		BigDecimal value,
 		String boxDeviceId,
 		String plcAddress,
-		String cateId
+		String cateId,
+		String nameEn,   // ✅ NEW
+		String fac,      // ✅ NEW
+		String cate      // ✅ NEW
 ) {}

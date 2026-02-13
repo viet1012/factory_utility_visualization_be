@@ -29,8 +29,8 @@ public class F2UtilityPara {
     @Column(name = "cate_id", length = 100)
     private String cateId;        // Current, Voltage...
 
-    @Column(name = "category", length = 100)
-    private String category;        // Current, Voltage...
+//    @Column(name = "category", length = 100)
+//    private String category;        // Current, Voltage...
 
     @Column(name = "name_vi", length = 255)
     private String nameVi;

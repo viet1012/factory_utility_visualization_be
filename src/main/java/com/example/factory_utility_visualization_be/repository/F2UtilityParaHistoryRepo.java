@@ -1,6 +1,7 @@
 package com.example.factory_utility_visualization_be.repository;
 
 
+import com.example.factory_utility_visualization_be.dto.mapper.HourPointView;
 import com.example.factory_utility_visualization_be.dto.mapper.LatestRecordView;
 import com.example.factory_utility_visualization_be.dto.mapper.MinutePointView;
 import com.example.factory_utility_visualization_be.model.F2UtilityParaHistory;
@@ -109,6 +110,7 @@ public interface F2UtilityParaHistoryRepo extends JpaRepository<F2UtilityParaHis
 			    h.box_device_id                                       AS boxDeviceId,
 			    h.plc_address                                         AS plcAddress,
 			    p.cate_id                                             AS cateId
+			
 			FROM f2_utility_para_history h
 			LEFT JOIN f2_utility_para p
 			       ON p.box_device_id = h.box_device_id
@@ -142,7 +144,11 @@ public interface F2UtilityParaHistoryRepo extends JpaRepository<F2UtilityParaHis
 			        h.box_device_id AS boxDeviceId,
 			        h.plc_address   AS plcAddress,
 			        p.cate_id       AS cateId,
+			        p.name_en       AS nameEn,      -- ✅ NEW
+			        p.name_vi       AS nameVi,      -- ✅ NEW (optional)
 			        h.value         AS value,
+			        s.fac           AS fac,
+			        ch.cate         AS cate,
 			        ROW_NUMBER() OVER (
 			            PARTITION BY
 			                h.box_device_id,
@@ -154,14 +160,20 @@ public interface F2UtilityParaHistoryRepo extends JpaRepository<F2UtilityParaHis
 			    LEFT JOIN f2_utility_para p
 			           ON p.box_device_id = h.box_device_id
 			          AND p.plc_address   = h.plc_address
+			    LEFT JOIN f2_utility_scada_channel ch
+			           ON ch.box_device_id = h.box_device_id
+			    LEFT JOIN f2_utility_scada s
+			           ON s.scada_id = ch.scada_id
 			    WHERE
 			        h.recorded_at >= :fromTs
 			        AND h.recorded_at <  :toTs
 			        AND (:boxDeviceId IS NULL OR h.box_device_id = :boxDeviceId)
 			        AND (:plcAddress  IS NULL OR h.plc_address   = :plcAddress)
-			        AND (:useCateIds  = 0 OR p.cate_id IN (:cateIds))
+			        AND (:fac IS NULL OR s.fac = :fac)
+			        AND (:cate IS NULL OR ch.cate = :cate)
+			        AND (:useCateIds = 0 OR p.cate_id IN (:cateIds))
 			)
-			SELECT ts, value, boxDeviceId, plcAddress, cateId
+			SELECT ts, value, boxDeviceId, plcAddress, cateId, nameEn, nameVi, fac, cate
 			FROM t
 			WHERE rn = 1
 			ORDER BY ts
@@ -171,101 +183,104 @@ public interface F2UtilityParaHistoryRepo extends JpaRepository<F2UtilityParaHis
 			@Param("toTs") LocalDateTime toTs,
 			@Param("boxDeviceId") String boxDeviceId,
 			@Param("plcAddress") String plcAddress,
+			@Param("fac") String fac,
+			@Param("cate") String cate,
 			@Param("useCateIds") int useCateIds,
 			@Param("cateIds") List<String> cateIds
 	);
 
-	// ====== GROUP BY cate (ch.cate) ======
+
+	// ====== GROUP BY cate + name_en (p.name_en) ======
 	@Query(value = """
-			WITH now_latest AS (
+			    WITH now_latest AS (
+			        SELECT
+			            h.box_device_id AS boxDeviceId,
+			            h.plc_address   AS plcAddress,
+			            CAST(h.value AS decimal(18,6)) AS value,
+			            ROW_NUMBER() OVER (
+			                PARTITION BY h.box_device_id, h.plc_address
+			                ORDER BY h.recorded_at DESC, h.id DESC
+			            ) AS rn
+			        FROM f2_utility_para_history h
+			        WHERE h.recorded_at <= :nowCutoff
+			          AND (:boxDeviceId IS NULL OR h.box_device_id = :boxDeviceId)
+			          AND (:useDeviceIds = 0 OR h.box_device_id IN (:deviceIds))
+			    ),
+			    prev_latest AS (
+			        SELECT
+			            h.box_device_id AS boxDeviceId,
+			            h.plc_address   AS plcAddress,
+			            CAST(h.value AS decimal(18,6)) AS value,
+			            ROW_NUMBER() OVER (
+			                PARTITION BY h.box_device_id, h.plc_address
+			                ORDER BY h.recorded_at DESC, h.id DESC
+			            ) AS rn
+			        FROM f2_utility_para_history h
+			        WHERE h.recorded_at <= :prevCutoff
+			          AND (:boxDeviceId IS NULL OR h.box_device_id = :boxDeviceId)
+			          AND (:useDeviceIds = 0 OR h.box_device_id IN (:deviceIds))
+			    ),
+			    now_x AS (
+			        SELECT
+			            COALESCE(ch.cate,'UNKNOWN') AS cate,
+			            COALESCE(p.name_en, CONCAT(nl.boxDeviceId,'/',nl.plcAddress)) AS nameEn,
+			            nl.value AS value
+			        FROM now_latest nl
+			        LEFT JOIN f2_utility_para p
+			               ON p.box_device_id = nl.boxDeviceId
+			              AND p.plc_address   = nl.plcAddress
+			        LEFT JOIN f2_utility_scada_channel ch
+			               ON ch.box_device_id = nl.boxDeviceId
+			        LEFT JOIN f2_utility_scada sc
+			               ON sc.scada_id = ch.scada_id
+			        WHERE nl.rn = 1
+			          AND (:facId   IS NULL OR sc.fac = :facId)
+			          AND (:scadaId IS NULL OR ch.scada_id = :scadaId)
+			          AND (:cate    IS NULL OR ch.cate = :cate)
+			          AND (:useCateIds  = 0 OR p.cate_id IN (:cateIds))
+			          AND (:useNameEns  = 0 OR p.name_en IN (:nameEns))
+			    ),
+			    prev_x AS (
+			        SELECT
+			            COALESCE(ch.cate,'UNKNOWN') AS cate,
+			            COALESCE(p.name_en, CONCAT(pl.boxDeviceId,'/',pl.plcAddress)) AS nameEn,
+			            pl.value AS value
+			        FROM prev_latest pl
+			        LEFT JOIN f2_utility_para p
+			               ON p.box_device_id = pl.boxDeviceId
+			              AND p.plc_address   = pl.plcAddress
+			        LEFT JOIN f2_utility_scada_channel ch
+			               ON ch.box_device_id = pl.boxDeviceId
+			        LEFT JOIN f2_utility_scada sc
+			               ON sc.scada_id = ch.scada_id
+			        WHERE pl.rn = 1
+			          AND (:facId   IS NULL OR sc.fac = :facId)
+			          AND (:scadaId IS NULL OR ch.scada_id = :scadaId)
+			          AND (:cate    IS NULL OR ch.cate = :cate)
+			          AND (:useCateIds  = 0 OR p.cate_id IN (:cateIds))
+			          AND (:useNameEns  = 0 OR p.name_en IN (:nameEns))
+			    ),
+			    now_sum AS (
+			        SELECT cate, nameEn, COALESCE(SUM(value),0) AS nowTotal
+			        FROM now_x
+			        GROUP BY cate, nameEn
+			    ),
+			    prev_sum AS (
+			        SELECT cate, nameEn, COALESCE(SUM(value),0) AS prevTotal
+			        FROM prev_x
+			        GROUP BY cate, nameEn
+			    )
 			    SELECT
-			        h.box_device_id AS boxDeviceId,
-			        h.plc_address   AS plcAddress,
-			        h.value         AS value,
-			        ROW_NUMBER() OVER (
-			            PARTITION BY h.box_device_id, h.plc_address
-			            ORDER BY h.recorded_at DESC, h.id DESC
-			        ) AS rn
-			    FROM f2_utility_para_history h
-			    WHERE h.recorded_at <= :nowCutoff
-			      AND (:boxDeviceId IS NULL OR h.box_device_id = :boxDeviceId)
-			      AND (:useDeviceIds = 0 OR h.box_device_id IN (:deviceIds))
-			),
-			prev_latest AS (
-			    SELECT
-			        h.box_device_id AS boxDeviceId,
-			        h.plc_address   AS plcAddress,
-			        h.value         AS value,
-			        ROW_NUMBER() OVER (
-			            PARTITION BY h.box_device_id, h.plc_address
-			            ORDER BY h.recorded_at DESC, h.id DESC
-			        ) AS rn
-			    FROM f2_utility_para_history h
-			    WHERE h.recorded_at <= :prevCutoff
-			      AND (:boxDeviceId IS NULL OR h.box_device_id = :boxDeviceId)
-			      AND (:useDeviceIds = 0 OR h.box_device_id IN (:deviceIds))
-			),
-			now_x AS (
-			    SELECT
-			        ch.cate   AS cate,
-			        sc.fac    AS fac,
-			        ch.scada_id AS scadaId,
-			        p.cate_id AS cateId,
-			        nl.value  AS value
-			    FROM now_latest nl
-			    LEFT JOIN f2_utility_para p
-			           ON p.box_device_id = nl.boxDeviceId
-			          AND p.plc_address   = nl.plcAddress
-			    LEFT JOIN f2_utility_scada_channel ch
-			           ON ch.box_device_id = nl.boxDeviceId
-			    LEFT JOIN f2_utility_scada sc
-			           ON sc.scada_id = ch.scada_id
-			    WHERE nl.rn = 1
-			      AND (:facId   IS NULL OR sc.fac = :facId)
-			      AND (:scadaId IS NULL OR ch.scada_id = :scadaId)
-			      AND (:cate    IS NULL OR ch.cate = :cate)
-			      AND (:useCateIds = 0 OR p.cate_id IN (:cateIds))
-			),
-			prev_x AS (
-			    SELECT
-			        ch.cate   AS cate,
-			        sc.fac    AS fac,
-			        ch.scada_id AS scadaId,
-			        p.cate_id AS cateId,
-			        pl.value  AS value
-			    FROM prev_latest pl
-			    LEFT JOIN f2_utility_para p
-			           ON p.box_device_id = pl.boxDeviceId
-			          AND p.plc_address   = pl.plcAddress
-			    LEFT JOIN f2_utility_scada_channel ch
-			           ON ch.box_device_id = pl.boxDeviceId
-			    LEFT JOIN f2_utility_scada sc
-			           ON sc.scada_id = ch.scada_id
-			    WHERE pl.rn = 1
-			      AND (:facId   IS NULL OR sc.fac = :facId)
-			      AND (:scadaId IS NULL OR ch.scada_id = :scadaId)
-			      AND (:cate    IS NULL OR ch.cate = :cate)
-			      AND (:useCateIds = 0 OR p.cate_id IN (:cateIds))
-			),
-			now_sum AS (
-			    SELECT COALESCE(cate,'UNKNOWN') AS k, COALESCE(SUM(value),0) AS nowTotal
-			    FROM now_x
-			    GROUP BY cate
-			),
-			prev_sum AS (
-			    SELECT COALESCE(cate,'UNKNOWN') AS k, COALESCE(SUM(value),0) AS prevTotal
-			    FROM prev_x
-			    GROUP BY cate
-			)
-			SELECT
-			    COALESCE(n.k, p.k) AS k,
-			    COALESCE(n.nowTotal, 0)  AS nowTotal,
-			    COALESCE(p.prevTotal, 0) AS prevTotal
-			FROM now_sum n
-			FULL OUTER JOIN prev_sum p ON p.k = n.k
-			ORDER BY k
+			        COALESCE(n.cate, p.cate)       AS cate,
+			        COALESCE(n.nameEn, p.nameEn)   AS nameEn,
+			        COALESCE(n.nowTotal, 0)        AS nowTotal,
+			        COALESCE(p.prevTotal, 0)       AS prevTotal
+			    FROM now_sum n
+			    FULL OUTER JOIN prev_sum p
+			      ON p.cate = n.cate AND p.nameEn = n.nameEn
+			    ORDER BY cate, nameEn
 			""", nativeQuery = true)
-	List<Object[]> sumCompareByCate(
+	List<Object[]> sumCompareByCateAndNameEn(
 			@Param("nowCutoff") java.time.LocalDateTime nowCutoff,
 			@Param("prevCutoff") java.time.LocalDateTime prevCutoff,
 
@@ -278,9 +293,71 @@ public interface F2UtilityParaHistoryRepo extends JpaRepository<F2UtilityParaHis
 			@Param("deviceIds") List<String> deviceIds,
 
 			@Param("useCateIds") int useCateIds,
-			@Param("cateIds") List<String> cateIds
+			@Param("cateIds") List<String> cateIds,
+
+			// ✅ NEW
+			@Param("useNameEns") int useNameEns,
+			@Param("nameEns") List<String> nameEns
 	);
 
 
+	@Query(value = """
+        WITH t AS (
+            SELECT
+                DATEADD(HOUR, DATEDIFF(HOUR, 0, h.recorded_at), 0) AS ts,
+                h.box_device_id AS boxDeviceId,
+                h.plc_address   AS plcAddress,
+                p.cate_id       AS cateId,
+                p.name_en       AS nameEn,
+                p.name_vi       AS nameVi,
+                CAST(h.value AS decimal(18,6)) AS value,
+                s.fac           AS fac,
+                ch.cate         AS cate
+            FROM f2_utility_para_history h
+            LEFT JOIN f2_utility_para p
+                   ON p.box_device_id = h.box_device_id
+                  AND p.plc_address   = h.plc_address
+            LEFT JOIN f2_utility_scada_channel ch
+                   ON ch.box_device_id = h.box_device_id
+            LEFT JOIN f2_utility_scada s
+                   ON s.scada_id = ch.scada_id
+            WHERE
+                h.recorded_at >= :fromTs
+                AND h.recorded_at <  :toTs
+                AND (:plcAddress IS NULL OR h.plc_address = :plcAddress)
+                AND (:boxDeviceId IS NULL OR h.box_device_id = :boxDeviceId)
+                AND (:fac IS NULL OR s.fac = :fac)
+                AND (:cate IS NULL OR ch.cate = :cate)
+                AND (:scadaId IS NULL OR ch.scada_id = :scadaId)
+                AND (:useCateIds = 0 OR p.cate_id IN (:cateIds))
+        )
+        SELECT
+            ts,
+            COALESCE(SUM(value),0) AS value,
+            MAX(boxDeviceId) AS boxDeviceId,
+            MAX(plcAddress)  AS plcAddress,
+            MAX(cateId)      AS cateId,
+            MAX(nameEn)      AS nameEn,
+            MAX(nameVi)      AS nameVi,
+            MAX(fac)         AS fac,
+            MAX(cate)        AS cate
+        FROM t
+        GROUP BY ts
+        ORDER BY ts
+        """, nativeQuery = true)
+	List<HourPointView> seriesByHourSum(
+			@Param("fromTs") LocalDateTime fromTs,
+			@Param("toTs") LocalDateTime toTs,
+
+			@Param("plcAddress") String plcAddress,
+			@Param("boxDeviceId") String boxDeviceId,
+
+			@Param("fac") String fac,
+			@Param("cate") String cate,
+			@Param("scadaId") String scadaId,
+
+			@Param("useCateIds") int useCateIds,
+			@Param("cateIds") List<String> cateIds
+	);
 }
 

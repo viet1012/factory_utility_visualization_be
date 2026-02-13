@@ -13,17 +13,17 @@ public interface F2UtilityParaRepo extends JpaRepository<F2UtilityPara, Long> {
 
     // param + join channel + join scada để filter theo facId/scadaId/cate
     @Query("""
-    select p from F2UtilityPara p
-      join F2UtilityScadaChannel c on c.boxDeviceId = p.boxDeviceId
-      join F2UtilityScada s on s.scadaId = c.scadaId
-    where (:boxDeviceId is null or p.boxDeviceId = :boxDeviceId)
-      and (:cate is null or c.cate = :cate)
-      and (:scadaId is null or s.scadaId = :scadaId)
-      and (:facId is null or s.fac = :facId)
-  """)
+        select distinct p from F2UtilityPara p
+          join F2UtilityScadaChannel c on c.boxDeviceId = p.boxDeviceId
+          join F2UtilityScada s on s.scadaId = c.scadaId
+        where (:boxDeviceId is null or p.boxDeviceId = :boxDeviceId)
+          and (:cate is null or c.cate = :cate)
+          and (:scadaId is null or s.scadaId = :scadaId)
+          and (:facId is null or s.fac = :facId)
+    """)
     List<F2UtilityPara> searchParams(
             @Param("boxDeviceId") String boxDeviceId,
-            @Param("cate") String cate,
+            @Param("cate") String cate,        // ✅ đổi cateId -> cate
             @Param("scadaId") String scadaId,
             @Param("facId") String facId
     );
