@@ -108,4 +108,17 @@ public class UtilityController {
     public UtilitySeriesResponse series(@RequestBody UtilitySeriesRequest req) {
         return service.getSeries(req);
     }
+
+    @GetMapping("/sum-compare")
+    public List<SumCompareDto> sumCompare(
+            @RequestParam(required = false) String facId,
+            @RequestParam(required = false) String scadaId,
+            @RequestParam(required = false) String cate,
+            @RequestParam(required = false) String boxDeviceId,
+            @RequestParam(required = false) List<String> deviceIds,
+            @RequestParam(required = false) List<String> cateIds
+    ) {
+        return service.sumCompareByCate(facId, scadaId, cate, boxDeviceId, deviceIds, cateIds);
+    }
+
 }

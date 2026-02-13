@@ -3,14 +3,15 @@ package com.example.factory_utility_visualization_be.service;
 
 
 import com.example.factory_utility_visualization_be.dto.*;
-import com.example.factory_utility_visualization_be.dto.mapper.MinutePointView;
+import com.example.factory_utility_visualization_be.dto.mapper.*;
 import com.example.factory_utility_visualization_be.model.*;
 import com.example.factory_utility_visualization_be.repository.*;
 import com.example.factory_utility_visualization_be.request.*;
 import com.example.factory_utility_visualization_be.response.*;
-import lombok.RequiredArgsConstructor;
-import org.springframework.stereotype.Service;
+import lombok.*;
+import org.springframework.stereotype.*;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -259,8 +260,89 @@ public class UtilityQueryService {
     }
 
 
+    public List<SumCompareDto> sumCompareByCate(
+            String facId,
+            String scadaId,
+            String cate,
+            String boxDeviceId,
+            List<String> deviceIds,
+            List<String> cateIds
+    ) {
+        int useDeviceIds = (deviceIds != null && !deviceIds.isEmpty()) ? 1 : 0;
+        int useCateIds   = (cateIds != null && !cateIds.isEmpty()) ? 1 : 0;
 
+        List<String> safeDeviceIds = useDeviceIds == 1 ? deviceIds : Collections.emptyList();
+        List<String> safeCateIds   = useCateIds == 1 ? cateIds : Collections.emptyList();
+
+        LocalDate today = LocalDate.now();
+        LocalDate yesterday = today.minusDays(1);
+
+        LocalDateTime nowCutoff  = today.atTime(23,59,59);
+        LocalDateTime prevCutoff = yesterday.atTime(23,59,59);
+
+        List<Object[]> rows = historyRepo.sumCompareByCate(
+                nowCutoff, prevCutoff,
+                facId, scadaId, cate, boxDeviceId,
+                useDeviceIds, safeDeviceIds,
+                useCateIds, safeCateIds
+        );
+
+        final double EPS = 0.01;
+
+        return rows.stream().map(r -> {
+            String key = r[0] == null ? "UNKNOWN" : r[0].toString();
+
+            double nowV  = r[1] == null ? 0.0 : ((Number) r[1]).doubleValue();
+            double prevV = r[2] == null ? 0.0 : ((Number) r[2]).doubleValue();
+
+            double delta = nowV - prevV;
+            Double pct = (prevV == 0) ? null : (delta / prevV) * 100.0;
+
+            double nowR = round2(nowV);
+            double prevR = round2(prevV);
+            double deltaR = round2(delta);
+            Double pctR = (pct == null) ? null : round2(pct);
+
+            String trend = trendFromDelta(deltaR, EPS);
+            String pctText = fmtPct(pctR);
+
+            return new SumCompareDto(
+                    key,
+                    today.toString(),
+                    yesterday.toString(),
+                    nowR,
+                    prevR,
+                    deltaR,
+                    pctR,
+                    pctText,
+                    trend
+            );
+        }).toList();
+    }
+
+
+
+
+    // HELPER
     private static String blankToNull(String s) {
         return (s == null || s.isBlank()) ? null : s;
     }
+
+    private double round2(double v) {
+        return new java.math.BigDecimal(v)
+                .setScale(2, java.math.RoundingMode.HALF_UP)
+                .doubleValue();
+    }
+
+    private String fmtPct(Double pct) {
+        if (pct == null) return "--";
+        // luôn 2 chữ số
+        return String.format(java.util.Locale.US, "%.2f%%", pct);
+    }
+
+    private String trendFromDelta(double delta, double eps) {
+        if (Math.abs(delta) <= eps) return "STABLE";
+        return delta > 0 ? "UP" : "DOWN";
+    }
+
 }
