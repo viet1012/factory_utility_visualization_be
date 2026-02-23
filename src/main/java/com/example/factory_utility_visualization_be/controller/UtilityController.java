@@ -42,9 +42,10 @@ public class UtilityController {
 	public List<ParamDto> params(
 			@RequestParam(required = false) String boxDeviceId,
 			@RequestParam(required = false) String cate,
-			@RequestParam(required = false) String facId
+			@RequestParam(required = false) String facId,
+			@RequestParam(required = false) Integer importantOnly // ✅ NEW
 	) {
-		return service.getParams(boxDeviceId, cate, facId);
+		return service.getParams(boxDeviceId, cate, facId, importantOnly);
 	}
 
 	// Latest theo device/param (nhiều param một lần)
@@ -120,11 +121,12 @@ public class UtilityController {
 						r.getBoxDeviceId(),
 						r.getPlcAddress(),
 						r.getCateId(),
-						r.getNameEn(),   // ✅ NEW
-						r.getFac(),      // ✅ NEW
-						r.getCate()      // ✅ NEW
+						r.getNameEn(),
+						r.getNameVi(),   // optional
+						r.getUnit(),     // ✅ NEW
+						r.getFac(),
+						r.getCate()
 				))
-
 				.toList();
 
 		return ResponseEntity.ok(dto);

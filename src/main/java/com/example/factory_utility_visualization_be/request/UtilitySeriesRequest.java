@@ -25,6 +25,7 @@ public class UtilitySeriesRequest {
 
     // gộp theo thời gian (optional) - "RAW" | "HOUR" | "DAY"
     private String bucket;
+    private Boolean isImportant;
 
     @Getter
     @Setter

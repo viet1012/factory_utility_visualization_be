@@ -197,16 +197,13 @@ public class UtilityCatalogRepo {
 		d.setValueType(rs.getString("valueType"));
 		d.setUnit(rs.getString("unit"));
 
-		// ❌ bỏ category cũ
-		// d.setCategory(rs.getString("category"));
-
 		d.setNameVi(rs.getString("nameVi"));
 		d.setNameEn(rs.getString("nameEn"));
-		d.setIsImportant((Boolean) rs.getObject("isImportant"));
-		d.setIsAlert((Boolean) rs.getObject("isAlert"));
-		d.setCateId(rs.getString("cateId"));
 
-		// ✅ NEW: đọc từ bảng master pickdata (LEFT JOIN)
+		d.setIsImportant(toBool(rs.getObject("isImportant")));
+		d.setIsAlert(toBool(rs.getObject("isAlert")));
+
+		d.setCateId(rs.getString("cateId"));
 		d.setCateName(rs.getString("cateName"));
 		d.setPickHour((BigDecimal) rs.getObject("pickHour"));
 
@@ -215,6 +212,18 @@ public class UtilityCatalogRepo {
 		d.setCate(rs.getString("cate"));
 		d.setBoxId(rs.getString("boxId"));
 		return d;
+	}
+
+	private Boolean toBool(Object v) {
+		if (v == null) return null;
+		if (v instanceof Boolean b) return b;
+		if (v instanceof Number n) return n.intValue() != 0;
+		if (v instanceof String s) {
+			s = s.trim();
+			if (s.isEmpty()) return null;
+			return s.equalsIgnoreCase("true") || s.equals("1") || s.equalsIgnoreCase("y");
+		}
+		return "1".equals(v.toString()) || "true".equalsIgnoreCase(v.toString());
 	}
 
 

@@ -20,12 +20,14 @@ public interface F2UtilityParaRepo extends JpaRepository<F2UtilityPara, Long> {
           and (:cate is null or c.cate = :cate)
           and (:scadaId is null or s.scadaId = :scadaId)
           and (:facId is null or s.fac = :facId)
+         and (:importantOnly = 0 or coalesce(p.isImportant, false) = true)
     """)
     List<F2UtilityPara> searchParams(
             @Param("boxDeviceId") String boxDeviceId,
             @Param("cate") String cate,        // ✅ đổi cateId -> cate
             @Param("scadaId") String scadaId,
-            @Param("facId") String facId
+            @Param("facId") String facId,
+            @Param("importantOnly") int importantOnly
     );
 
     // lọc theo cateId list

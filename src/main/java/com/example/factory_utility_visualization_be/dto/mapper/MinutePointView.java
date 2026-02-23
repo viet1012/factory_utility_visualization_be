@@ -9,8 +9,10 @@ public interface MinutePointView {
 	String getPlcAddress();
 	String getCateId();
 
-	String getNameEn();  // ✅ NEW
-	String getNameVi();  // ✅ NEW (optional)
+	String getNameEn();
+	String getNameVi();
+
+	String getUnit();   // ✅ NEW
 
 	String getFac();
 	String getCate();

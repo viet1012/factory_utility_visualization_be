@@ -81,18 +81,25 @@ public class UtilityQueryService {
 	}
 
 	// 3) GET /params?boxDeviceId&cate&facId
-	public List<ParamDto> getParams(String boxDeviceId, String cate, String facId) {
-		// cate suy qua channel => repo join đã xử lý
+	public List<ParamDto> getParams(
+			String boxDeviceId,
+			String cate,
+			String facId,
+			Integer importantOnly // 0/1, null allowed
+	) {
+		int important = (importantOnly == null) ? 0 : importantOnly; // default 0
+
 		List<F2UtilityPara> ps = paraRepo.searchParams(
 				blankToNull(boxDeviceId),
 				blankToNull(cate),
 				null,
-				blankToNull(facId)
+				blankToNull(facId),
+				important
 		);
 
-		// enrich thêm scada/fac/cate/boxId cho DTO
 		Map<String, F2UtilityScadaChannel> chByDevice = channelRepo.findAll().stream()
 				.collect(Collectors.toMap(F2UtilityScadaChannel::getBoxDeviceId, x -> x, (a, b) -> a));
+
 		Map<String, F2UtilityScada> scadaById = scadaRepo.findAll().stream()
 				.collect(Collectors.toMap(F2UtilityScada::getScadaId, x -> x));
 
@@ -118,7 +125,6 @@ public class UtilityQueryService {
 					.build();
 		}).toList();
 	}
-
 	// 5) GET /latest/one?boxDeviceId=...&plcAddress=...
 	public LatestRecordDto getLatestOne(String boxDeviceId, String plcAddress) {
 		var h = historyRepo.findTopByBoxDeviceIdAndPlcAddressOrderByRecordedAtDesc(boxDeviceId, plcAddress)
@@ -214,7 +220,6 @@ public class UtilityQueryService {
 
 		// SQL Server nativeQuery + IN (:cateIds) thường không thích list rỗng
 		List<String> safeCateIds = (useCateIds == 1) ? cateIdsNorm : List.of("__NO_CATE__");
-
 		return historyRepo.seriesByMinuteLast(
 				fromTs,
 				toTs,
@@ -237,7 +242,8 @@ public class UtilityQueryService {
 		}
 
 		final List<UtilitySeriesRequest.SeriesParamKey> paramsToQuery;
-
+		Integer importantOnly =
+				(req.getIsImportant() != null && req.getIsImportant()) ? 1 : 0;
 		if (req.getParams() != null && !req.getParams().isEmpty()) {
 			paramsToQuery = req.getParams();
 		} else {
@@ -245,7 +251,7 @@ public class UtilityQueryService {
 			Set<String> devs = chs.stream().map(ChannelDto::getBoxDeviceId).collect(Collectors.toSet());
 			if (devs.isEmpty()) return UtilitySeriesResponse.builder().series(List.of()).build();
 
-			List<ParamDto> ps = getParams(null, req.getCate(), req.getFacId());
+			List<ParamDto> ps = getParams(null, req.getCate(), req.getFacId(), importantOnly);
 
 			paramsToQuery = ps.stream()
 					.filter(p -> devs.contains(p.getBoxDeviceId()))
