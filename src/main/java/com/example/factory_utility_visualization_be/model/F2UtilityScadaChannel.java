@@ -1,6 +1,5 @@
 package com.example.factory_utility_visualization_be.model;
 
-
 import jakarta.persistence.*;
 import lombok.*;
 
