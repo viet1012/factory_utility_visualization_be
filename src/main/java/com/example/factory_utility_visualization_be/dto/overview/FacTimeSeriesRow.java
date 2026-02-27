@@ -1,8 +1,8 @@
-package com.example.factory_utility_visualization_be.dto.mapper;
+package com.example.factory_utility_visualization_be.dto.overview;
 
 import java.time.LocalDateTime;
 
-public interface FacSeriesRow {
+public interface FacTimeSeriesRow {
 	String getFac();
 	String getCate();
 	String getScadaId();

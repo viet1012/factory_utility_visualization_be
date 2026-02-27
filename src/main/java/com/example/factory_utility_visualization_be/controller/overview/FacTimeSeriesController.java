@@ -1,20 +1,20 @@
-package com.example.factory_utility_visualization_be.controller;
+package com.example.factory_utility_visualization_be.controller.overview;
 
 import com.example.factory_utility_visualization_be.dto.RangePreset;
-import com.example.factory_utility_visualization_be.response.UtilityTreeSeriesResponse;
-import com.example.factory_utility_visualization_be.service.FacSeriesService;
+import com.example.factory_utility_visualization_be.response.overview.FacTimeSeriesTreeResponse;
+import com.example.factory_utility_visualization_be.service.overview.FacTimeSeriesService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequiredArgsConstructor
 @RequestMapping("/api/utility/chart")
-public class FacSeriesController {
+public class FacTimeSeriesController {
 
-	private final FacSeriesService service;
+	private final FacTimeSeriesService service;
 
 	@GetMapping("/tree-series")
-	public UtilityTreeSeriesResponse getTreeSeries(
+	public FacTimeSeriesTreeResponse getTreeSeries(
 			@RequestParam String fac,
 			@RequestParam(defaultValue = "TODAY") RangePreset range,
 			@RequestParam(required = false) Integer year,
@@ -22,6 +22,6 @@ public class FacSeriesController {
 			@RequestParam(required = false) String boxDeviceId,
 			@RequestParam(required = false) String plcAddress
 	) {
-		return service.getByFac(fac, range, year, month, boxDeviceId, plcAddress);
+		return service.getFacTimeSeriesTree(fac, range, year, month, boxDeviceId, plcAddress);
 	}
 }

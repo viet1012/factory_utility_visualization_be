@@ -1,10 +1,10 @@
-package com.example.factory_utility_visualization_be.service;
+package com.example.factory_utility_visualization_be.service.overview;
 
 import com.example.factory_utility_visualization_be.dto.Bucket;
 import com.example.factory_utility_visualization_be.dto.RangePreset;
-import com.example.factory_utility_visualization_be.dto.mapper.FacSeriesRow;
-import com.example.factory_utility_visualization_be.repository.FacSeriesRepo;
-import com.example.factory_utility_visualization_be.response.UtilityTreeSeriesResponse;
+import com.example.factory_utility_visualization_be.dto.overview.FacTimeSeriesRow;
+import com.example.factory_utility_visualization_be.repository.overview.FacTimeSeriesRepository;
+import com.example.factory_utility_visualization_be.response.overview.FacTimeSeriesTreeResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -19,11 +19,11 @@ import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
-public class FacSeriesService {
+public class FacTimeSeriesService {
 
-	private final FacSeriesRepo repo;
+	private final FacTimeSeriesRepository repo;
 
-	public UtilityTreeSeriesResponse getByFac(
+	public FacTimeSeriesTreeResponse getFacTimeSeriesTree(
 			String fac,
 			RangePreset range,
 			Integer year,
@@ -74,48 +74,48 @@ public class FacSeriesService {
 			case LAST_7_DAYS, THIS_MONTH -> Bucket.DAY;
 		};
 
-		List<FacSeriesRow> rows = (bucket == Bucket.HOUR)
+		List<FacTimeSeriesRow> rows = (bucket == Bucket.HOUR)
 				? repo.getSeriesHourByFac(fac, from, to, boxDeviceId, plcAddress)
 				: repo.getSeriesDayByFac(fac, from, to, boxDeviceId, plcAddress);
 
 		// cate -> boxDeviceId -> plcAddress -> rows(points)
-		Map<String, Map<String, Map<String, List<FacSeriesRow>>>> tree =
+		Map<String, Map<String, Map<String, List<FacTimeSeriesRow>>>> tree =
 				rows.stream().collect(Collectors.groupingBy(
-						FacSeriesRow::getCate,
+						FacTimeSeriesRow::getCate,
 						LinkedHashMap::new,
 						Collectors.groupingBy(
-								FacSeriesRow::getBoxDeviceId,
+								FacTimeSeriesRow::getBoxDeviceId,
 								LinkedHashMap::new,
 								Collectors.groupingBy(
-										FacSeriesRow::getPlcAddress,
+										FacTimeSeriesRow::getPlcAddress,
 										LinkedHashMap::new,
 										Collectors.toList()
 								)
 						)
 				));
 
-		List<UtilityTreeSeriesResponse.CateGroup> cates = new ArrayList<>();
+		List<FacTimeSeriesTreeResponse.CateGroup> cates = new ArrayList<>();
 
 		for (var cateEntry : tree.entrySet()) {
 
-			List<UtilityTreeSeriesResponse.BoxDeviceGroup> boxDevices = new ArrayList<>();
+			List<FacTimeSeriesTreeResponse.BoxDeviceGroup> boxDevices = new ArrayList<>();
 
 			for (var boxEntry : cateEntry.getValue().entrySet()) {
 
-				List<UtilityTreeSeriesResponse.Signal> signals = new ArrayList<>();
+				List<FacTimeSeriesTreeResponse.Signal> signals = new ArrayList<>();
 
 				for (var plcEntry : boxEntry.getValue().entrySet()) {
 
-					List<FacSeriesRow> plcRows = plcEntry.getValue();
+					List<FacTimeSeriesRow> plcRows = plcEntry.getValue();
 					if (plcRows == null || plcRows.isEmpty()) continue;
 
-					FacSeriesRow first = plcRows.get(0);
+					FacTimeSeriesRow first = plcRows.get(0);
 
-					List<UtilityTreeSeriesResponse.Point> points = plcRows.stream()
-							.map(r -> new UtilityTreeSeriesResponse.Point(r.getTs(), r.getValue()))
+					List<FacTimeSeriesTreeResponse.Point> points = plcRows.stream()
+							.map(r -> new FacTimeSeriesTreeResponse.Point(r.getTs(), r.getValue()))
 							.toList();
 
-					signals.add(new UtilityTreeSeriesResponse.Signal(
+					signals.add(new FacTimeSeriesTreeResponse.Signal(
 							plcEntry.getKey(),
 							first.getNameVi(),
 							first.getNameEn(),
@@ -125,13 +125,13 @@ public class FacSeriesService {
 					));
 				}
 
-				boxDevices.add(new UtilityTreeSeriesResponse.BoxDeviceGroup(boxEntry.getKey(), signals));
+				boxDevices.add(new FacTimeSeriesTreeResponse.BoxDeviceGroup(boxEntry.getKey(), signals));
 			}
 
-			cates.add(new UtilityTreeSeriesResponse.CateGroup(cateEntry.getKey(), boxDevices));
+			cates.add(new FacTimeSeriesTreeResponse.CateGroup(cateEntry.getKey(), boxDevices));
 		}
 
-		return new UtilityTreeSeriesResponse(
+		return new FacTimeSeriesTreeResponse(
 				fac,
 				bucket.name(),
 				from,

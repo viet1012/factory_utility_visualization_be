@@ -1,4 +1,4 @@
-package com.example.factory_utility_visualization_be.response;
+package com.example.factory_utility_visualization_be.response.overview;
 
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -10,7 +10,7 @@ import java.util.List;
 @Data
 @AllArgsConstructor
 @NoArgsConstructor
-public class UtilityTreeSeriesResponse {
+public class FacTimeSeriesTreeResponse {
 	private String fac;
 	private String bucket;          // "HOUR" | "DAY"
 	private LocalDateTime from;
