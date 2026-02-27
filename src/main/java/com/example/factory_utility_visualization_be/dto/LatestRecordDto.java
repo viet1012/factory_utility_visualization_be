@@ -23,4 +23,6 @@ public class LatestRecordDto {
     private String fac;
     private String cate;
     private String boxId;
+    private String name_en;
+
 }

@@ -49,44 +49,59 @@ public interface F2UtilityParaHistoryRepo extends JpaRepository<F2UtilityParaHis
 	);
 
 	@Query(value = """
-WITH x AS (
-    SELECT
-        h.box_device_id AS boxDeviceId,
-        h.plc_address   AS plcAddress,
-        h.value         AS value,
-        h.recorded_at   AS recordedAt,
-        p.cate_id       AS cateId,
-        ch.scada_id     AS scadaId,
-        sc.fac          AS fac,
-        ch.cate         AS cate,
-        ch.box_id       AS boxId,
-        ROW_NUMBER() OVER (
-            PARTITION BY h.box_device_id, h.plc_address
-            ORDER BY h.recorded_at DESC, h.id DESC
-        ) AS rn
-    FROM f2_utility_para_history h
-    LEFT JOIN f2_utility_scada_channel ch
-           ON ch.box_device_id = h.box_device_id
-    LEFT JOIN f2_utility_scada sc
-           ON sc.scada_id = ch.scada_id
-    LEFT JOIN f2_utility_para p
-           ON p.box_device_id = h.box_device_id
-          AND p.plc_address   = h.plc_address
-    WHERE
-        (:boxDeviceId IS NULL OR h.box_device_id = :boxDeviceId)
-        AND (:facId   IS NULL OR sc.fac = :facId)
-        AND (:scadaId IS NULL OR ch.scada_id = :scadaId)
-        AND (:cate    IS NULL OR ch.cate = :cate)
 
-        AND (:useDeviceIds = 0 OR h.box_device_id IN (:deviceIds))
-        AND (:useCateIds   = 0 OR p.cate_id IN (:cateIds))   -- ✅ ADD THIS
-)
-SELECT
-    boxDeviceId, plcAddress, value, recordedAt,
-    cateId, scadaId, fac, cate, boxId
-FROM x
-WHERE rn = 1
-ORDER BY boxDeviceId, plcAddress
+			WITH x AS (
+                    SELECT
+                        h.box_device_id AS boxDeviceId,
+                        h.plc_address   AS plcAddress,
+                        h.value         AS value,
+                        h.recorded_at   AS recordedAt,
+                
+                        p.cate_id       AS cateId,
+                        p.name_en       AS nameEn,     -- ✅ ADD
+                        p.unit          AS unit,       -- (bonus: thường cần luôn)
+                
+                        ch.scada_id     AS scadaId,
+                        sc.fac          AS fac,
+                        ch.cate         AS cate,
+                        ch.box_id       AS boxId,
+                
+                        ROW_NUMBER() OVER (
+                            PARTITION BY h.box_device_id, h.plc_address
+                            ORDER BY h.recorded_at DESC, h.id DESC
+                        ) AS rn
+                    FROM f2_utility_para_history h
+                    LEFT JOIN f2_utility_scada_channel ch
+                           ON ch.box_device_id = h.box_device_id
+                    LEFT JOIN f2_utility_scada sc
+                           ON sc.scada_id = ch.scada_id
+                    LEFT JOIN f2_utility_para p
+                           ON p.box_device_id = h.box_device_id
+                          AND p.plc_address   = h.plc_address
+                    WHERE
+                        (:boxDeviceId IS NULL OR h.box_device_id = :boxDeviceId)
+                        AND (:facId   IS NULL OR sc.fac = :facId)
+                        AND (:scadaId IS NULL OR ch.scada_id = :scadaId)
+                        AND (:cate    IS NULL OR ch.cate = :cate)
+                
+                        AND (:useDeviceIds = 0 OR h.box_device_id IN (:deviceIds))
+                        AND (:useCateIds   = 0 OR p.cate_id IN (:cateIds))
+                )
+                SELECT
+                    boxDeviceId,
+                    plcAddress,
+                    value,
+                    recordedAt,
+                    cateId,
+                    nameEn,   -- ✅ RETURN
+                    unit,     -- optional nhưng nên có
+                    scadaId,
+                    fac,
+                    cate,
+                    boxId
+                FROM x
+                WHERE rn = 1
+                ORDER BY boxDeviceId, plcAddress
 """, nativeQuery = true)
 	List<LatestRecordView> latestPerKey(
 			@Param("facId") String facId,

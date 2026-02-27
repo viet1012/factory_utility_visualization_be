@@ -195,6 +195,7 @@ public class UtilityQueryService {
 				.fac(r.getFac())
 				.cate(r.getCate())
 				.boxId(r.getBoxId())
+				.name_en(r.getNameEn())
 				.build()
 		).toList();
 	}
