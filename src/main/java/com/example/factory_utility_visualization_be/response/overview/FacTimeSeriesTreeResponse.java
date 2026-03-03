@@ -17,19 +17,25 @@ public class FacTimeSeriesTreeResponse {
 	private LocalDateTime to;
 	private List<CateGroup> cates;
 
-	@Data @AllArgsConstructor @NoArgsConstructor
+	@Data
+	@AllArgsConstructor
+	@NoArgsConstructor
 	public static class CateGroup {
 		private String cate;
 		private List<BoxDeviceGroup> boxDevices;
 	}
 
-	@Data @AllArgsConstructor @NoArgsConstructor
+	@Data
+	@AllArgsConstructor
+	@NoArgsConstructor
 	public static class BoxDeviceGroup {
 		private String boxDeviceId;
 		private List<Signal> signals;
 	}
 
-	@Data @AllArgsConstructor @NoArgsConstructor
+	@Data
+	@AllArgsConstructor
+	@NoArgsConstructor
 	public static class Signal {
 		private String plcAddress;
 		private String nameVi;
@@ -39,7 +45,9 @@ public class FacTimeSeriesTreeResponse {
 		private List<Point> points;
 	}
 
-	@Data @AllArgsConstructor @NoArgsConstructor
+	@Data
+	@AllArgsConstructor
+	@NoArgsConstructor
 	public static class Point {
 		private LocalDateTime ts;
 		private Double value;
