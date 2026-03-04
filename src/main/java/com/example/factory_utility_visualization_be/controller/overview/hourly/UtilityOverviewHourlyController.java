@@ -12,7 +12,7 @@ import java.util.List;
 @RequiredArgsConstructor
 @RestController
 @RequestMapping("/api/utility")
-public class UtilityHourlyController {
+public class UtilityOverviewHourlyController {
 
 	private final UtilityEnergyHourlyService service;
 

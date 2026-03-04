@@ -6,6 +6,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -74,5 +75,30 @@ public interface UtilityDailyRepo extends JpaRepository<DummyEntity, Long> {
 			@Param("from") LocalDateTime from,
 			@Param("to") LocalDateTime to
 	);
+	@Query(value = """
+        SELECT
+            COALESCE(SUM(hi.[value]), 0) AS totalValue
+        FROM F2_Utility_Para_History_Main hi
 
+        INNER JOIN F2_Utility_Para pa
+            ON hi.box_device_id = pa.box_device_id
+           AND hi.plc_address  = pa.plc_address
+
+        INNER JOIN F2_Utility_Scada_Channel ch
+            ON hi.box_device_id = ch.box_device_id
+
+        INNER JOIN F2_Utility_Scada sc
+            ON ch.scada_id = sc.scada_id
+
+        WHERE hi.[value] > 0
+          AND pa.name_en = 'Total Energy Consumption'
+          AND hi.pick_at >= :from
+          AND hi.pick_at <  :to
+          AND (:fac = 'KVH' OR sc.fac = :fac)
+        """, nativeQuery = true)
+	BigDecimal sumMonthlyEnergy(
+			@Param("fac") String fac,
+			@Param("from") LocalDateTime from,
+			@Param("to") LocalDateTime to
+	);
 }
