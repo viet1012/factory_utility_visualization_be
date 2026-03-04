@@ -1,6 +1,5 @@
 package com.example.factory_utility_visualization_be.controller.overview.minutes;
 
-
 import com.example.factory_utility_visualization_be.dto.overview.minutes.MinutePointDto;
 import com.example.factory_utility_visualization_be.service.overview.minutes.UtilityEnergyMinutesService;
 import lombok.RequiredArgsConstructor;

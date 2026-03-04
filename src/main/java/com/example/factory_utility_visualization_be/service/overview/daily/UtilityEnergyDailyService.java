@@ -29,7 +29,7 @@ public class UtilityEnergyDailyService {
 		LocalDateTime from = firstDay.atStartOfDay();
 		LocalDateTime to = firstDayNext.atStartOfDay();
 
-		List<Object[]> rows = repo.sumDailyEnergy(facId, from, to);
+		List<Object[]> rows = repo.sumDailyEnergyByMonth(facId, from, to);
 
 		return rows.stream().map(r -> {
 			LocalDate date = ((java.sql.Date) r[0]).toLocalDate();
