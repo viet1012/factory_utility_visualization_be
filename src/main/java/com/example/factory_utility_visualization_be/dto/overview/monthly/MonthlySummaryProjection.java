@@ -6,7 +6,7 @@ public interface MonthlySummaryProjection {
 
 	String getName();
 
-	String getCate();   // 👈 thêm cái này
+	String getCate();
 
 	String getMonth();
 
