@@ -50,5 +50,29 @@ public interface VoltageStatusRepo extends JpaRepository<DummyEntity, Long> {
         GROUP BY pick_at
         ORDER BY pick_at
         """, nativeQuery = true)
+	List<Map<String,Object>> getVoltageDetail1();
+	@Query(value = """
+
+			SELECT
+	          DATEADD(MINUTE, DATEDIFF(MINUTE, 0, recorded_at), 0) as recorded_minute,
+	             MAX(CASE WHEN plc_address='D12' THEN [value] END) AS D12,
+	             MAX(CASE WHEN plc_address='D14' THEN [value] END) AS D14,
+	             MAX(CASE WHEN plc_address='D16' THEN [value] END) AS D16,
+	         
+	             CASE
+	                 WHEN MAX(CASE WHEN plc_address='D12' THEN [value] END) NOT BETWEEN 205 AND 245
+	                   OR MAX(CASE WHEN plc_address='D14' THEN [value] END) NOT BETWEEN 205 AND 245
+	                   OR MAX(CASE WHEN plc_address='D16' THEN [value] END) NOT BETWEEN 205 AND 245
+	                 THEN 'Alarm'
+	                 ELSE 'Normal'
+	             END AS Alarm
+	         FROM F2_Utility_Para_History
+	         WHERE plc_address IN ('D12','D14','D16')
+	         AND recorded_at > DATEADD(DAY,-1,GETDATE())
+	         AND [value] <> 0
+	         GROUP BY DATEADD(MINUTE, DATEDIFF(MINUTE, 0, recorded_at), 0)
+	         ORDER BY DATEADD(MINUTE, DATEDIFF(MINUTE, 0, recorded_at), 0);
+                         
+        """, nativeQuery = true)
 	List<Map<String,Object>> getVoltageDetail();
 }

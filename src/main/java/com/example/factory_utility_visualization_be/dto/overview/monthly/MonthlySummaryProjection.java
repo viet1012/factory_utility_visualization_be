@@ -1,6 +1,7 @@
 package com.example.factory_utility_visualization_be.dto.overview.monthly;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 
 public interface MonthlySummaryProjection {
 
@@ -13,4 +14,6 @@ public interface MonthlySummaryProjection {
 	BigDecimal getValue();
 
 	String getUnit();
+
+	LocalDateTime getTimestamp();
 }

@@ -19,7 +19,8 @@ public interface UtilityMonthlyRepo extends JpaRepository<DummyEntity, Long> {
 			    ch.cate     AS cate,
 			    pa.unit     AS unit,
 			    :month      AS month,
-			    COALESCE(SUM(hi.[value]), 0) AS value
+			    COALESCE(SUM(hi.[value]), 0) AS value,
+				MAX(pick_at) AS timestamp
 			FROM F2_Utility_Para_History_Main hi
 			
 			INNER JOIN F2_Utility_Para pa

@@ -33,7 +33,7 @@ public class VoltageStatusService {
 		List<Map<String,Object>> rows = repository.getVoltageDetail();
 
 		return rows.stream().map(r -> new VoltageDetailDto(
-				((Timestamp) r.get("pickAt")).toLocalDateTime(),
+				((Timestamp) r.get("recorded_minute")).toLocalDateTime(),
 				toDouble(r.get("d12")),
 				toDouble(r.get("d14")),
 				toDouble(r.get("d16")),

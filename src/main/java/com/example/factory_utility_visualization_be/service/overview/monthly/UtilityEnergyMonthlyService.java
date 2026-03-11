@@ -40,7 +40,8 @@ public class UtilityEnergyMonthlyService {
 						r.getName(),
 						r.getMonth(),
 						r.getValue(),
-						r.getUnit()
+						r.getUnit(),
+						r.getTimestamp()
 				))
 				.toList();
 	}
