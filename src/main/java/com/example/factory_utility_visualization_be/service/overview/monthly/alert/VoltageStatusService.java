@@ -7,6 +7,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.sql.Timestamp;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 
@@ -23,7 +24,8 @@ public class VoltageStatusService {
 				(String) row[0],
 				((Number) row[1]).doubleValue(),
 				((Number) row[2]).doubleValue(),
-				(String) row[3]
+				(String) row[3],
+				LocalDateTime.now()
 		);
 	}
 
@@ -37,7 +39,9 @@ public class VoltageStatusService {
 				toDouble(r.get("d12")),
 				toDouble(r.get("d14")),
 				toDouble(r.get("d16")),
-				(String) r.get("alarm")
+				(String) r.get("alarm"),
+				LocalDateTime.now()
+
 		)).toList();
 	}
 

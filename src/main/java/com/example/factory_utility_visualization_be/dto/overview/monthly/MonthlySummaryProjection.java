@@ -15,5 +15,8 @@ public interface MonthlySummaryProjection {
 
 	String getUnit();
 
+	LocalDateTime getPickAt();
+
 	LocalDateTime getTimestamp();
+
 }

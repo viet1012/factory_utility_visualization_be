@@ -41,7 +41,8 @@ public class UtilityEnergyMonthlyService {
 						r.getMonth(),
 						r.getValue(),
 						r.getUnit(),
-						r.getTimestamp()
+						r.getPickAt(),
+						LocalDateTime.now()
 				))
 				.toList();
 	}

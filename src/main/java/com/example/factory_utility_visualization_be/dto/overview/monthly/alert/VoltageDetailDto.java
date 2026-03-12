@@ -9,6 +9,7 @@ public record VoltageDetailDto(
 		Double d14,
 		Double d16,
 
-		String alarm
+		String alarm,
+		LocalDateTime timestamp
 ) {
 }

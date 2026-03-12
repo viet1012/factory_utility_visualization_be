@@ -9,5 +9,7 @@ public record MonthlySummaryDto(
 		String month,
 		BigDecimal value,
 		String unit,
+		LocalDateTime pick_at,
 		LocalDateTime timestamp
+
 ) {}
