@@ -20,8 +20,10 @@ public class UtilityOverviewDailyController {
 	@GetMapping("/energy-daily")
 	public List<DailyDto> energyDaily(
 			@RequestParam String facId,
-			@RequestParam String month
+			@RequestParam String month,
+			@RequestParam(required = false) String nameEn
+
 	) {
-		return service.getDaily(facId, month);
+		return service.getDaily(facId, month, nameEn);
 	}
 }

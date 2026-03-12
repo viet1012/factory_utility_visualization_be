@@ -15,7 +15,7 @@ import java.util.List;
 public class UtilityEnergyDailyService {
 	private final UtilityDailyRepo repo;
 
-	public List<DailyDto> getDaily(String facId, String monthYyyyMm) {
+	public List<DailyDto> getDaily(String facId, String monthYyyyMm, String nameEn) {
 		if (monthYyyyMm == null || !monthYyyyMm.matches("\\d{6}")) {
 			throw new IllegalArgumentException("month must be yyyyMM (e.g. 202612)");
 		}
@@ -28,8 +28,10 @@ public class UtilityEnergyDailyService {
 
 		LocalDateTime from = firstDay.atStartOfDay();
 		LocalDateTime to = firstDayNext.atStartOfDay();
-
-		List<Object[]> rows = repo.sumDailyEnergyByMonth(facId, from, to);
+		final String metric = (nameEn == null || nameEn.isBlank())
+				? "Total Energy Consumption"
+				: nameEn.trim();
+		List<Object[]> rows = repo.sumDailyEnergyByMonth(facId, from, to, metric);
 
 		return rows.stream().map(r -> {
 			LocalDate date = ((java.sql.Date) r[0]).toLocalDate();
