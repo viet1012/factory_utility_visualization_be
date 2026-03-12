@@ -8,6 +8,7 @@ import org.springframework.stereotype.Service;
 
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
 
@@ -25,7 +26,7 @@ public class VoltageStatusService {
 				((Number) row[1]).doubleValue(),
 				((Number) row[2]).doubleValue(),
 				(String) row[3],
-				LocalDateTime.now()
+				OffsetDateTime.now()
 		);
 	}
 

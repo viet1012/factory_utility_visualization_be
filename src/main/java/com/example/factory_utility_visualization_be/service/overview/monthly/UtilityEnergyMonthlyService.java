@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.util.List;
 
 @Service
@@ -42,7 +43,7 @@ public class UtilityEnergyMonthlyService {
 						r.getValue(),
 						r.getUnit(),
 						r.getPickAt(),
-						LocalDateTime.now()
+						OffsetDateTime.now()
 				))
 				.toList();
 	}

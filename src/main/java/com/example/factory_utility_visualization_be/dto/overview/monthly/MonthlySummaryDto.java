@@ -2,6 +2,7 @@ package com.example.factory_utility_visualization_be.dto.overview.monthly;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 
 public record MonthlySummaryDto(
 		String cate,
@@ -10,6 +11,6 @@ public record MonthlySummaryDto(
 		BigDecimal value,
 		String unit,
 		LocalDateTime pick_at,
-		LocalDateTime timestamp
+		OffsetDateTime timestamp
 
 ) {}

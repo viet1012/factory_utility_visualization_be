@@ -1,11 +1,12 @@
 package com.example.factory_utility_visualization_be.dto.overview.monthly.alert;
 
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 
 public record VoltageStatusDto(
 		String name,
 		Double minVol,
 		Double maxVol,
 		String alarm,
-		LocalDateTime timestamp
+		OffsetDateTime timestamp
 ) {}
