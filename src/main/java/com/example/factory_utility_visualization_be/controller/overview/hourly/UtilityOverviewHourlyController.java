@@ -21,8 +21,10 @@ public class UtilityOverviewHourlyController {
 	@GetMapping("/energy-hourly")
 	public List<HourlyCompareDto> energyHourly(
 			@RequestParam(name = "facId") String facId,
-			@RequestParam(name = "hours", defaultValue = "48") int hours
+			@RequestParam(name = "hours", defaultValue = "48") int hours,
+			@RequestParam(required = false) String nameEn
+
 	) {
-		return service.getHourly(facId, hours);
+		return service.getHourly(facId, hours, nameEn);
 	}
 }

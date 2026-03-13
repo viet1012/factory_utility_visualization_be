@@ -14,8 +14,11 @@ import java.util.List;
 public class UtilityEnergyHourlyService {
 	private final UtilityHourlyRepo repo;
 
-	public List<HourlyCompareDto> getHourly(String fac, int hours) {
-		final String nameEn = "Total Energy Consumption";
-		return repo.hourlyCompareDto(fac, hours, nameEn);
+	public List<HourlyCompareDto> getHourly(String fac, int hours, String nameEn) {
+		final String metric = (nameEn == null || nameEn.isBlank())
+				? "Total Energy Consumption"
+				: nameEn.trim();
+
+		return repo.hourlyCompareDto(fac, hours, metric);
 	}
 }
