@@ -1,4 +1,4 @@
-package com.example.factory_utility_visualization_be.repository.monthly;
+package com.example.factory_utility_visualization_be.repository.overview.monthly;
 
 import com.example.factory_utility_visualization_be.dto.overview.monthly.MonthlySummaryProjection;
 import com.example.factory_utility_visualization_be.model.DummyEntity;

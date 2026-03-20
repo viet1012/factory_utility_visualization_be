@@ -1,9 +1,7 @@
 package com.example.factory_utility_visualization_be.controller.overview.monthly.alert;
 
-import com.example.factory_utility_visualization_be.dto.overview.monthly.MonthlySummaryDto;
 import com.example.factory_utility_visualization_be.dto.overview.monthly.alert.VoltageDetailDto;
 import com.example.factory_utility_visualization_be.dto.overview.monthly.alert.VoltageStatusDto;
-import com.example.factory_utility_visualization_be.service.overview.monthly.UtilityEnergyMonthlyService;
 import com.example.factory_utility_visualization_be.service.overview.monthly.alert.VoltageStatusService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -17,15 +15,15 @@ import java.util.List;
 @RestController
 @RequestMapping("/api/utility")
 public class VoltageStatusController {
-	private  final VoltageStatusService service;
+	private final VoltageStatusService service;
 
 	@GetMapping("/voltage/status")
-	public VoltageStatusDto getVoltageStatus() {
-		return service.getVoltageStatus();
+	public VoltageStatusDto getVoltageStatus(@RequestParam String facId) {
+		return service.getVoltageStatus(facId);
 	}
 
 	@GetMapping("/voltage/detail")
-	public List<VoltageDetailDto> getVoltageDetail(){
+	public List<VoltageDetailDto> getVoltageDetail() {
 		return service.getVoltageDetail();
 	}
 }

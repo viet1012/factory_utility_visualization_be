@@ -2,22 +2,22 @@ package com.example.factory_utility_visualization_be.service.overview.monthly.al
 
 import com.example.factory_utility_visualization_be.dto.overview.monthly.alert.VoltageDetailDto;
 import com.example.factory_utility_visualization_be.dto.overview.monthly.alert.VoltageStatusDto;
-import com.example.factory_utility_visualization_be.repository.monthly.alert.VoltageStatusRepo;
+import com.example.factory_utility_visualization_be.repository.overview.monthly.alert.VoltageStatusRepo;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 @Service
 @RequiredArgsConstructor
 public class VoltageStatusService {
 
 	private final VoltageStatusRepo repository;
-	public VoltageStatusDto getVoltageStatus() {
+
+	public VoltageStatusDto getVoltageStatus(String facId) {
 
 		Object[] row = repository.getVoltageStatus().get(0);
 
@@ -31,7 +31,7 @@ public class VoltageStatusService {
 	}
 
 
-	public List<VoltageDetailDto> getVoltageDetail(){
+		public List<VoltageDetailDto> getVoltageDetail(){
 
 		List<Map<String,Object>> rows = repository.getVoltageDetail();
 
@@ -46,8 +46,52 @@ public class VoltageStatusService {
 		)).toList();
 	}
 
-	private Double toDouble(Object value){
-		if(value == null) return null;
-		return ((Number) value).doubleValue();
+//	public List<VoltageDetailDto> getVoltageDetail1(String facId) {
+//
+//		List<Map<String, Object>> rows = repository.getVoltageDetail1(facId);
+//
+//		/// 🔥 GROUP theo thời gian
+//		Map<LocalDateTime, Map<String, Double>> grouped = new LinkedHashMap<>();
+//		Map<LocalDateTime, String> alarmMap = new HashMap<>();
+//
+//		for (Map<String, Object> r : rows) {
+//
+//			LocalDateTime time = ((Timestamp) r.get("recorded_minute")).toLocalDateTime();
+//			String name = (String) r.get("name");
+//			Double value = toDouble(r.get("value"));
+//			String alarm = (String) r.get("alarm");
+//
+//			grouped.putIfAbsent(time, new HashMap<>());
+//			grouped.get(time).put(name, value);
+//
+//			/// 🔥 nếu có 1 alarm → cả phút alarm
+//			if ("Alarm".equals(alarm)) {
+//				alarmMap.put(time, "Alarm");
+//			} else {
+//				alarmMap.putIfAbsent(time, "Normal");
+//			}
+//		}
+//
+//		/// 🔥 convert sang DTO
+//		List<VoltageDetailDto> result = new ArrayList<>();
+//
+//		for (var entry : grouped.entrySet()) {
+//
+//			LocalDateTime time = entry.getKey();
+//			Map<String, Double> values = entry.getValue();
+//
+//			result.add(new VoltageDetailDto1(
+//					time,
+//					values,
+//					alarmMap.getOrDefault(time, "Normal"),
+//					LocalDateTime.now()
+//			));
+//		}
+//
+//		return result;
+//	}
+
+	private Double toDouble(Object value) {
+		return value == null ? 0.0 : ((Number) value).doubleValue();
 	}
 }

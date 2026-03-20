@@ -3,11 +3,10 @@ package com.example.factory_utility_visualization_be.service.overview.monthly;
 
 import com.example.factory_utility_visualization_be.dto.overview.monthly.MonthlySummaryDto;
 import com.example.factory_utility_visualization_be.dto.overview.monthly.MonthlySummaryProjection;
-import com.example.factory_utility_visualization_be.repository.monthly.UtilityMonthlyRepo;
+import com.example.factory_utility_visualization_be.repository.overview.monthly.UtilityMonthlyRepo;
 import lombok.*;
 import org.springframework.stereotype.Service;
 
-import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
