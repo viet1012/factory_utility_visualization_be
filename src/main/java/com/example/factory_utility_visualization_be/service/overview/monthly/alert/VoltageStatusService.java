@@ -19,7 +19,7 @@ public class VoltageStatusService {
 
 	public VoltageStatusDto getVoltageStatus(String facId) {
 
-		Object[] row = repository.getVoltageStatus().get(0);
+		Object[] row = repository.getVoltageStatus(facId).get(0);
 
 		return new VoltageStatusDto(
 				(String) row[0],
@@ -31,15 +31,15 @@ public class VoltageStatusService {
 	}
 
 
-		public List<VoltageDetailDto> getVoltageDetail(){
+		public List<VoltageDetailDto> getVoltageDetail(String facId) {
 
-		List<Map<String,Object>> rows = repository.getVoltageDetail();
+		List<Map<String,Object>> rows = repository.getVoltageDetail(facId);
 
 		return rows.stream().map(r -> new VoltageDetailDto(
 				((Timestamp) r.get("recorded_minute")).toLocalDateTime(),
-				toDouble(r.get("d12")),
-				toDouble(r.get("d14")),
-				toDouble(r.get("d16")),
+				toDouble(r.get("D108")),
+				toDouble(r.get("D110")),
+				toDouble(r.get("D112")),
 				(String) r.get("alarm"),
 				LocalDateTime.now()
 

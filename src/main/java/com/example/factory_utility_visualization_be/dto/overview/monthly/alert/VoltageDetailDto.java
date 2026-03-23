@@ -9,9 +9,9 @@ import java.util.Map;
 public record VoltageDetailDto(
 		LocalDateTime pickAt,
 
-		Double d12,
-		Double d14,
-		Double d16,
+		Double d108,
+		Double d110,
+		Double d112,
 
 		String alarm,
 		LocalDateTime timestamp

@@ -23,7 +23,7 @@ public class VoltageStatusController {
 	}
 
 	@GetMapping("/voltage/detail")
-	public List<VoltageDetailDto> getVoltageDetail() {
-		return service.getVoltageDetail();
+	public List<VoltageDetailDto> getVoltageDetail(@RequestParam String facId) {
+		return service.getVoltageDetail(facId);
 	}
 }
