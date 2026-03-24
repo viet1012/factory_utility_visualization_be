@@ -4,6 +4,8 @@ import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 
 public record VoltageStatusDto(
+		String fac,
+		String boxDeviceId,
 		String name,
 		Double minVol,
 		Double maxVol,

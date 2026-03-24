@@ -9,7 +9,8 @@ import org.springframework.stereotype.Service;
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
-import java.util.*;
+import java.util.List;
+import java.util.Map;
 
 @Service
 @RequiredArgsConstructor
@@ -18,22 +19,37 @@ public class VoltageStatusService {
 	private final VoltageStatusRepo repository;
 
 	public VoltageStatusDto getVoltageStatus(String facId) {
+		List<Object[]> rows = repository.getVoltageStatus(facId);
 
-		Object[] row = repository.getVoltageStatus(facId).get(0);
+		if (rows == null || rows.isEmpty()) {
+			return new VoltageStatusDto(
+					facId,
+					null,
+					"Voltage",
+					0.0,
+					0.0,
+					"No Data",
+					OffsetDateTime.now()
+			);
+		}
+
+		Object[] row = rows.get(0);
 
 		return new VoltageStatusDto(
 				(String) row[0],
-				((Number) row[1]).doubleValue(),
-				((Number) row[2]).doubleValue(),
-				(String) row[3],
+				row[1] != null ? String.valueOf(row[1]) : null,
+				(String) row[2],
+				row[3] != null ? ((Number) row[3]).doubleValue() : 0.0,
+				row[4] != null ? ((Number) row[4]).doubleValue() : 0.0,
+				(String) row[5],
 				OffsetDateTime.now()
 		);
 	}
 
 
-		public List<VoltageDetailDto> getVoltageDetail(String facId) {
+	public List<VoltageDetailDto> getVoltageDetail(String facId) {
 
-		List<Map<String,Object>> rows = repository.getVoltageDetail(facId);
+		List<Map<String, Object>> rows = repository.getVoltageDetail(facId);
 
 		return rows.stream().map(r -> new VoltageDetailDto(
 				((Timestamp) r.get("recorded_minute")).toLocalDateTime(),
