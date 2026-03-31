@@ -100,9 +100,14 @@ public class UtilityQueryService {
 		Map<String, F2UtilityScadaChannel> chByDevice = channelRepo.findAll().stream()
 				.collect(Collectors.toMap(F2UtilityScadaChannel::getBoxDeviceId, x -> x, (a, b) -> a));
 
+//		Map<String, F2UtilityScada> scadaById = scadaRepo.findAll().stream()
+//				.collect(Collectors.toMap(F2UtilityScada::getScadaId, x -> x));
 		Map<String, F2UtilityScada> scadaById = scadaRepo.findAll().stream()
-				.collect(Collectors.toMap(F2UtilityScada::getScadaId, x -> x));
-
+				.collect(Collectors.toMap(
+						F2UtilityScada::getScadaId,
+						x -> x,
+						(a, b) -> a   // 👈 FIX
+				));
 		return ps.stream().map(p -> {
 			var ch = chByDevice.get(p.getBoxDeviceId());
 			var sc = (ch == null) ? null : scadaById.get(ch.getScadaId());

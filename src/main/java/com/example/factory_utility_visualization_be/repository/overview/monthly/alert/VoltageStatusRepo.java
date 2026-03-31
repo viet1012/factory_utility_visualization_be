@@ -19,7 +19,7 @@ public interface VoltageStatusRepo extends JpaRepository<DummyEntity, Long> {
         MAX(h.value) as maxVol,
         CASE
          --   WHEN MIN(h.value) < 323 OR MAX(h.value) > 437 THEN 'Critical'
-            WHEN MIN(h.value) < 342 OR MAX(h.value) > 418 THEN 'Alarm'
+            WHEN MIN(h.value) < 0 OR MAX(h.value) > 418 THEN 'Alarm'
             WHEN (MAX(h.value) - MIN(h.value)) > (0.1 * AVG(h.value)) THEN 'Alarm'
        --     WHEN MIN(h.value) < 360 OR MAX(h.value) > 400 THEN 'Warning'
         --    WHEN (MAX(h.value) - MIN(h.value)) > (0.05 * AVG(h.value)) THEN 'Warning'
