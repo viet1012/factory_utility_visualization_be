@@ -22,13 +22,13 @@ public class UtilityOverviewHourlyController {
 	// VD: 	http://localhost:9999/api/utility/energy-hourly?facId=Fac_B&hours=48
 	@GetMapping("/energy-hourly")
 	public List<HourlyCompareDto> energyHourly(
-			@RequestParam(defaultValue = "KVH") String fac,
+			@RequestParam(defaultValue = "KVH") String facId,
 			@RequestParam(defaultValue = "48") int hours,
 			@RequestParam(required = false) String nameEn,
 			@RequestParam(defaultValue = "26005") BigDecimal exchange,
 			@RequestParam(defaultValue = "1.075") BigDecimal sepzone
 	) {
 		return
-				service.getHourly(fac, hours, nameEn, exchange, sepzone);
+				service.getHourly(facId, hours, nameEn, exchange, sepzone);
 	}
 }
