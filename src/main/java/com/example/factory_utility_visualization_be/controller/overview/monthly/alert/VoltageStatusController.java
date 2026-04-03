@@ -18,7 +18,7 @@ public class VoltageStatusController {
 	private final VoltageStatusService service;
 
 	@GetMapping("/voltage/status")
-	public VoltageStatusDto getVoltageStatus(@RequestParam String facId) {
+	public List<VoltageStatusDto> getVoltageStatus(@RequestParam String facId) {
 		return service.getVoltageStatus(facId);
 	}
 

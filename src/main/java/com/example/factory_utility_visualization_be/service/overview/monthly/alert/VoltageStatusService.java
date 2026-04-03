@@ -18,96 +18,76 @@ public class VoltageStatusService {
 
 	private final VoltageStatusRepo repository;
 
-	public VoltageStatusDto getVoltageStatus(String facId) {
+	public List<VoltageStatusDto> getVoltageStatus(String facId) {
 		List<Object[]> rows = repository.getVoltageStatus(facId);
 
 		if (rows == null || rows.isEmpty()) {
-			return new VoltageStatusDto(
-					facId,
-					null,
-					"Voltage",
-					0.0,
-					0.0,
-					"No Data",
-					OffsetDateTime.now()
+			return List.of(
+					new VoltageStatusDto(
+							facId,
+							null,
+							"Voltage",
+							0.0,
+							0.0,
+							0.0,
+							0.0,
+							"No Data",
+							OffsetDateTime.now()
+					)
 			);
 		}
 
-		Object[] row = rows.get(0);
-
-		return new VoltageStatusDto(
-				(String) row[0],
-				row[1] != null ? String.valueOf(row[1]) : null,
-				(String) row[2],
-				row[3] != null ? ((Number) row[3]).doubleValue() : 0.0,
-				row[4] != null ? ((Number) row[4]).doubleValue() : 0.0,
-				(String) row[5],
-				OffsetDateTime.now()
-		);
+		return rows.stream()
+				.map(row -> new VoltageStatusDto(
+						facId,
+						row[1] != null ? String.valueOf(row[1]) : null,               // boxDeviceId
+						row[0] != null ? String.valueOf(row[0]) : null,               // cateId
+						row[2] != null ? ((Number) row[2]).doubleValue() : 0.0,       // minVol
+						row[3] != null ? ((Number) row[3]).doubleValue() : 0.0,       // maxVol
+						row[4] != null ? ((Number) row[4]).doubleValue() : 0.0,       // minVolStd
+						row[5] != null ? ((Number) row[5]).doubleValue() : 0.0,       // maxVolStd
+						row[6] != null ? String.valueOf(row[6]) : "Normal",           // alarm
+						OffsetDateTime.now()
+				))
+				.toList();
 	}
-
 
 	public List<VoltageDetailDto> getVoltageDetail(String facId) {
-
 		List<Map<String, Object>> rows = repository.getVoltageDetail(facId);
 
-		return rows.stream().map(r -> new VoltageDetailDto(
-				((Timestamp) r.get("recorded_minute")).toLocalDateTime(),
-				toDouble(r.get("D108")),
-				toDouble(r.get("D110")),
-				toDouble(r.get("D112")),
-				(String) r.get("alarm"),
-				LocalDateTime.now()
+		if (rows == null || rows.isEmpty()) {
+			return List.of();
+		}
 
-		)).toList();
+		return rows.stream()
+				.map(r -> new VoltageDetailDto(
+						toLocalDateTime(r.get("recorded_minute")),
+						r.get("cate_id") != null ? String.valueOf(r.get("cate_id")) : null,
+						r.get("box_device_id") != null ? String.valueOf(r.get("box_device_id")) : null,
+						toDouble(r.get("min_vol")),
+						toDouble(r.get("max_vol")),
+						toDouble(r.get("min_vol_std")),
+						toDouble(r.get("max_vol_std")),
+						r.get("alarm") != null ? String.valueOf(r.get("alarm")) : "Normal",
+						LocalDateTime.now()
+				))
+				.toList();
 	}
-
-//	public List<VoltageDetailDto> getVoltageDetail1(String facId) {
-//
-//		List<Map<String, Object>> rows = repository.getVoltageDetail1(facId);
-//
-//		/// 🔥 GROUP theo thời gian
-//		Map<LocalDateTime, Map<String, Double>> grouped = new LinkedHashMap<>();
-//		Map<LocalDateTime, String> alarmMap = new HashMap<>();
-//
-//		for (Map<String, Object> r : rows) {
-//
-//			LocalDateTime time = ((Timestamp) r.get("recorded_minute")).toLocalDateTime();
-//			String name = (String) r.get("name");
-//			Double value = toDouble(r.get("value"));
-//			String alarm = (String) r.get("alarm");
-//
-//			grouped.putIfAbsent(time, new HashMap<>());
-//			grouped.get(time).put(name, value);
-//
-//			/// 🔥 nếu có 1 alarm → cả phút alarm
-//			if ("Alarm".equals(alarm)) {
-//				alarmMap.put(time, "Alarm");
-//			} else {
-//				alarmMap.putIfAbsent(time, "Normal");
-//			}
-//		}
-//
-//		/// 🔥 convert sang DTO
-//		List<VoltageDetailDto> result = new ArrayList<>();
-//
-//		for (var entry : grouped.entrySet()) {
-//
-//			LocalDateTime time = entry.getKey();
-//			Map<String, Double> values = entry.getValue();
-//
-//			result.add(new VoltageDetailDto1(
-//					time,
-//					values,
-//					alarmMap.getOrDefault(time, "Normal"),
-//					LocalDateTime.now()
-//			));
-//		}
-//
-//		return result;
-//	}
 
 	private Double toDouble(Object value) {
 		return value == null ? 0.0 : ((Number) value).doubleValue();
+	}
+	private LocalDateTime toLocalDateTime(Object value) {
+		if (value == null) return null;
+
+		if (value instanceof Timestamp ts) {
+			return ts.toLocalDateTime();
+		}
+
+		if (value instanceof LocalDateTime ldt) {
+			return ldt;
+		}
+
+		throw new IllegalArgumentException("Unsupported datetime type: " + value.getClass());
 	}
 }

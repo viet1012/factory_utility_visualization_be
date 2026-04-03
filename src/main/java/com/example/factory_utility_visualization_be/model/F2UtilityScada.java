@@ -4,28 +4,45 @@ package com.example.factory_utility_visualization_be.model;
 import jakarta.persistence.*;
 import lombok.*;
 
+import java.time.LocalDateTime;
+
 @Entity
 @Table(name = "f2_utility_scada")
-@Getter
-@Setter
+@Data
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
 public class F2UtilityScada {
 
 	@Id
-	@Column(name = "scada_id", length = 50)
-	private String scadaId;     // A1, A2, B1...
+	@GeneratedValue(strategy = GenerationType.IDENTITY)
+	private Long id;
 
-	@Column(name = "fac", length = 50, nullable = false)
-	private String fac;         // Fac_A, Fac_B...
+	@Column(name = "scada_id")
+	private String scadaId;
 
-	@Column(name = "plc_ip", length = 50, nullable = false)
+	@Column(name = "fac")
+	private String fac;
+
+	@Column(name = "plc_ip")
 	private String plcIp;
 
-	@Column(name = "plc_port", nullable = false)
+	@Column(name = "plc_port")
 	private Integer plcPort;
 
-	@Column(name = "wlan", length = 50)
+	@Column(name = "pc_name")
+	private String pcName;
+
+	@Column(name = "wlan")
 	private String wlan;
+
+	@Column(name = "connected")
+	private Boolean connected;
+
+	@Column(name = "alert")
+	private Boolean alert;
+
+	@Column(name = "time_update")
+	private LocalDateTime timeUpdate;
+
 }
