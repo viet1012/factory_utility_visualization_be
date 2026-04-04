@@ -8,7 +8,7 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 
 @RestController
-@RequestMapping("/api/utility-scada-channels")
+@RequestMapping("/api/v1/utility-scada-channels")
 public class UtilityScadaChannelController {
 
 	private final UtilityScadaChannelService service;
@@ -17,21 +17,29 @@ public class UtilityScadaChannelController {
 		this.service = service;
 	}
 
+	// GET ALL
 	@GetMapping
 	public ResponseEntity<List<F2UtilityScadaChannel>> getAll() {
 		return ResponseEntity.ok(service.findAll());
 	}
 
+	// GET BY ID
 	@GetMapping("/{id}")
 	public ResponseEntity<F2UtilityScadaChannel> getById(@PathVariable Long id) {
-		return ResponseEntity.ok(service.findById(id));
+		F2UtilityScadaChannel data = service.findById(id);
+		return ResponseEntity.ok(data);
 	}
 
+	// CREATE
 	@PostMapping
-	public ResponseEntity<F2UtilityScadaChannel> create(@RequestBody F2UtilityScadaChannel request) {
-		return ResponseEntity.ok(service.create(request));
+	public ResponseEntity<F2UtilityScadaChannel> create(
+			@RequestBody F2UtilityScadaChannel request
+	) {
+		F2UtilityScadaChannel created = service.create(request);
+		return ResponseEntity.status(201).body(created); // 👈 chuẩn REST
 	}
 
+	// UPDATE
 	@PutMapping("/{id}")
 	public ResponseEntity<F2UtilityScadaChannel> update(
 			@PathVariable Long id,
@@ -40,9 +48,10 @@ public class UtilityScadaChannelController {
 		return ResponseEntity.ok(service.update(id, request));
 	}
 
+	// DELETE
 	@DeleteMapping("/{id}")
-	public ResponseEntity<String> delete(@PathVariable Long id) {
+	public ResponseEntity<Void> delete(@PathVariable Long id) {
 		service.delete(id);
-		return ResponseEntity.ok("Deleted successfully");
+		return ResponseEntity.noContent().build(); // 👈 chuẩn REST
 	}
 }
