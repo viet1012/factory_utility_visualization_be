@@ -6,38 +6,49 @@ import lombok.*;
 
 @Entity
 @Table(name = "f2_utility_para")
-@Getter @Setter @NoArgsConstructor @AllArgsConstructor @Builder
+@Getter
+@Setter
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
 public class F2UtilityPara {
 
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    @Column(name = "id")
-    private Long id;
+	@Id
+	@GeneratedValue(strategy = GenerationType.IDENTITY)
+	@Column(name = "id")
+	private Long id;
 
-    @Column(name = "box_device_id", length = 100, nullable = false)
-    private String boxDeviceId;
+	@Column(name = "box_device_id", length = 100, nullable = false)
+	private String boxDeviceId;
 
-    @Column(name = "plc_address", length = 50, nullable = false)
-    private String plcAddress;      // D1, D2...
+	@Column(name = "plc_address", length = 50, nullable = false)
+	private String plcAddress;      // D1, D2...
 
-    @Column(name = "value_type", length = 20, nullable = false)
-    private String valueType;       // INT/BYTE/FLOAT...
+	@Column(name = "value_type", length = 20, nullable = false)
+	private String valueType;       // INT/BYTE/FLOAT...
 
-    @Column(name = "unit", length = 20)
-    private String unit;            // A, kW...
+	@Column(name = "unit", length = 20)
+	private String unit;            // A, kW...
 
-    @Column(name = "cate_id", length = 100)
-    private String cateId;        // Current, Voltage...
+	@Column(name = "cate_id", length = 100)
+	private String cateId;        // Current, Voltage...
 
-    @Column(name = "name_vi", length = 255)
-    private String nameVi;
+	@Column(name = "name_vi", length = 255)
+	private String nameVi;
 
-    @Column(name = "name_en", length = 255)
-    private String nameEn;
+	@Column(name = "name_en", length = 255)
+	private String nameEn;
 
-    @Column(name = "is_important")
-    private Boolean isImportant;
+	@Column(name = "is_important")
+	private Integer isImportant;
 
-    @Column(name = "is_alert")
-    private Boolean isAlert;
+	@Column(name = "is_alert")
+	private Integer isAlert;
+
+	@Column(name = "min_alert")
+	private Long minAlert;
+
+	@Column(name = "max_alert")
+	private Long maxAlert;
+
 }

@@ -11,25 +11,34 @@ public interface F2UtilityParaRepo extends JpaRepository<F2UtilityPara, Long> {
 
     List<F2UtilityPara> findByBoxDeviceId(String boxDeviceId);
 
-    // param + join channel + join scada để filter theo facId/scadaId/cate
+    List<F2UtilityPara> findByCateId(String cateId);
+
+    List<F2UtilityPara> findByIsImportant(Integer isImportant);
+
+    List<F2UtilityPara> findByIsAlert(Integer isAlert);
+
     @Query("""
-        select distinct p from F2UtilityPara p
-          join F2UtilityScadaChannel c on c.boxDeviceId = p.boxDeviceId
-          join F2UtilityScada s on s.scadaId = c.scadaId
+        select p
+        from F2UtilityPara p
         where (:boxDeviceId is null or p.boxDeviceId = :boxDeviceId)
-          and (:cate is null or c.cate = :cate)
-          and (:scadaId is null or s.scadaId = :scadaId)
-          and (:facId is null or s.fac = :facId)
-         and (:importantOnly = 0 or coalesce(p.isImportant, false) = true)
+          and (:importantOnly = 0 or p.isImportant = 1)
+          and exists (
+                select 1
+                from F2UtilityScadaChannel c, F2UtilityScada s
+                where c.boxDeviceId = p.boxDeviceId
+                  and s.scadaId = c.scadaId
+                  and (:cate is null or c.cate = :cate)
+                  and (:scadaId is null or s.scadaId = :scadaId)
+                  and (:facId is null or s.fac = :facId)
+          )
     """)
     List<F2UtilityPara> searchParams(
             @Param("boxDeviceId") String boxDeviceId,
-            @Param("cate") String cate,        // ✅ đổi cateId -> cate
+            @Param("cate") String cate,
             @Param("scadaId") String scadaId,
             @Param("facId") String facId,
             @Param("importantOnly") int importantOnly
     );
 
-    // lọc theo cateId list
     List<F2UtilityPara> findByCateIdIn(List<String> cateIds);
 }

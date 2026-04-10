@@ -19,7 +19,7 @@ public class UtilityScadaResponse {
 	private Integer plcPort;
 	private String pcName;
 	private String wlan;
-	private Boolean connected;
+	private String connected;
 	private Boolean alert;
 	private LocalDateTime timeUpdate;
 

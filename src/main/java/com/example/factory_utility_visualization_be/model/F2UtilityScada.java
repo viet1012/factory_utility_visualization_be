@@ -37,7 +37,7 @@ public class F2UtilityScada {
 	private String wlan;
 
 	@Column(name = "connected")
-	private Boolean connected;
+	private String connected;
 
 	@Column(name = "alert")
 	private Boolean alert;

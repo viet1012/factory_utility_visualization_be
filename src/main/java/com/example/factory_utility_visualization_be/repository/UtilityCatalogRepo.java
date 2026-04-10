@@ -200,8 +200,8 @@ public class UtilityCatalogRepo {
 		d.setNameVi(rs.getString("nameVi"));
 		d.setNameEn(rs.getString("nameEn"));
 
-		d.setIsImportant(toBool(rs.getObject("isImportant")));
-		d.setIsAlert(toBool(rs.getObject("isAlert")));
+		d.setIsImportant((Integer) rs.getObject("isImportant"));
+		d.setIsAlert((Integer)(rs.getObject("isAlert")));
 
 		d.setCateId(rs.getString("cateId"));
 		d.setCateName(rs.getString("cateName"));

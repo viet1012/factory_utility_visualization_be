@@ -136,7 +136,7 @@ public class UtilityQueryService {
 				.orElseThrow(() -> new NoSuchElementException("No record for " + boxDeviceId + " / " + plcAddress));
 
 		var ch = channelRepo.findByBoxDeviceId(boxDeviceId).stream().findFirst().orElse(null);
-		var sc = (ch == null) ? null : scadaRepo.findById(ch.getScadaId()).orElse(null);
+		var sc = (ch == null) ? null : scadaRepo.findByScadaId(ch.getScadaId()).orElse(null);
 
 		return LatestRecordDto.builder()
 				.boxDeviceId(h.getBoxDeviceId())
