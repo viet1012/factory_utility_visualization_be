@@ -1,4 +1,4 @@
-package com.example.factory_utility_visualization_be.service.setting;
+package com.example.factory_utility_visualization_be.response.setting;
 
 
 import lombok.AllArgsConstructor;

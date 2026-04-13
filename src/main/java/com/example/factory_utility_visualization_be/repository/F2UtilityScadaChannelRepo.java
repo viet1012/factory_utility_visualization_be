@@ -1,7 +1,7 @@
 package com.example.factory_utility_visualization_be.repository;
 
 import com.example.factory_utility_visualization_be.model.F2UtilityScadaChannel;
-import com.example.factory_utility_visualization_be.service.setting.FacBoxDeviceProjection;
+import com.example.factory_utility_visualization_be.response.setting.FacBoxDeviceProjection;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 

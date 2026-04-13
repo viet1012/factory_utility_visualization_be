@@ -1,7 +1,7 @@
 package com.example.factory_utility_visualization_be.controller.setting;
 
 import com.example.factory_utility_visualization_be.model.F2UtilityScadaChannel;
-import com.example.factory_utility_visualization_be.service.setting.FacScadaBoxDto;
+import com.example.factory_utility_visualization_be.response.setting.FacScadaBoxDto;
 import com.example.factory_utility_visualization_be.service.setting.UtilityScadaChannelService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;

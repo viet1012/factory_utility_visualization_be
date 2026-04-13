@@ -1,14 +1,17 @@
 package com.example.factory_utility_visualization_be.service.setting;
 
 
-
 import com.example.factory_utility_visualization_be.model.F2UtilityPara;
 import com.example.factory_utility_visualization_be.repository.F2UtilityParaRepo;
 import com.example.factory_utility_visualization_be.request.setting.UtilityParaRequest;
-import com.example.factory_utility_visualization_be.response.setting.UtilityParaResponse;
+import com.example.factory_utility_visualization_be.response.setting.*;
+import com.example.factory_utility_visualization_be.response.setting.para.*;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 @Service
 public class UtilityParaService {
@@ -26,6 +29,84 @@ public class UtilityParaService {
 				.map(this::toResponse)
 				.toList();
 	}
+	public List<FacScadaBoxParaDto> getAllGroupedByFacWithParas() {
+		List<FacBoxDeviceParaProjection> rows = repository.findAllFacBoxDeviceParas();
+		return groupRowsWithParas(rows);
+	}
+
+	private List<FacScadaBoxParaDto> groupRowsWithParas(List<FacBoxDeviceParaProjection> rows) {
+		Map<String, FacScadaBoxParaDto> facMap = new LinkedHashMap<>();
+		Map<String, BoxWithParaDto> boxMap = new LinkedHashMap<>();
+		Map<String, DeviceWithParaDto> deviceMap = new LinkedHashMap<>();
+
+		for (FacBoxDeviceParaProjection row : rows) {
+			if (row.getFac() == null || row.getFac().isBlank()) continue;
+
+			String facKey = row.getFac() + "::" + row.getScadaId();
+			String boxKey = facKey + "::" + row.getBoxId();
+			String deviceKey = boxKey + "::" + row.getBoxDeviceId();
+
+			facMap.putIfAbsent(
+					facKey,
+					FacScadaBoxParaDto.builder()
+							.fac(row.getFac())
+							.scadaId(row.getScadaId())
+							.boxes(new ArrayList<>())
+							.build()
+			);
+
+			if (row.getBoxId() == null || row.getBoxId().isBlank()) continue;
+
+			boxMap.putIfAbsent(
+					boxKey,
+					BoxWithParaDto.builder()
+							.boxId(row.getBoxId())
+							.devices(new ArrayList<>())
+							.build()
+			);
+
+			if (!facMap.get(facKey).getBoxes().contains(boxMap.get(boxKey))) {
+				facMap.get(facKey).getBoxes().add(boxMap.get(boxKey));
+			}
+
+			if (row.getBoxDeviceId() == null || row.getBoxDeviceId().isBlank()) continue;
+
+			deviceMap.putIfAbsent(
+					deviceKey,
+					DeviceWithParaDto.builder()
+							.channelId(row.getChannelId())
+							.cate(row.getCate())
+							.boxDeviceId(row.getBoxDeviceId())
+							.paras(new ArrayList<>())
+							.build()
+			);
+
+			if (!boxMap.get(boxKey).getDevices().contains(deviceMap.get(deviceKey))) {
+				boxMap.get(boxKey).getDevices().add(deviceMap.get(deviceKey));
+			}
+
+			if (row.getParaId() != null) {
+				deviceMap.get(deviceKey).getParas().add(
+						ParaDto.builder()
+								.id(row.getParaId())
+								.plcAddress(row.getPlcAddress())
+								.valueType(row.getValueType())
+								.unit(row.getUnit())
+								.cateId(row.getCateId())
+								.nameVi(row.getNameVi())
+								.nameEn(row.getNameEn())
+								.isImportant(row.getIsImportant())
+								.isAlert(row.getIsAlert())
+								.minAlert(row.getMinAlert())
+								.maxAlert(row.getMaxAlert())
+								.build()
+				);
+			}
+		}
+
+		return new ArrayList<>(facMap.values());
+	}
+
 
 	// ===== GET BY ID =====
 	public UtilityParaResponse getById(Long id) {
@@ -73,7 +154,7 @@ public class UtilityParaService {
 				.stream().map(this::toResponse).toList();
 	}
 
-	public List<UtilityParaResponse> getByAlert(Integer  isAlert) {
+	public List<UtilityParaResponse> getByAlert(Integer isAlert) {
 		return repository.findByIsAlert(isAlert)
 				.stream().map(this::toResponse).toList();
 	}

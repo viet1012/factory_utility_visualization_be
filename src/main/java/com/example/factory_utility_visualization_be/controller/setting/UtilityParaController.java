@@ -3,7 +3,9 @@ package com.example.factory_utility_visualization_be.controller.setting;
 
 import com.example.factory_utility_visualization_be.request.setting.UtilityParaRequest;
 import com.example.factory_utility_visualization_be.response.setting.UtilityParaResponse;
+import com.example.factory_utility_visualization_be.response.setting.para.FacScadaBoxParaDto;
 import com.example.factory_utility_visualization_be.service.setting.UtilityParaService;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -22,6 +24,11 @@ public class UtilityParaController {
 	@GetMapping
 	public List<UtilityParaResponse> getAll() {
 		return service.getAll();
+	}
+
+	@GetMapping("/grouped-by-fac-with-paras")
+	public ResponseEntity<List<FacScadaBoxParaDto>> getAllGroupedByFacWithParas() {
+		return ResponseEntity.ok(service.getAllGroupedByFacWithParas());
 	}
 
 	@GetMapping("/{id}")
@@ -63,7 +70,7 @@ public class UtilityParaController {
 	}
 
 	@GetMapping("/alert/{flag}")
-	public List<UtilityParaResponse> getByAlert(@PathVariable Integer  flag) {
+	public List<UtilityParaResponse> getByAlert(@PathVariable Integer flag) {
 		return service.getByAlert(flag);
 	}
 }

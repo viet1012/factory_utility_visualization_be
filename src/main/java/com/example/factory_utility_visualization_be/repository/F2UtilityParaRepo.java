@@ -1,6 +1,7 @@
 package com.example.factory_utility_visualization_be.repository;
 
 import com.example.factory_utility_visualization_be.model.F2UtilityPara;
+import com.example.factory_utility_visualization_be.response.setting.para.FacBoxDeviceParaProjection;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -41,4 +42,34 @@ public interface F2UtilityParaRepo extends JpaRepository<F2UtilityPara, Long> {
     );
 
     List<F2UtilityPara> findByCateIdIn(List<String> cateIds);
+
+
+    @Query(value = """
+    SELECT
+        s.fac AS fac,
+        s.scada_id AS scadaId,
+        c.id AS channelId,
+        c.cate AS cate,
+        c.box_id AS boxId,
+        c.box_device_id AS boxDeviceId,
+
+        p.id AS paraId,
+        p.plc_address AS plcAddress,
+        p.value_type AS valueType,
+        p.unit AS unit,
+        p.cate_id AS cateId,
+        p.name_vi AS nameVi,
+        p.name_en AS nameEn,
+        p.is_important AS isImportant,
+        p.is_alert AS isAlert,
+        p.min_alert AS minAlert,
+        p.max_alert AS maxAlert
+    FROM f2_utility_scada s
+    LEFT JOIN f2_utility_scada_channel c
+        ON s.scada_id = c.scada_id
+    LEFT JOIN f2_utility_para p
+        ON c.box_device_id = p.box_device_id
+    ORDER BY s.fac, s.scada_id, c.box_id, c.box_device_id, p.plc_address
+    """, nativeQuery = true)
+    List<FacBoxDeviceParaProjection> findAllFacBoxDeviceParas();
 }
