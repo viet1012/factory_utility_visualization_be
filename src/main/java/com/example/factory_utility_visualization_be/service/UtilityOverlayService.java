@@ -25,7 +25,7 @@ public class UtilityOverlayService {
 	public OverlayPosDto upsert(OverlayPosDto dto) {
 
 		UtilityOverlayPos entity = repo
-				.findByFacIdAndBoxDeviceIdAndPlcAddress(
+				.findByFacIdAndBoxDeviceId(
 						dto.getFacId(),
 						dto.getBoxDeviceId()
 				)

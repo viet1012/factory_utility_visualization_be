@@ -11,7 +11,7 @@ public interface UtilityOverlayRepository
 
 	List<UtilityOverlayPos> findByFacId(String facId);
 
-	Optional<UtilityOverlayPos> findByFacIdAndBoxDeviceIdAndPlcAddress(
+	Optional<UtilityOverlayPos> findByFacIdAndBoxDeviceId(
 			String facId,
 			String boxDeviceId
 	);
