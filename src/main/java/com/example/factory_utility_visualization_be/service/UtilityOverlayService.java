@@ -27,14 +27,12 @@ public class UtilityOverlayService {
 		UtilityOverlayPos entity = repo
 				.findByFacIdAndBoxDeviceIdAndPlcAddress(
 						dto.getFacId(),
-						dto.getBoxDeviceId(),
-						dto.getPlcAddress()
+						dto.getBoxDeviceId()
 				)
 				.orElse(new UtilityOverlayPos());
 
 		entity.setFacId(dto.getFacId());
 		entity.setBoxDeviceId(dto.getBoxDeviceId());
-		entity.setPlcAddress(dto.getPlcAddress());
 		entity.setX(dto.getX());
 		entity.setY(dto.getY());
 		entity.setUpdatedAt(LocalDateTime.now());
@@ -48,7 +46,6 @@ public class UtilityOverlayService {
 		OverlayPosDto d = new OverlayPosDto();
 		d.setFacId(e.getFacId());
 		d.setBoxDeviceId(e.getBoxDeviceId());
-		d.setPlcAddress(e.getPlcAddress());
 		d.setX(e.getX());
 		d.setY(e.getY());
 		return d;

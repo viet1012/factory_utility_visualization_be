@@ -13,7 +13,6 @@ public interface UtilityOverlayRepository
 
 	Optional<UtilityOverlayPos> findByFacIdAndBoxDeviceIdAndPlcAddress(
 			String facId,
-			String boxDeviceId,
-			String plcAddress
+			String boxDeviceId
 	);
 }

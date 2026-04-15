@@ -7,14 +7,7 @@ import lombok.Setter;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(
-		name = "F2_Utility_Overlay_Pos",
-		uniqueConstraints = {
-				@UniqueConstraint(columnNames = {
-						"fac_id", "box_device_id", "plc_address"
-				})
-		}
-)
+@Table( name = "F2_Utility_Overlay_Group_Pos")
 @Getter
 @Setter
 public class UtilityOverlayPos {
@@ -29,8 +22,6 @@ public class UtilityOverlayPos {
 	@Column(name = "box_device_id", nullable = false)
 	private String boxDeviceId;
 
-	@Column(name = "plc_address", nullable = false)
-	private String plcAddress;
 
 	@Column(nullable = false)
 	private Double x;

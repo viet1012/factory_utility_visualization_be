@@ -8,7 +8,6 @@ public class OverlayPosDto {
 
 	private String facId;
 	private String boxDeviceId;
-	private String plcAddress;
 	private Double x;
 	private Double y;
 }
