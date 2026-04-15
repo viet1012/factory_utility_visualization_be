@@ -24,24 +24,26 @@ public class UtilityOverlayService {
 
 	public OverlayPosDto upsert(OverlayPosDto dto) {
 
-		UtilityOverlayPos entity = repo
-				.findByFacIdAndBoxDeviceId(
-						dto.getFacId(),
-						dto.getBoxDeviceId()
-				)
-				.orElse(new UtilityOverlayPos());
+		var list = repo.findByFacIdAndBoxDeviceId(
+				dto.getFacId(),
+				dto.getBoxDeviceId()
+		);
 
-		entity.setFacId(dto.getFacId());
-		entity.setBoxDeviceId(dto.getBoxDeviceId());
+		UtilityOverlayPos entity;
+
+		if (!list.isEmpty()) {
+			entity = list.get(0); // lấy record đầu
+		} else {
+			entity = new UtilityOverlayPos();
+			entity.setFacId(dto.getFacId());
+			entity.setBoxDeviceId(dto.getBoxDeviceId());
+		}
+
 		entity.setX(dto.getX());
 		entity.setY(dto.getY());
 		entity.setUpdatedAt(LocalDateTime.now());
-
-		repo.save(entity);
-
-		return toDto(entity);
+		return toDto(repo.save(entity));
 	}
-
 	private OverlayPosDto toDto(UtilityOverlayPos e) {
 		OverlayPosDto d = new OverlayPosDto();
 		d.setFacId(e.getFacId());
