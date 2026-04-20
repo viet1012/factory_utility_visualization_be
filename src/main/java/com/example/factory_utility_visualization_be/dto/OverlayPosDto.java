@@ -1,13 +1,15 @@
 package com.example.factory_utility_visualization_be.dto;
 
 
-import lombok.Data;
+import lombok.Getter;
+import lombok.Setter;
 
-@Data
+@Getter
+@Setter
 public class OverlayPosDto {
-
 	private String facId;
 	private String boxDeviceId;
 	private Double x;
 	private Double y;
+	private String direction;
 }

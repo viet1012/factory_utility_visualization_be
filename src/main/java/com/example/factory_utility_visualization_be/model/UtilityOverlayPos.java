@@ -6,8 +6,15 @@ import lombok.Setter;
 
 import java.time.LocalDateTime;
 
+
+import jakarta.persistence.*;
+import lombok.Getter;
+import lombok.Setter;
+
+import java.time.LocalDateTime;
+
 @Entity
-@Table( name = "F2_Utility_Overlay_Group_Pos")
+@Table(name = "F2_Utility_Overlay_Group_Pos")
 @Getter
 @Setter
 public class UtilityOverlayPos {
@@ -22,12 +29,14 @@ public class UtilityOverlayPos {
 	@Column(name = "box_device_id", nullable = false)
 	private String boxDeviceId;
 
-
 	@Column(nullable = false)
 	private Double x;
 
 	@Column(nullable = false)
 	private Double y;
+
+	@Column(name = "direction")
+	private String direction;
 
 	@Column(name = "updated_at")
 	private LocalDateTime updatedAt;

@@ -1,4 +1,5 @@
 package com.example.factory_utility_visualization_be.service;
+
 import com.example.factory_utility_visualization_be.dto.OverlayPosDto;
 import com.example.factory_utility_visualization_be.model.UtilityOverlayPos;
 import com.example.factory_utility_visualization_be.repository.UtilityOverlayRepository;
@@ -32,7 +33,7 @@ public class UtilityOverlayService {
 		UtilityOverlayPos entity;
 
 		if (!list.isEmpty()) {
-			entity = list.get(0); // lấy record đầu
+			entity = list.get(0);
 		} else {
 			entity = new UtilityOverlayPos();
 			entity.setFacId(dto.getFacId());
@@ -41,15 +42,19 @@ public class UtilityOverlayService {
 
 		entity.setX(dto.getX());
 		entity.setY(dto.getY());
+		entity.setDirection(dto.getDirection());
 		entity.setUpdatedAt(LocalDateTime.now());
+
 		return toDto(repo.save(entity));
 	}
+
 	private OverlayPosDto toDto(UtilityOverlayPos e) {
 		OverlayPosDto d = new OverlayPosDto();
 		d.setFacId(e.getFacId());
 		d.setBoxDeviceId(e.getBoxDeviceId());
 		d.setX(e.getX());
 		d.setY(e.getY());
+		d.setDirection(e.getDirection());
 		return d;
 	}
 }
