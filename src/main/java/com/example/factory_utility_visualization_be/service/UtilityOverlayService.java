@@ -24,7 +24,6 @@ public class UtilityOverlayService {
 	}
 
 	public OverlayPosDto upsert(OverlayPosDto dto) {
-
 		var list = repo.findByFacIdAndBoxDeviceId(
 				dto.getFacId(),
 				dto.getBoxDeviceId()
@@ -43,6 +42,7 @@ public class UtilityOverlayService {
 		entity.setX(dto.getX());
 		entity.setY(dto.getY());
 		entity.setDirection(dto.getDirection());
+		entity.setColor(dto.getColor()); // thêm
 		entity.setUpdatedAt(LocalDateTime.now());
 
 		return toDto(repo.save(entity));
@@ -55,6 +55,7 @@ public class UtilityOverlayService {
 		d.setX(e.getX());
 		d.setY(e.getY());
 		d.setDirection(e.getDirection());
+		d.setColor(e.getColor()); // thêm
 		return d;
 	}
 }

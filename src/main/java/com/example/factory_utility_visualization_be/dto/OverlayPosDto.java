@@ -12,4 +12,5 @@ public class OverlayPosDto {
 	private Double x;
 	private Double y;
 	private String direction;
+	private String color;
 }
