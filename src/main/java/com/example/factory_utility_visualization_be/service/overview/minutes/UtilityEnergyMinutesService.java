@@ -22,4 +22,6 @@ public class UtilityEnergyMinutesService {
 
 		return repo.findEnergyDeltaPerMinuteDto(fac, mins, metric);
 	}
+
+
 }

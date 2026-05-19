@@ -2,13 +2,19 @@ package com.example.factory_utility_visualization_be.service;
 
 
 import com.example.factory_utility_visualization_be.dto.*;
-import com.example.factory_utility_visualization_be.dto.mapper.*;
-import com.example.factory_utility_visualization_be.model.*;
-import com.example.factory_utility_visualization_be.repository.*;
-import com.example.factory_utility_visualization_be.request.*;
-import com.example.factory_utility_visualization_be.response.*;
-import lombok.*;
-import org.springframework.stereotype.*;
+import com.example.factory_utility_visualization_be.dto.mapper.HourPointView;
+import com.example.factory_utility_visualization_be.dto.mapper.MinutePointView;
+import com.example.factory_utility_visualization_be.model.F2UtilityPara;
+import com.example.factory_utility_visualization_be.model.F2UtilityScada;
+import com.example.factory_utility_visualization_be.model.F2UtilityScadaChannel;
+import com.example.factory_utility_visualization_be.repository.F2UtilityParaHistoryRepo;
+import com.example.factory_utility_visualization_be.repository.F2UtilityParaRepo;
+import com.example.factory_utility_visualization_be.repository.F2UtilityScadaChannelRepo;
+import com.example.factory_utility_visualization_be.repository.F2UtilityScadaRepo;
+import com.example.factory_utility_visualization_be.request.UtilitySeriesRequest;
+import com.example.factory_utility_visualization_be.response.UtilitySeriesResponse;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -23,6 +29,11 @@ public class UtilityQueryService {
 	private final F2UtilityScadaChannelRepo channelRepo;
 	private final F2UtilityParaRepo paraRepo;
 	private final F2UtilityParaHistoryRepo historyRepo;
+
+	// HELPER
+	private static String blankToNull(String s) {
+		return (s == null || s.isBlank()) ? null : s;
+	}
 
 	// 1) GET /scadas
 	public List<ScadaDto> getScadas() {
@@ -130,6 +141,7 @@ public class UtilityQueryService {
 					.build();
 		}).toList();
 	}
+
 	// 5) GET /latest/one?boxDeviceId=...&plcAddress=...
 	public LatestRecordDto getLatestOne(String boxDeviceId, String plcAddress) {
 		var h = historyRepo.findTopByBoxDeviceIdAndPlcAddressOrderByRecordedAtDesc(boxDeviceId, plcAddress)
@@ -151,6 +163,90 @@ public class UtilityQueryService {
 	}
 
 	public List<LatestRecordDto> getLatest(
+			String facId,
+			String scadaId,
+			String cate,
+			String boxDeviceId,
+			List<String> cateIds
+	) {
+		List<ChannelDto> channelDtos = getChannels(facId, scadaId, cate);
+
+		Set<String> filteredDeviceIds = channelDtos.stream()
+				.map(ChannelDto::getBoxDeviceId)
+				.collect(Collectors.toSet());
+
+		final List<String> deviceIds;
+
+		if (boxDeviceId != null && !boxDeviceId.isBlank()) {
+			if (!filteredDeviceIds.isEmpty() && !filteredDeviceIds.contains(boxDeviceId)) {
+				return List.of();
+			}
+			deviceIds = List.of(boxDeviceId);
+		} else {
+			deviceIds = filteredDeviceIds.isEmpty()
+					? List.of()
+					: new ArrayList<>(filteredDeviceIds);
+		}
+
+		// nếu user filter fac/scada/cate mà không ra device nào
+		if (deviceIds.isEmpty() && (facId != null || scadaId != null || cate != null)) {
+			return List.of();
+		}
+
+		int useDeviceIds = deviceIds.isEmpty() ? 0 : 1;
+		List<String> safeDeviceIds = useDeviceIds == 1
+				? deviceIds
+				: List.of("__NO_DEVICE__");
+
+		List<String> cateIdsNorm = cateIds == null
+				? List.of()
+				: cateIds.stream()
+				.filter(s -> s != null && !s.isBlank())
+				.toList();
+
+		int useCateIds = cateIdsNorm.isEmpty() ? 0 : 1;
+		List<String> safeCateIds = useCateIds == 1
+				? cateIdsNorm
+				: List.of("__NO_CATE__");
+
+		var rows = historyRepo.latestPerKey(
+				facId,
+				scadaId,
+				cate,
+				blankToNull(boxDeviceId),
+
+				useDeviceIds,
+				safeDeviceIds,
+
+				useCateIds,
+				safeCateIds
+		);
+
+		return rows.stream()
+				.map(r -> LatestRecordDto.builder()
+						.boxDeviceId(r.getBoxDeviceId())
+						.plcAddress(r.getPlcAddress())
+						.value(r.getValue())
+						.recordedAt(r.getRecordedAt())
+						.cateId(r.getCateId())
+						.scadaId(r.getScadaId())
+						.fac(r.getFac())
+						.cate(r.getCate())
+						.boxId(r.getBoxId())
+						.name_en(r.getNameEn())
+
+						// thêm alarm
+						.minVol(r.getMinVol())
+						.maxVol(r.getMaxVol())
+						.minVolStd(r.getMinVolStd())
+						.maxVolStd(r.getMaxVolStd())
+						.alarm(r.getAlarm() == null ? "Normal" : r.getAlarm())
+
+						.build())
+				.toList();
+	}
+
+	public List<LatestRecordDto> getLatestq(
 			String facId,
 			String scadaId,
 			String cate,
@@ -240,7 +336,6 @@ public class UtilityQueryService {
 		);
 	}
 
-
 	// 6) POST /series
 	public UtilitySeriesResponse getSeries(UtilitySeriesRequest req) {
 		if (req.getFrom() == null || req.getTo() == null) {
@@ -285,7 +380,6 @@ public class UtilityQueryService {
 		return UtilitySeriesResponse.builder().series(items).build();
 	}
 
-
 	public List<SumCompareDto> sumCompareByCateAndNameEn(
 			String facId,
 			String scadaId,
@@ -296,18 +390,18 @@ public class UtilityQueryService {
 			List<String> nameEns
 	) {
 		int useDeviceIds = (deviceIds != null && !deviceIds.isEmpty()) ? 1 : 0;
-		int useCateIds   = (cateIds != null && !cateIds.isEmpty()) ? 1 : 0;
-		int useNameEns   = (nameEns != null && !nameEns.isEmpty()) ? 1 : 0;
+		int useCateIds = (cateIds != null && !cateIds.isEmpty()) ? 1 : 0;
+		int useNameEns = (nameEns != null && !nameEns.isEmpty()) ? 1 : 0;
 
 		// ✅ tránh lỗi IN () bind rỗng trong native query
 		List<String> safeDeviceIds = (useDeviceIds == 1) ? deviceIds : List.of("__DUMMY__");
-		List<String> safeCateIds   = (useCateIds == 1) ? cateIds   : List.of("__DUMMY__");
-		List<String> safeNameEns   = (useNameEns == 1) ? nameEns   : List.of("__DUMMY__");
+		List<String> safeCateIds = (useCateIds == 1) ? cateIds : List.of("__DUMMY__");
+		List<String> safeNameEns = (useNameEns == 1) ? nameEns : List.of("__DUMMY__");
 
 		LocalDate today = LocalDate.now();
 		LocalDate yesterday = today.minusDays(1);
 
-		LocalDateTime nowCutoff  = today.atTime(23, 59, 59);
+		LocalDateTime nowCutoff = today.atTime(23, 59, 59);
 		LocalDateTime prevCutoff = yesterday.atTime(23, 59, 59);
 
 		List<Object[]> rows = historyRepo.sumCompareByCateAndNameEn(
@@ -322,9 +416,9 @@ public class UtilityQueryService {
 
 		return rows.stream().map(r -> {
 			String cateKey = r[0] == null ? "UNKNOWN" : r[0].toString();
-			String nameEn  = r[1] == null ? "UNKNOWN" : r[1].toString();
+			String nameEn = r[1] == null ? "UNKNOWN" : r[1].toString();
 
-			double nowV  = r[2] == null ? 0.0 : ((Number) r[2]).doubleValue();
+			double nowV = r[2] == null ? 0.0 : ((Number) r[2]).doubleValue();
 			double prevV = r[3] == null ? 0.0 : ((Number) r[3]).doubleValue();
 
 			double delta = nowV - prevV;
@@ -403,12 +497,6 @@ public class UtilityQueryService {
 				.cate(v.getCate())
 				.build()
 		).collect(Collectors.toList());
-	}
-
-
-	// HELPER
-	private static String blankToNull(String s) {
-		return (s == null || s.isBlank()) ? null : s;
 	}
 
 	private double round2(double v) {

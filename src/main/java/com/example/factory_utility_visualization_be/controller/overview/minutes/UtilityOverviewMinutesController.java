@@ -26,4 +26,6 @@ public class UtilityOverviewMinutesController {
 	) {
 		return svc.getEnergyPerMinute(facId, minutes, nameEn);
 	}
+
+
 }

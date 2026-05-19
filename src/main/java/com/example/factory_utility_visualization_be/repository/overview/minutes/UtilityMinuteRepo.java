@@ -67,4 +67,41 @@ public interface UtilityMinuteRepo extends JpaRepository<DummyEntity, Long> {
 				))
 				.toList();
 	}
+
+
+	@Query(value = """
+        WITH Base AS (
+            SELECT
+                pa.box_device_id,
+                pa.name_en,
+                hi.recorded_at,
+                hi.[value] - LAG(hi.[value]) OVER (
+                    PARTITION BY
+                        hi.box_device_id,
+                        hi.plc_address
+                    ORDER BY hi.recorded_at
+                ) AS delta_value
+            FROM F2_Utility_Para_History hi
+            INNER JOIN F2_Utility_Para pa
+                ON hi.box_device_id = pa.box_device_id
+               AND hi.plc_address  = pa.plc_address
+            WHERE hi.recorded_at > DATEADD(MINUTE, -:minutes, GETDATE())
+        )
+        SELECT
+            box_device_id,
+            name_en,
+            MAX(delta_value) AS power_usage
+        FROM Base
+        WHERE delta_value > 0
+          AND name_en = :nameEn
+        GROUP BY
+            box_device_id,
+            name_en
+        ORDER BY power_usage DESC
+        """, nativeQuery = true)
+	List<Object[]> findTopEnergyUsageRaw(
+			@Param("minutes") int minutes,
+			@Param("nameEn") String nameEn
+	);
+
 }
