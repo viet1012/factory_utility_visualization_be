@@ -91,44 +91,64 @@ public interface UtilitySignalHealthRepo
 
             ABS(ISNULL(l.value - l.prev_value,0)) AS jumpSize,
 
-            CASE
-                WHEN l.recorded_at < DATEADD(MINUTE,-5,GETDATE())
-                    THEN 'NO_DATA'
+			CASE
+			    WHEN l.recorded_at < DATEADD(MINUTE, -5, GETDATE())
+			        THEN 'NO_DATA'
+			
+			    WHEN l.value < 0
+			        THEN 'NEGATIVE_VALUE'
+			
+			    WHEN
+			        (
+			            pa.name_en IN ('Temperure data', 'Humity data')
+			            AND s.min_value = s.max_value
+			            AND l.recorded_at < DATEADD(MINUTE, -5, GETDATE())
+			        )
+			        OR
+			        (
+			            pa.name_en NOT IN ('Temperure data', 'Humity data')
+			            AND s.min_value = s.max_value
+			        )
+			        THEN 'STUCK_VALUE'
+			
+			    WHEN l.prev_value IS NOT NULL
+			         AND ABS(l.value - l.prev_value) > 1000
+			        THEN 'ABNORMAL_JUMP'
+			
+			    ELSE 'OK'
+			END AS status,
 
-                WHEN l.value < 0
-                    THEN 'NEGATIVE_VALUE'
-
-                WHEN s.min_value = s.max_value
-                    THEN 'STUCK_VALUE'
-
-                WHEN l.prev_value IS NOT NULL
-                     AND ABS(l.value - l.prev_value) > 1000
-                    THEN 'ABNORMAL_JUMP'
-
-                ELSE 'OK'
-            END AS status,
-
-            CASE
-                WHEN l.recorded_at < DATEADD(MINUTE,-5,GETDATE())
-                    THEN 'No update for more than 5 minutes'
-
-                WHEN l.value < 0
-                    THEN 'Current value is negative'
-
-                WHEN s.min_value = s.max_value
-                    THEN 'Last 5 readings are identical'
-
-                WHEN l.prev_value IS NOT NULL
-                     AND ABS(l.value - l.prev_value) > 1000
-                    THEN CONCAT(
-                        'Jump detected: ',
-                        CAST(l.prev_value AS VARCHAR(50)),
-                        ' -> ',
-                        CAST(l.value AS VARCHAR(50))
-                    )
-
-                ELSE 'Normal'
-            END AS description
+			CASE
+			    WHEN l.recorded_at < DATEADD(MINUTE, -5, GETDATE())
+			        THEN 'No update for more than 5 minutes'
+			
+			    WHEN l.value < 0
+			        THEN 'Current value is negative'
+			
+			    WHEN
+			        (
+			            pa.name_en IN ('Temperure data', 'Humity data')
+			            AND s.min_value = s.max_value
+			            AND l.recorded_at < DATEADD(MINUTE, -5, GETDATE())
+			        )
+			        OR
+			        (
+			            pa.name_en NOT IN ('Temperure data', 'Humity data')
+			            AND s.min_value = s.max_value
+			        )
+			        THEN 'Last 5 readings are identical'
+			
+			    WHEN l.prev_value IS NOT NULL
+			         AND ABS(l.value - l.prev_value) > 1000
+			        THEN CONCAT(
+			            'Jump detected: ',
+			            CAST(l.prev_value AS VARCHAR(50)),
+			            ' -> ',
+			            CAST(l.value AS VARCHAR(50))
+			        )
+			
+			    ELSE 'Normal'
+			END AS description
 
         FROM Latest l
 
@@ -234,44 +254,64 @@ public interface UtilitySignalHealthRepo
         l.prev_value AS prevValue,
         ABS(ISNULL(l.value - l.prev_value, 0)) AS jumpSize,
 
-        CASE
-            WHEN l.recorded_at < DATEADD(MINUTE, -5, GETDATE())
-                THEN 'NO_DATA'
+		CASE
+		    WHEN l.recorded_at < DATEADD(MINUTE, -5, GETDATE())
+		        THEN 'NO_DATA'
+		
+		    WHEN l.value < 0
+		        THEN 'NEGATIVE_VALUE'
+		
+		    WHEN
+		        (
+		            pa.name_en IN ('Temperure data', 'Humity data')
+		            AND s.min_value = s.max_value
+		            AND l.recorded_at < DATEADD(MINUTE, -5, GETDATE())
+		        )
+		        OR
+		        (
+		            pa.name_en NOT IN ('Temperure data', 'Humity data')
+		            AND s.min_value = s.max_value
+		        )
+		        THEN 'STUCK_VALUE'
+		
+		    WHEN l.prev_value IS NOT NULL
+		         AND ABS(l.value - l.prev_value) > 1000
+		        THEN 'ABNORMAL_JUMP'
+		
+		    ELSE 'OK'
+		END AS status,
 
-            WHEN l.value < 0
-                THEN 'NEGATIVE_VALUE'
-
-            WHEN s.min_value = s.max_value
-                THEN 'STUCK_VALUE'
-
-            WHEN l.prev_value IS NOT NULL
-                 AND ABS(l.value - l.prev_value) > 1000
-                THEN 'ABNORMAL_JUMP'
-
-            ELSE 'OK'
-        END AS status,
-
-        CASE
-            WHEN l.recorded_at < DATEADD(MINUTE, -5, GETDATE())
-                THEN 'No update for more than 5 minutes'
-
-            WHEN l.value < 0
-                THEN 'Current value is negative'
-
-            WHEN s.min_value = s.max_value
-                THEN 'Last 5 readings are identical'
-
-            WHEN l.prev_value IS NOT NULL
-                 AND ABS(l.value - l.prev_value) > 1000
-                THEN CONCAT(
-                    'Jump detected: ',
-                    CAST(l.prev_value AS VARCHAR(50)),
-                    ' -> ',
-                    CAST(l.value AS VARCHAR(50))
-                )
-
-            ELSE 'Normal'
-        END AS description
+		CASE
+		    WHEN l.recorded_at < DATEADD(MINUTE, -5, GETDATE())
+		        THEN 'No update for more than 5 minutes'
+		
+		    WHEN l.value < 0
+		        THEN 'Current value is negative'
+		
+		    WHEN
+		        (
+		            pa.name_en IN ('Temperure data', 'Humity data')
+		            AND s.min_value = s.max_value
+		            AND l.recorded_at < DATEADD(MINUTE, -5, GETDATE())
+		        )
+		        OR
+		        (
+		            pa.name_en NOT IN ('Temperure data', 'Humity data')
+		            AND s.min_value = s.max_value
+		        )
+		        THEN 'Last 5 readings are identical'
+		
+		    WHEN l.prev_value IS NOT NULL
+		         AND ABS(l.value - l.prev_value) > 1000
+		        THEN CONCAT(
+		            'Jump detected: ',
+		            CAST(l.prev_value AS VARCHAR(50)),
+		            ' -> ',
+		            CAST(l.value AS VARCHAR(50))
+		        )
+		
+		    ELSE 'Normal'
+		END AS description
 
     FROM Latest l
 
