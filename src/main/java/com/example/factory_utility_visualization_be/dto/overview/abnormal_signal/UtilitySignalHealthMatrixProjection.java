@@ -13,6 +13,8 @@ public interface UtilitySignalHealthMatrixProjection {
 
 	String getSignalName();
 
+	String getUnit();
+
 	String getBoxDeviceId();
 
 	String getPlcAddress();

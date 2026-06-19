@@ -158,6 +158,7 @@ public class UtilitySignalHealthService {
 					List<SignalHealthMatrixItemDto> signals = group.stream()
 							.map(row -> new SignalHealthMatrixItemDto(
 									row.getSignalName(),
+									row.getUnit(),          // NEW
 									row.getPlcAddress(),
 									row.getCurrentValue(),
 									row.getPrevValue(),

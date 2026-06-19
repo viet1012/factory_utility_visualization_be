@@ -5,6 +5,7 @@ import java.time.LocalDateTime;
 
 public record SignalHealthMatrixItemDto(
 		String signalName,
+		String unit,
 		String plcAddress,
 		Double currentValue,
 		Double prevValue,
