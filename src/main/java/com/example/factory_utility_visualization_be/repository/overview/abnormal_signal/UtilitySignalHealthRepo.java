@@ -19,17 +19,17 @@ public interface UtilitySignalHealthRepo
 				hi.plc_address,
 				hi.recorded_at,
 				hi.value,
-		
-		        LAG(hi.value) OVER (
-		            PARTITION BY hi.box_device_id, hi.plc_address
-		            ORDER BY hi.recorded_at
-		        ) AS prev_value,
-		
-		        ROW_NUMBER() OVER (
-		            PARTITION BY hi.box_device_id, hi.plc_address
-		            ORDER BY hi.recorded_at DESC
-		        ) AS rn_desc
-		    FROM dbo.F2_Utility_Para_History hi	),
+			
+			       LAG(hi.value) OVER (
+			           PARTITION BY hi.box_device_id, hi.plc_address
+			           ORDER BY hi.recorded_at
+			       ) AS prev_value,
+			
+			       ROW_NUMBER() OVER (
+			           PARTITION BY hi.box_device_id, hi.plc_address
+			           ORDER BY hi.recorded_at DESC
+			       ) AS rn_desc
+			   FROM dbo.F2_Utility_Para_History hi	),
 			
 			StuckCheck AS (
 			    SELECT
@@ -242,6 +242,11 @@ public interface UtilitySignalHealthRepo
 						   MAX(unit) AS unit
 			           FROM dbo.F2_Utility_Para
 			           WHERE name_en NOT LIKE 'Slave%'
+						             AND name_en NOT IN (
+                                                    'Total Apparent Power',
+                                                    'Total Reactive Power',
+                                                    'Total Reactive Energy'
+                                                )
 			           GROUP BY box_device_id, plc_address
 			       )
 			
@@ -259,7 +264,7 @@ public interface UtilitySignalHealthRepo
 			           ABS(ISNULL(l.value - l.prev_value, 0)) AS jumpSize,
 			
 			           CASE
-			               WHEN l.recorded_at < DATEADD(MINUTE, -5, GETDATE())
+			               WHEN l.recorded_at < DATEADD(MINUTE, -15, GETDATE())
 			                   THEN 'NO_DATA'
 			
 			               WHEN l.value < 0
@@ -267,13 +272,13 @@ public interface UtilitySignalHealthRepo
 			
 			               WHEN
 			                   (
-			                       pa.name_en IN ('Temperure data', 'Humity data')
+			                       pa.name_en IN ('Temperure data', 'Humity data', 'Total Apparent Power', 'Total Reactive Power', 'Total Reactive Energy')
 			                       AND s.min_value = s.max_value
-			                       AND l.recorded_at < DATEADD(MINUTE, -5, GETDATE())
+			                       AND l.recorded_at < DATEADD(MINUTE, -15, GETDATE())
 			                   )
 			                   OR
 			                   (
-			                       pa.name_en NOT IN ('Temperure data', 'Humity data')
+			                       pa.name_en NOT IN ('Temperure data', 'Humity data', 'Total Apparent Power', 'Total Reactive Power', 'Total Reactive Energy')
 			                       AND s.min_value = s.max_value
 			                   )
 			                   THEN 'STUCK_VALUE'
@@ -286,24 +291,24 @@ public interface UtilitySignalHealthRepo
 			           END AS status,
 			
 			           CASE
-			               WHEN l.recorded_at < DATEADD(MINUTE, -5, GETDATE())
-			                   THEN 'No update for more than 5 minutes'
+			               WHEN l.recorded_at < DATEADD(MINUTE, -15, GETDATE())
+			                   THEN 'No update for more than 15 minutes'
 			
 			               WHEN l.value < 0
 			                   THEN 'Current value is negative'
 			
 			               WHEN
 			                   (
-			                       pa.name_en IN ('Temperure data', 'Humity data')
+			                       pa.name_en IN ('Temperure data', 'Humity data', 'Total Apparent Power', 'Total Reactive Power', 'Total Reactive Energy')
 			                       AND s.min_value = s.max_value
-			                       AND l.recorded_at < DATEADD(MINUTE, -5, GETDATE())
+			                       AND l.recorded_at < DATEADD(MINUTE, -15, GETDATE())
 			                   )
 			                   OR
 			                   (
-			                       pa.name_en NOT IN ('Temperure data', 'Humity data')
+			                       pa.name_en NOT IN ('Temperure data', 'Humity data', 'Total Apparent Power', 'Total Reactive Power', 'Total Reactive Energy')
 			                       AND s.min_value = s.max_value
 			                   )
-			                   THEN 'Last 5 readings are identical'
+			                   THEN 'Last 15 readings are identical'
 			
 			               WHEN l.prev_value IS NOT NULL
 			                    AND ABS(l.value - l.prev_value) > 1000
