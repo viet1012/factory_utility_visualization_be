@@ -204,171 +204,171 @@ public interface UtilitySignalHealthRepo
 
 
 	@Query(value = """
-WITH H AS (
-    SELECT
-        hi.box_device_id,
-        hi.plc_address,
-        hi.recorded_at,
-        hi.value,
-
-        LAG(hi.value) OVER (
-            PARTITION BY hi.box_device_id, hi.plc_address
-            ORDER BY hi.recorded_at
-        ) AS prev_value,
-
-        ROW_NUMBER() OVER (
-            PARTITION BY hi.box_device_id, hi.plc_address
-            ORDER BY hi.recorded_at DESC
-        ) AS rn_desc
-    FROM dbo.F2_Utility_Para_History hi
-),
-
-StuckCheck AS (
-    SELECT
-        hi.box_device_id,
-        hi.plc_address,
-        COUNT(*) AS cnt_15m,
-        MIN(hi.value) AS min_value,
-        MAX(hi.value) AS max_value
-    FROM dbo.F2_Utility_Para_History hi
-    WHERE hi.recorded_at >= DATEADD(MINUTE, -15, GETDATE())
-    GROUP BY
-        hi.box_device_id,
-        hi.plc_address
-),
-
-ParaUnique AS (
-    SELECT
-        box_device_id,
-        plc_address,
-        MAX(name_en) AS name_en,
-        MAX(unit) AS unit
-    FROM dbo.F2_Utility_Para
-    WHERE name_en NOT LIKE 'Slave%'
-      AND name_en NOT IN (
-          'Total Apparent Power',
-          'Total Reactive Power',
-          'Total Reactive Energy'
-      )
-    GROUP BY
-        box_device_id,
-        plc_address
-)
-
-SELECT
-    sc.fac AS fac,
-    sc.scada_id AS scadaId,
-    ch.cate AS cate,
-    pa.name_en AS signalName,
-    pa.unit AS unit,
-    l.box_device_id AS boxDeviceId,
-    l.plc_address AS plcAddress,
-    l.recorded_at AS recordedAt,
-    l.value AS currentValue,
-    l.prev_value AS prevValue,
-    ABS(ISNULL(l.value - l.prev_value, 0)) AS jumpSize,
-
-    CASE
-        WHEN l.recorded_at < DATEADD(MINUTE, -15, GETDATE())
-            THEN 'NO_DATA'
-
-        WHEN pa.name_en = 'Average Power Factor'
-             AND (l.value < -1 OR l.value > 1)
-            THEN 'INVALID_POWER_FACTOR'
-
-        WHEN l.value < 0
-            THEN 'NEGATIVE_VALUE'
-
-        WHEN pa.name_en NOT IN ('Temperure data', 'Humity data')
-             AND l.recorded_at >= DATEADD(MINUTE, -15, GETDATE())
-             AND ISNULL(s.cnt_15m, 0) > 1
-             AND s.min_value = s.max_value
-            THEN 'STUCK_VALUE'
-
-        WHEN l.prev_value IS NOT NULL
-             AND ABS(l.value - l.prev_value) > 1000
-            THEN 'ABNORMAL_JUMP'
-
-        ELSE 'OK'
-    END AS status,
-
-    CASE
-        WHEN l.recorded_at < DATEADD(MINUTE, -15, GETDATE())
-            THEN 'No update for more than 15 minutes'
-
-        WHEN pa.name_en = 'Average Power Factor'
-             AND (l.value < -1 OR l.value > 1)
-            THEN 'Average Power Factor must be between -1 and 1'
-
-        WHEN l.value < 0
-            THEN 'Current value is negative'
-
-        WHEN pa.name_en NOT IN ('Temperure data', 'Humity data')
-             AND l.recorded_at >= DATEADD(MINUTE, -15, GETDATE())
-             AND ISNULL(s.cnt_15m, 0) > 1
-             AND s.min_value = s.max_value
-            THEN 'Value has not changed for 15 minutes'
-
-        WHEN l.prev_value IS NOT NULL
-             AND ABS(l.value - l.prev_value) > 1000
-            THEN CONCAT(
-                'Jump detected: ',
-                CAST(l.prev_value AS VARCHAR(50)),
-                ' -> ',
-                CAST(l.value AS VARCHAR(50))
-            )
-
-        ELSE 'Normal'
-    END AS description
-
-FROM H l
-
-LEFT JOIN StuckCheck s
-    ON l.box_device_id = s.box_device_id
-   AND l.plc_address = s.plc_address
-
-INNER JOIN ParaUnique pa
-    ON l.box_device_id = pa.box_device_id
-   AND l.plc_address = pa.plc_address
-
-INNER JOIN dbo.F2_Utility_Scada_Channel ch
-    ON l.box_device_id = ch.box_device_id
-
-INNER JOIN dbo.F2_Utility_Scada sc
-    ON ch.scada_id = sc.scada_id
-
-WHERE l.rn_desc = 1
-
-ORDER BY
-    sc.fac ASC,
-    ch.cate ASC,
-    sc.scada_id ASC,
-    l.box_device_id ASC,
-
-    CASE
-        WHEN l.recorded_at < DATEADD(MINUTE, -15, GETDATE())
-          OR (
-              pa.name_en = 'Average Power Factor'
-              AND (l.value < -1 OR l.value > 1)
-          )
-          OR l.value < 0
-          OR (
-              pa.name_en NOT IN ('Temperure data', 'Humity data')
-              AND l.recorded_at >= DATEADD(MINUTE, -15, GETDATE())
-              AND ISNULL(s.cnt_15m, 0) > 1
-              AND s.min_value = s.max_value
-          )
-          OR (
-              l.prev_value IS NOT NULL
-              AND ABS(l.value - l.prev_value) > 1000
-          )
-        THEN 0
-        ELSE 1
-    END ASC,
-
-    ABS(ISNULL(l.value - l.prev_value, 0)) DESC,
-    pa.name_en ASC
-""", nativeQuery = true)
+			WITH H AS (
+			    SELECT
+			        hi.box_device_id,
+			        hi.plc_address,
+			        hi.recorded_at,
+			        hi.value,
+			
+			        LAG(hi.value) OVER (
+			            PARTITION BY hi.box_device_id, hi.plc_address
+			            ORDER BY hi.recorded_at
+			        ) AS prev_value,
+			
+			        ROW_NUMBER() OVER (
+			            PARTITION BY hi.box_device_id, hi.plc_address
+			            ORDER BY hi.recorded_at DESC
+			        ) AS rn_desc
+			    FROM dbo.F2_Utility_Para_History hi
+			),
+			
+			StuckCheck AS (
+			    SELECT
+			        hi.box_device_id,
+			        hi.plc_address,
+			        COUNT(*) AS cnt_15m,
+			        MIN(hi.value) AS min_value,
+			        MAX(hi.value) AS max_value
+			    FROM dbo.F2_Utility_Para_History hi
+			    WHERE hi.recorded_at >= DATEADD(MINUTE, -15, GETDATE())
+			    GROUP BY
+			        hi.box_device_id,
+			        hi.plc_address
+			),
+			
+			ParaUnique AS (
+			    SELECT
+			        box_device_id,
+			        plc_address,
+			        MAX(name_en) AS name_en,
+			        MAX(unit) AS unit
+			    FROM dbo.F2_Utility_Para
+			    WHERE name_en NOT LIKE 'Slave%'
+			      AND name_en NOT IN (
+			          'Total Apparent Power',
+			          'Total Reactive Power',
+			          'Total Reactive Energy'
+			      )
+			    GROUP BY
+			        box_device_id,
+			        plc_address
+			)
+			
+			SELECT
+			    sc.fac AS fac,
+			    sc.scada_id AS scadaId,
+			    ch.cate AS cate,
+			    pa.name_en AS signalName,
+			    pa.unit AS unit,
+			    l.box_device_id AS boxDeviceId,
+			    l.plc_address AS plcAddress,
+			    l.recorded_at AS recordedAt,
+			    l.value AS currentValue,
+			    l.prev_value AS prevValue,
+			    ABS(ISNULL(l.value - l.prev_value, 0)) AS jumpSize,
+			
+			    CASE
+			        WHEN l.recorded_at < DATEADD(MINUTE, -15, GETDATE())
+			            THEN 'NO_DATA'
+			
+			        WHEN pa.name_en = 'Average Power Factor'
+			             AND (l.value < -1 OR l.value > 1)
+			            THEN 'INVALID_POWER_FACTOR'
+			
+			        WHEN l.value < 0
+			            THEN 'NEGATIVE_VALUE'
+			
+			        WHEN pa.name_en NOT IN ('Temperure data', 'Humity data')
+			             AND l.recorded_at >= DATEADD(MINUTE, -15, GETDATE())
+			             AND ISNULL(s.cnt_15m, 0) > 1
+			             AND s.min_value = s.max_value
+			            THEN 'STUCK_VALUE'
+			
+			        WHEN l.prev_value IS NOT NULL
+			             AND ABS(l.value - l.prev_value) > 1000
+			            THEN 'ABNORMAL_JUMP'
+			
+			        ELSE 'OK'
+			    END AS status,
+			
+			    CASE
+			        WHEN l.recorded_at < DATEADD(MINUTE, -15, GETDATE())
+			            THEN 'No update for more than 15 minutes'
+			
+			        WHEN pa.name_en = 'Average Power Factor'
+			             AND (l.value < -1 OR l.value > 1)
+			            THEN 'Average Power Factor must be between -1 and 1'
+			
+			        WHEN l.value < 0
+			            THEN 'Current value is negative'
+			
+			        WHEN pa.name_en NOT IN ('Temperure data', 'Humity data')
+			             AND l.recorded_at >= DATEADD(MINUTE, -15, GETDATE())
+			             AND ISNULL(s.cnt_15m, 0) > 1
+			             AND s.min_value = s.max_value
+			            THEN 'Value has not changed for 15 minutes'
+			
+			        WHEN l.prev_value IS NOT NULL
+			             AND ABS(l.value - l.prev_value) > 1000
+			            THEN CONCAT(
+			                'Jump detected: ',
+			                CAST(l.prev_value AS VARCHAR(50)),
+			                ' -> ',
+			                CAST(l.value AS VARCHAR(50))
+			            )
+			
+			        ELSE 'Normal'
+			    END AS description
+			
+			FROM H l
+			
+			LEFT JOIN StuckCheck s
+			    ON l.box_device_id = s.box_device_id
+			   AND l.plc_address = s.plc_address
+			
+			INNER JOIN ParaUnique pa
+			    ON l.box_device_id = pa.box_device_id
+			   AND l.plc_address = pa.plc_address
+			
+			INNER JOIN dbo.F2_Utility_Scada_Channel ch
+			    ON l.box_device_id = ch.box_device_id
+			
+			INNER JOIN dbo.F2_Utility_Scada sc
+			    ON ch.scada_id = sc.scada_id
+			
+			WHERE l.rn_desc = 1
+			
+			ORDER BY
+			    sc.fac ASC,
+			    ch.cate ASC,
+			    sc.scada_id ASC,
+			    l.box_device_id ASC,
+			
+			    CASE
+			        WHEN l.recorded_at < DATEADD(MINUTE, -15, GETDATE())
+			          OR (
+			              pa.name_en = 'Average Power Factor'
+			              AND (l.value < -1 OR l.value > 1)
+			          )
+			          OR l.value < 0
+			          OR (
+			              pa.name_en NOT IN ('Temperure data', 'Humity data')
+			              AND l.recorded_at >= DATEADD(MINUTE, -15, GETDATE())
+			              AND ISNULL(s.cnt_15m, 0) > 1
+			              AND s.min_value = s.max_value
+			          )
+			          OR (
+			              l.prev_value IS NOT NULL
+			              AND ABS(l.value - l.prev_value) > 1000
+			          )
+			        THEN 0
+			        ELSE 1
+			    END ASC,
+			
+			    ABS(ISNULL(l.value - l.prev_value, 0)) DESC,
+			    pa.name_en ASC
+			""", nativeQuery = true)
 	List<UtilitySignalHealthMatrixProjection> findSignalHealthMatrix1();
 
 
@@ -416,14 +416,37 @@ ORDER BY
 			        MAX(unit) AS unit
 			    FROM dbo.F2_Utility_Para
 			    WHERE name_en NOT LIKE 'Slave%'
-			    AND name_en NOT IN (
-				      'Total Apparent Power',
-				      'Total Reactive Power',
-				      'Total Reactive Energy'
-      			)
+			      AND name_en NOT IN (
+			          'Total Apparent Power',
+			          'Total Reactive Power',
+			          'Total Reactive Energy'
+			      )
 			    GROUP BY
 			        box_device_id,
 			        plc_address
+			),
+			
+			ScadaPipelinePressureAgg15 AS (
+			    SELECT
+			        sc.scada_id,
+			        SUM(hi.value) AS scada_sum_value
+			    FROM dbo.F2_Utility_Para_History hi
+			
+			    INNER JOIN dbo.F2_Utility_Para pa
+			        ON hi.box_device_id = pa.box_device_id
+			       AND hi.plc_address = pa.plc_address
+			
+			    INNER JOIN dbo.F2_Utility_Scada_Channel ch
+			        ON hi.box_device_id = ch.box_device_id
+			
+			    INNER JOIN dbo.F2_Utility_Scada sc
+			        ON ch.scada_id = sc.scada_id
+			
+			    WHERE hi.recorded_at >= DATEADD(MINUTE, -15, GETDATE())
+			      AND pa.name_en = 'Data Pipeline pressure'
+			
+			    GROUP BY
+			        sc.scada_id
 			)
 			
 			SELECT
@@ -451,8 +474,6 @@ ORDER BY
 			             AND l.value > 70
 			            THEN 'HIGH_HUMIDITY'
 			
-			       
-			
 			        WHEN pa.name_en IN ('Current I1', 'Current I2', 'Current I3')
 			             AND l.value = 0
 			            THEN 'ZERO_CURRENT'
@@ -475,7 +496,7 @@ ORDER BY
 			            THEN 'NEGATIVE_PRESSURE'
 			
 			        WHEN pa.name_en = 'Data Pipeline pressure'
-			             AND ISNULL(a.sum_value, l.value) < 0
+			             AND ISNULL(spa.scada_sum_value, l.value) < 0
 			            THEN 'NEGATIVE_PRESSURE'
 			
 			        WHEN pa.name_en = 'Cooling tank temperature data'
@@ -483,6 +504,10 @@ ORDER BY
 			            THEN 'HIGH_COOLING_TANK_TEMP'
 			
 					WHEN pa.name_en NOT LIKE 'Average Power Factor%'
+					     AND pa.name_en NOT IN (
+					         'Data Pipeline pressure',
+					         'Sensor compressed air pressure Data'
+					     )
 					     AND l.value < 0
 					    THEN 'NEGATIVE_VALUE'
 			
@@ -531,16 +556,20 @@ ORDER BY
 			            THEN 'Compressed air pressure sum is negative'
 			
 			        WHEN pa.name_en = 'Data Pipeline pressure'
-			             AND ISNULL(a.sum_value, l.value) < 0
-			            THEN 'Data Pipeline pressure sum is negative'
+			             AND ISNULL(spa.scada_sum_value, l.value) < 0
+			            THEN 'Data Pipeline pressure sum by SCADA is negative'
 			
 			        WHEN pa.name_en = 'Cooling tank temperature data'
 			             AND ISNULL(a.avg_value, l.value) > 35
 			            THEN 'Cooling tank average temperature is greater than 35C'
 			
-			        WHEN l.value < 0
-			            THEN 'Current value is negative'
-			
+					WHEN pa.name_en NOT LIKE 'Average Power Factor%'
+					     AND pa.name_en NOT IN (
+					         'Data Pipeline pressure',
+					         'Sensor compressed air pressure Data'
+					     )
+					     AND l.value < 0
+					    THEN 'Current value is negative'
 			        WHEN l.prev_value IS NOT NULL
 			             AND ABS(l.value - l.prev_value) > 1000
 			            THEN CONCAT(
@@ -569,6 +598,9 @@ ORDER BY
 			INNER JOIN dbo.F2_Utility_Scada sc
 			    ON ch.scada_id = sc.scada_id
 			
+			LEFT JOIN ScadaPipelinePressureAgg15 spa
+			    ON sc.scada_id = spa.scada_id
+			
 			WHERE l.rn_desc = 1
 			
 			ORDER BY
@@ -586,12 +618,17 @@ ORDER BY
 			          OR (pa.name_en IN ('Total Power', 'Total Energy Consumption') AND l.value <= 0)
 			          OR (pa.name_en IN ('Total Power', 'Total Energy Consumption') AND ISNULL(a.cnt_15m, 0) > 1 AND a.min_value = a.max_value)
 			          OR (pa.name_en LIKE 'Average Power Factor%' AND (l.value < -1 OR l.value > 1))
-			          OR (pa.name_en IN ('Sensor compressed air pressure Data', 'Data Pipeline pressure') AND ISNULL(a.sum_value, l.value) < 0)
+			          OR (pa.name_en = 'Sensor compressed air pressure Data' AND ISNULL(a.sum_value, l.value) < 0)
+			          OR (pa.name_en = 'Data Pipeline pressure' AND ISNULL(spa.scada_sum_value, l.value) < 0)
 			          OR (pa.name_en = 'Cooling tank temperature data' AND ISNULL(a.avg_value, l.value) > 35)
 					  OR (
-						   pa.name_en NOT LIKE 'Average Power Factor%'
-						   AND l.value < 0
-						 )
+					    pa.name_en NOT LIKE 'Average Power Factor%'
+					    AND pa.name_en NOT IN (
+					        'Data Pipeline pressure',
+					        'Sensor compressed air pressure Data'
+					    )
+					    AND l.value < 0
+					  )
 			          OR (l.prev_value IS NOT NULL AND ABS(l.value - l.prev_value) > 1000)
 			        THEN 0
 			        ELSE 1
