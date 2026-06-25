@@ -402,7 +402,7 @@ public interface UtilitySignalHealthRepo
 			        AVG(hi.value) AS avg_value,
 			        SUM(hi.value) AS sum_value
 			    FROM dbo.F2_Utility_Para_History hi
-			    WHERE hi.recorded_at >= DATEADD(MINUTE, -15, GETDATE())
+			    WHERE hi.recorded_at >= DATEADD(MINUTE, -60, GETDATE())
 			    GROUP BY
 			        hi.box_device_id,
 			        hi.plc_address
@@ -442,7 +442,7 @@ public interface UtilitySignalHealthRepo
 			    INNER JOIN dbo.F2_Utility_Scada sc
 			        ON ch.scada_id = sc.scada_id
 			
-			    WHERE hi.recorded_at >= DATEADD(MINUTE, -15, GETDATE())
+			    WHERE hi.recorded_at >= DATEADD(MINUTE, -60, GETDATE())
 			      AND pa.name_en = 'Data Pipeline pressure'
 			
 			    GROUP BY
@@ -463,7 +463,7 @@ public interface UtilitySignalHealthRepo
 			    ABS(ISNULL(l.value - l.prev_value, 0)) AS jumpSize,
 			
 			    CASE
-			        WHEN l.recorded_at < DATEADD(MINUTE, -15, GETDATE())
+			        WHEN l.recorded_at < DATEADD(MINUTE, -60, GETDATE())
 			            THEN 'NO_DATA'
 			
 			        WHEN pa.name_en = 'Temperure data'
@@ -474,9 +474,13 @@ public interface UtilitySignalHealthRepo
 			             AND l.value > 70
 			            THEN 'HIGH_HUMIDITY'
 			
-			        WHEN pa.name_en IN ('Current I1', 'Current I2', 'Current I3')
-			             AND l.value = 0
-			            THEN 'ZERO_CURRENT'
+					WHEN pa.name_en IN ('Current I1', 'Current I2', 'Current I3')
+					     AND l.value = 0
+					     AND NOT (
+					         l.box_device_id = 'P-1.1_MFM384'
+					         AND pa.name_en = 'Current I3'
+					     )
+					    THEN 'Current is 0, CT may be broken'
 			
 			        WHEN pa.name_en IN ('Total Power', 'Total Energy Consumption')
 			             AND l.value <= 0
@@ -519,8 +523,8 @@ public interface UtilitySignalHealthRepo
 			    END AS status,
 			
 			    CASE
-			        WHEN l.recorded_at < DATEADD(MINUTE, -15, GETDATE())
-			            THEN 'No update for more than 15 minutes'
+			        WHEN l.recorded_at < DATEADD(MINUTE, -60, GETDATE())
+			            THEN 'No update for more than 60 minutes'
 			
 			        WHEN pa.name_en = 'Temperure data'
 			             AND l.value >= 60
@@ -534,9 +538,13 @@ public interface UtilitySignalHealthRepo
 			             AND (l.value < 198 OR l.value > 242)
 			            THEN 'Voltage is outside normal range 198VAC - 242VAC'
 			
-			        WHEN pa.name_en IN ('Current I1', 'Current I2', 'Current I3')
-			             AND l.value = 0
-			            THEN 'Current is 0, CT may be broken'
+					WHEN pa.name_en IN ('Current I1', 'Current I2', 'Current I3')
+					     AND l.value = 0
+					     AND NOT (
+					         l.box_device_id = 'P-1.1_MFM384'
+					         AND pa.name_en = 'Current I3'
+					     )
+					    THEN 'Current is 0, CT may be broken'
 			
 			        WHEN pa.name_en IN ('Total Power', 'Total Energy Consumption')
 			             AND l.value <= 0
@@ -614,7 +622,14 @@ public interface UtilitySignalHealthRepo
 			          OR (pa.name_en = 'Temperure data' AND l.value >= 60)
 			          OR (pa.name_en = 'Humity data' AND l.value > 70)
 			          OR (pa.name_en IN ('Voltage V12', 'Voltage V23', 'Voltage V31') AND (l.value < 198 OR l.value > 242))
-			          OR (pa.name_en IN ('Current I1', 'Current I2', 'Current I3') AND l.value = 0)
+						OR (
+						    pa.name_en IN ('Current I1', 'Current I2', 'Current I3')
+						    AND l.value = 0
+						    AND NOT (
+						        l.box_device_id = 'P-1.1_MFM384'
+						        AND pa.name_en = 'Current I3'
+						    )
+						)
 			          OR (pa.name_en IN ('Total Power', 'Total Energy Consumption') AND l.value <= 0)
 			          OR (pa.name_en IN ('Total Power', 'Total Energy Consumption') AND ISNULL(a.cnt_15m, 0) > 1 AND a.min_value = a.max_value)
 			          OR (pa.name_en LIKE 'Average Power Factor%' AND (l.value < -1 OR l.value > 1))
