@@ -416,6 +416,11 @@ ORDER BY
 			        MAX(unit) AS unit
 			    FROM dbo.F2_Utility_Para
 			    WHERE name_en NOT LIKE 'Slave%'
+			    AND name_en NOT IN (
+				      'Total Apparent Power',
+				      'Total Reactive Power',
+				      'Total Reactive Energy'
+      			)
 			    GROUP BY
 			        box_device_id,
 			        plc_address
