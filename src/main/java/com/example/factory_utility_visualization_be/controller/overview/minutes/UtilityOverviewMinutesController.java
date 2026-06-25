@@ -1,7 +1,7 @@
 package com.example.factory_utility_visualization_be.controller.overview.minutes;
 
 import com.example.factory_utility_visualization_be.dto.overview.minutes.MinutePointDto;
-import com.example.factory_utility_visualization_be.service.overview.minutes.UtilityEnergyMinutesService;
+import com.example.factory_utility_visualization_be.service.overview.minutes.UtilityMinutesService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -15,16 +15,16 @@ import java.util.List;
 @RequestMapping("/api/utility")
 public class UtilityOverviewMinutesController {
 
-	private final UtilityEnergyMinutesService svc;
+	private final UtilityMinutesService svc;
 
 	// GET /api/utility/energy-minute?facId=Fac_B&minutes=60
 	@GetMapping("/energy-minute")
 	public List<MinutePointDto> energyMinute(
 			@RequestParam(required = false) String facId,
 			@RequestParam(required = false) Integer minutes,
-			@RequestParam(required = false) String nameEn
+			@RequestParam(required = false) String type
 	) {
-		return svc.getEnergyPerMinute(facId, minutes, nameEn);
+		return svc.getUtilityPerMinute(facId, minutes, type);
 	}
 
 

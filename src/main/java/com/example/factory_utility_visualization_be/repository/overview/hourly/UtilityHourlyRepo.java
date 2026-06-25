@@ -1,12 +1,14 @@
 package com.example.factory_utility_visualization_be.repository.overview.hourly;
 
 import com.example.factory_utility_visualization_be.dto.overview.hourly.HourlyCompareDto;
+import com.example.factory_utility_visualization_be.dto.overview.hourly.HourlyTempCompareDto;
 import com.example.factory_utility_visualization_be.model.DummyEntity;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.math.BigDecimal;
+import java.sql.Timestamp;
 import java.util.List;
 
 public interface UtilityHourlyRepo extends JpaRepository<DummyEntity, Long> {
@@ -163,6 +165,50 @@ public interface UtilityHourlyRepo extends JpaRepository<DummyEntity, Long> {
 			@Param("sepzone") BigDecimal sepzone
 	);
 
+	@Query(value = """
+			WITH CleanData AS (
+			    SELECT *
+			    FROM dbo.F2_Utility_Para_History
+			    WHERE recorded_at > DATEADD(HOUR, -:hours, GETDATE())
+			      AND [value] > 0
+			),
+			HourlyTemp AS (
+			    SELECT
+			        DATEADD(HOUR, DATEDIFF(HOUR, 0, hi.recorded_at), 0) AS hour_time,
+			        AVG(hi.[value]) AS avg_temp
+			    FROM CleanData hi
+			    INNER JOIN dbo.F2_Utility_Para pa
+			        ON hi.box_device_id = pa.box_device_id
+			       AND hi.plc_address  = pa.plc_address
+			    INNER JOIN dbo.F2_Utility_Scada_Channel ch
+			        ON hi.box_device_id = ch.box_device_id
+			    INNER JOIN dbo.F2_Utility_Scada sc
+			        ON ch.scada_id = sc.scada_id
+			    WHERE pa.name_en LIKE '%Cooling tank%'
+			      AND (:fac = 'KVH' OR sc.fac = :fac)
+			    GROUP BY DATEADD(HOUR, DATEDIFF(HOUR, 0, hi.recorded_at), 0)
+			),
+			Compare AS (
+			    SELECT
+			        hour_time,
+			        avg_temp AS current_temp,
+			        LAG(avg_temp) OVER (ORDER BY hour_time) AS previous_temp
+			    FROM HourlyTemp
+			)
+			SELECT
+			    hour_time,
+			    current_temp,
+			    previous_temp,
+			    current_temp - previous_temp AS diff_temp
+			FROM Compare
+			ORDER BY hour_time
+			""", nativeQuery = true)
+	List<Object[]> findCoolingTankHourlyCompareRaw(
+			@Param("fac") String fac,
+			@Param("hours") int hours
+	);
+
+
 	default List<HourlyCompareDto> hourlyCompareDto(
 			String fac,
 			int hours,
@@ -180,4 +226,19 @@ public interface UtilityHourlyRepo extends JpaRepository<DummyEntity, Long> {
 				))
 				.toList();
 	}
+
+	default List<HourlyTempCompareDto> findCoolingTankHourlyCompareDto(
+			String fac,
+			int hours
+	) {
+		return findCoolingTankHourlyCompareRaw(fac, hours).stream()
+				.map(r -> new HourlyTempCompareDto(
+						((Timestamp) r[0]).toLocalDateTime(),
+						r[1] == null ? null : new BigDecimal(r[1].toString()),
+						r[2] == null ? null : new BigDecimal(r[2].toString()),
+						r[3] == null ? null : new BigDecimal(r[3].toString())
+				))
+				.toList();
+	}
+
 }

@@ -2,35 +2,19 @@ package com.example.factory_utility_visualization_be.service.overview.hourly;
 
 
 import com.example.factory_utility_visualization_be.dto.overview.hourly.HourlyCompareDto;
+import com.example.factory_utility_visualization_be.dto.overview.hourly.HourlyTempCompareDto;
 import com.example.factory_utility_visualization_be.repository.overview.hourly.UtilityHourlyRepo;
-import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.util.List;
-//
-//@Service
-//@RequiredArgsConstructor
-//
-//public class UtilityEnergyHourlyService {
-//	private final UtilityHourlyRepo repo;
-//
-//	public List<HourlyCompareDto> getHourly(String fac, int hours, String nameEn) {
-//		final String metric = (nameEn == null || nameEn.isBlank())
-//				? "Total Energy Consumption"
-//				: nameEn.trim();
-//
-//		return repo.hourlyCompareDto(fac, hours, metric);
-//	}
-//}
-
 
 @Service
-public class UtilityEnergyHourlyService {
+public class UtilityHourlyService {
 
 	private final UtilityHourlyRepo repo;
 
-	public UtilityEnergyHourlyService(UtilityHourlyRepo repo) {
+	public UtilityHourlyService(UtilityHourlyRepo repo) {
 		this.repo = repo;
 	}
 
@@ -56,5 +40,15 @@ public class UtilityEnergyHourlyService {
 						: sepzone;
 
 		return repo.hourlyCompareDto(fac, hours, metric, safeExchange, safeSepzone);
+	}
+
+	public List<HourlyTempCompareDto> getCoolingTankHourly(
+			String facId,
+			Integer hours
+	) {
+		String fac = facId == null || facId.isBlank() ? "KVH" : facId.trim();
+		int h = hours == null || hours <= 0 ? 24 : Math.min(hours, 24 * 7);
+
+		return repo.findCoolingTankHourlyCompareDto(fac, h);
 	}
 }
