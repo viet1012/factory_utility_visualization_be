@@ -77,7 +77,6 @@ import org.springframework.data.repository.query.Param;
 
 import java.sql.Timestamp;
 import java.util.List;
-
 public interface UtilityMinuteRepo extends JpaRepository<DummyEntity, Long> {
 
 	@Query(value = """
@@ -125,21 +124,21 @@ public interface UtilityMinuteRepo extends JpaRepository<DummyEntity, Long> {
                     AND pa.name_en LIKE '%Cooling tank%')
 
              OR (:type = 'AIR'
-                    AND ch.cate = 'Compressed Air')
+                    AND pa.name_en = 'Slave sensor compressed air pressure')
           )
     )
     SELECT
         minute_time AS ts,
 
         CASE
-            WHEN :type = 'WATER'
+            WHEN :type IN ('WATER', 'AIR')
                 THEN AVG([value])
             ELSE SUM(value_per_minute)
         END AS value
 
     FROM Base
     WHERE
-        (:type = 'WATER')
+        (:type IN ('WATER', 'AIR'))
         OR (
             value_per_minute IS NOT NULL
             AND value_per_minute >= 0
