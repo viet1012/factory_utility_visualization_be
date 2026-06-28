@@ -77,95 +77,6 @@ import org.springframework.data.repository.query.Param;
 
 import java.sql.Timestamp;
 import java.util.List;
-public interface UtilityMinuteRepo extends JpaRepository<DummyEntity, Long> {
-
-	@Query(value = """
-    WITH CleanData AS (
-        SELECT *
-        FROM F2_Utility_Para_History
-        WHERE recorded_at > DATEADD(MINUTE, -:minutes, GETDATE())
-          AND [value] > 0
-    ),
-    Base AS (
-        SELECT
-            sc.fac,
-            ch.cate,
-            pa.name_en,
-            pa.box_device_id,
-            hi.plc_address,
-            hi.[value],
-            hi.recorded_at,
-
-            DATEADD(MINUTE, DATEDIFF(MINUTE, 0, hi.recorded_at), 0) AS minute_time,
-
-            hi.[value] - LAG(hi.[value]) OVER (
-                PARTITION BY hi.box_device_id, hi.plc_address
-                ORDER BY hi.recorded_at
-            ) AS value_per_minute
-
-        FROM CleanData hi
-
-        INNER JOIN F2_Utility_Para pa
-            ON hi.box_device_id = pa.box_device_id
-           AND hi.plc_address  = pa.plc_address
-
-        INNER JOIN F2_Utility_Scada_Channel ch
-            ON hi.box_device_id = ch.box_device_id
-
-        INNER JOIN F2_Utility_Scada sc
-            ON ch.scada_id = sc.scada_id
-
-        WHERE (:fac = 'KVH' OR sc.fac = :fac)
-          AND (
-                (:type = 'ELECTRICITY'
-                    AND pa.name_en = 'Total Energy Consumption')
-
-             OR (:type = 'WATER'
-                    AND pa.name_en LIKE '%Cooling tank%')
-
-             OR (:type = 'AIR'
-                    AND pa.name_en = 'Slave sensor compressed air pressure')
-          )
-    )
-    SELECT
-        minute_time AS ts,
-
-        CASE
-            WHEN :type IN ('WATER', 'AIR')
-                THEN AVG([value])
-            ELSE SUM(value_per_minute)
-        END AS value
-
-    FROM Base
-    WHERE
-        (:type IN ('WATER', 'AIR'))
-        OR (
-            value_per_minute IS NOT NULL
-            AND value_per_minute >= 0
-        )
-
-    GROUP BY minute_time
-    ORDER BY minute_time
-    """, nativeQuery = true)
-	List<Object[]> findUtilityDeltaPerMinute(
-			@Param("fac") String fac,
-			@Param("minutes") int minutes,
-			@Param("type") String type
-	);
-
-	default List<MinutePointDto> findUtilityDeltaPerMinuteDto(
-			String fac,
-			int minutes,
-			String type
-	) {
-		return findUtilityDeltaPerMinute(fac, minutes, type).stream()
-				.map(r -> new MinutePointDto(
-						((Timestamp) r[0]).toLocalDateTime(),
-						r[1] == null ? null : ((Number) r[1]).doubleValue()
-				))
-				.toList();
-	}
-}
 
 //public interface UtilityMinuteRepo extends JpaRepository<DummyEntity, Long> {
 //
@@ -185,14 +96,6 @@ public interface UtilityMinuteRepo extends JpaRepository<DummyEntity, Long> {
 //            hi.plc_address,
 //            hi.[value],
 //            hi.recorded_at,
-//
-//            CASE
-//                WHEN pa.name_en LIKE '%Cooling tank%'
-//                    THEN 'Cooling tank'
-//                WHEN pa.name_en = 'Data Pipeline pressure'
-//                    THEN 'Data Pipeline pressure'
-//                ELSE pa.name_en
-//            END AS signal_group,
 //
 //            DATEADD(MINUTE, DATEDIFF(MINUTE, 0, hi.recorded_at), 0) AS minute_time,
 //
@@ -219,49 +122,31 @@ public interface UtilityMinuteRepo extends JpaRepository<DummyEntity, Long> {
 //                    AND pa.name_en = 'Total Energy Consumption')
 //
 //             OR (:type = 'WATER'
-//                    AND (
-//                        pa.name_en LIKE '%Cooling tank%'
-//                        OR pa.name_en = 'Data Pipeline pressure'
-//                    ))
+//                    AND pa.name_en LIKE '%Cooling tank%')
 //
 //             OR (:type = 'AIR'
-//                    AND ch.cate = 'Compressed Air')
+//                    AND pa.name_en = 'Slave sensor compressed air pressure')
 //          )
 //    )
 //    SELECT
 //        minute_time AS ts,
 //
 //        CASE
-//            WHEN :type = 'WATER'
+//            WHEN :type IN ('WATER', 'AIR')
 //                THEN AVG([value])
 //            ELSE SUM(value_per_minute)
-//        END AS value,
-//
-//        CASE
-//            WHEN :type = 'WATER'
-//                THEN signal_group
-//            ELSE :type
-//        END AS name
+//        END AS value
 //
 //    FROM Base
 //    WHERE
-//        (:type = 'WATER')
+//        (:type IN ('WATER', 'AIR'))
 //        OR (
 //            value_per_minute IS NOT NULL
 //            AND value_per_minute >= 0
 //        )
 //
-//    GROUP BY
-//        minute_time,
-//        CASE
-//            WHEN :type = 'WATER'
-//                THEN signal_group
-//            ELSE :type
-//        END
-//
-//    ORDER BY
-//        minute_time,
-//        name
+//    GROUP BY minute_time
+//    ORDER BY minute_time
 //    """, nativeQuery = true)
 //	List<Object[]> findUtilityDeltaPerMinute(
 //			@Param("fac") String fac,
@@ -277,9 +162,139 @@ public interface UtilityMinuteRepo extends JpaRepository<DummyEntity, Long> {
 //		return findUtilityDeltaPerMinute(fac, minutes, type).stream()
 //				.map(r -> new MinutePointDto(
 //						((Timestamp) r[0]).toLocalDateTime(),
-//						r[1] == null ? null : ((Number) r[1]).doubleValue(),
-//						(String) r[2]
+//						r[1] == null ? null : ((Number) r[1]).doubleValue()
 //				))
 //				.toList();
 //	}
 //}
+public interface UtilityMinuteRepo extends JpaRepository<DummyEntity, Long> {
+
+	@Query(value = """
+			    WITH CleanData AS (
+			        SELECT *
+			        FROM F2_Utility_Para_History
+			        WHERE recorded_at > DATEADD(MINUTE, -:minutes, GETDATE())
+			          AND [value] > 0
+			    ),
+			    Base AS (
+			        SELECT
+			            sc.fac,
+			            ch.cate,
+			            pa.name_en,
+			            pa.box_device_id,
+			            hi.plc_address,
+			            hi.[value],
+			            hi.recorded_at,
+			
+			            DATEADD(MINUTE, DATEDIFF(MINUTE, 0, hi.recorded_at), 0) AS minute_time,
+			
+			            hi.[value] - LAG(hi.[value]) OVER (
+			                PARTITION BY hi.box_device_id, hi.plc_address
+			                ORDER BY hi.recorded_at
+			            ) AS value_per_minute
+			
+			        FROM CleanData hi
+			
+			        INNER JOIN F2_Utility_Para pa
+			            ON hi.box_device_id = pa.box_device_id
+			           AND hi.plc_address  = pa.plc_address
+			
+			        INNER JOIN F2_Utility_Scada_Channel ch
+			            ON hi.box_device_id = ch.box_device_id
+			
+			        INNER JOIN F2_Utility_Scada sc
+			            ON ch.scada_id = sc.scada_id
+			
+			        WHERE (:fac = 'KVH' OR sc.fac = :fac)
+			          AND (
+			                (:type = 'ELECTRICITY'
+			                    AND pa.name_en = 'Total Energy Consumption')
+			
+			             OR (:type = 'WATER'
+			                    AND pa.name_en LIKE '%Cooling tank%')
+			
+			             OR (:type = 'AIR'
+			                    AND pa.name_en = 'Sensor compressed air pressure Data')
+			          )
+			    )
+			
+			    SELECT
+			        minute_time AS ts,
+			        SUM(value_per_minute) AS value,
+			        'ELECTRICITY' AS name
+			    FROM Base
+			    WHERE :type = 'ELECTRICITY'
+			      AND value_per_minute IS NOT NULL
+			      AND value_per_minute >= 0
+			    GROUP BY
+			        minute_time
+			
+			UNION ALL
+			
+			SELECT
+			    minute_time AS ts,
+			    [value] AS value,
+			    fac AS name
+			FROM (
+			    SELECT
+			        minute_time,
+			        fac,
+			        [value],
+			        ROW_NUMBER() OVER (
+			            PARTITION BY minute_time, fac
+			            ORDER BY [value] DESC
+			        ) AS rn
+			    FROM Base
+			    WHERE :type = 'WATER'
+			      AND :fac = 'KVH'
+			) x
+			WHERE rn = 1
+			
+			UNION ALL
+			
+			SELECT
+			    minute_time AS ts,
+			    MAX([value]) AS value,
+			    CONCAT(box_device_id, ' - ', name_en) AS name
+			FROM Base
+			WHERE :type = 'WATER'
+			  AND :fac <> 'KVH'
+			GROUP BY
+			    minute_time,
+			    box_device_id,
+			    name_en
+			    UNION ALL
+			
+			    SELECT
+			        minute_time AS ts,
+			        AVG([value]) AS value,
+			        'AIR' AS name
+			    FROM Base
+			    WHERE :type = 'AIR'
+			    GROUP BY
+			        minute_time
+			
+			    ORDER BY
+			        ts,
+			        name
+			""", nativeQuery = true)
+	List<Object[]> findUtilityDeltaPerMinute(
+			@Param("fac") String fac,
+			@Param("minutes") int minutes,
+			@Param("type") String type
+	);
+
+	default List<MinutePointDto> findUtilityDeltaPerMinuteDto(
+			String fac,
+			int minutes,
+			String type
+	) {
+		return findUtilityDeltaPerMinute(fac, minutes, type).stream()
+				.map(r -> new MinutePointDto(
+						((Timestamp) r[0]).toLocalDateTime(),
+						r[1] == null ? null : ((Number) r[1]).doubleValue(),
+						r[2] == null ? null : r[2].toString()
+				))
+				.toList();
+	}
+}
