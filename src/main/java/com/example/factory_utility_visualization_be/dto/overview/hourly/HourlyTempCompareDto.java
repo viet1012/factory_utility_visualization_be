@@ -10,8 +10,10 @@ import java.time.LocalDateTime;
 @Data
 @AllArgsConstructor
 public class HourlyTempCompareDto {
-	private LocalDateTime hourTime;
-	private BigDecimal currentTemp;
-	private BigDecimal previousTemp;
-	private BigDecimal diffTemp;
+
+	private Integer scaleHour;
+
+	private BigDecimal yesterday;
+
+	private BigDecimal today;
 }

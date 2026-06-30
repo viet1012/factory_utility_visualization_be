@@ -8,7 +8,6 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.math.BigDecimal;
-import java.sql.Timestamp;
 import java.util.List;
 
 public interface UtilityHourlyRepo extends JpaRepository<DummyEntity, Long> {
@@ -166,42 +165,63 @@ public interface UtilityHourlyRepo extends JpaRepository<DummyEntity, Long> {
 	);
 
 	@Query(value = """
+			
 			WITH CleanData AS (
-			    SELECT *
-			    FROM dbo.F2_Utility_Para_History
-			    WHERE recorded_at > DATEADD(HOUR, -:hours, GETDATE())
-			      AND [value] > 0
+			   SELECT *
+			   FROM dbo.F2_Utility_Para_History_Main
+			   WHERE pick_at >= DATEADD(DAY, -1, CAST(GETDATE() AS DATE))
+			     AND pick_at <  DATEADD(DAY, 1, CAST(GETDATE() AS DATE))
+			     AND [value] > 0
 			),
-			HourlyTemp AS (
+			T1 AS (
 			    SELECT
-			        DATEADD(HOUR, DATEDIFF(HOUR, 0, hi.recorded_at), 0) AS hour_time,
-			        AVG(hi.[value]) AS avg_temp
+			        DATEPART(HOUR, hi.pick_at) AS HourNumber,
+			        CAST(hi.pick_at AS DATE) AS record_date,
+			        hi.[value]
 			    FROM CleanData hi
 			    INNER JOIN dbo.F2_Utility_Para pa
 			        ON hi.box_device_id = pa.box_device_id
-			       AND hi.plc_address  = pa.plc_address
+			       AND hi.plc_address = pa.plc_address
 			    INNER JOIN dbo.F2_Utility_Scada_Channel ch
 			        ON hi.box_device_id = ch.box_device_id
 			    INNER JOIN dbo.F2_Utility_Scada sc
 			        ON ch.scada_id = sc.scada_id
 			    WHERE pa.name_en LIKE '%Cooling tank%'
 			      AND (:fac = 'KVH' OR sc.fac = :fac)
-			    GROUP BY DATEADD(HOUR, DATEDIFF(HOUR, 0, hi.recorded_at), 0)
 			),
-			Compare AS (
+			HourlyData AS (
 			    SELECT
-			        hour_time,
-			        avg_temp AS current_temp,
-			        LAG(avg_temp) OVER (ORDER BY hour_time) AS previous_temp
-			    FROM HourlyTemp
+			        HourNumber,
+			        record_date,
+			        AVG(CAST([value] AS DECIMAL(10,2))) AS AvgTemp
+			    FROM T1
+			    GROUP BY
+			        HourNumber,
+			        record_date
 			)
-			SELECT
-			    hour_time,
-			    current_temp,
-			    previous_temp,
-			    current_temp - previous_temp AS diff_temp
-			FROM Compare
-			ORDER BY hour_time
+					SELECT
+				    HourNumber AS scaleHour,
+			
+						CAST(
+						    ROUND(
+						        AVG(CASE
+						            WHEN record_date = DATEADD(DAY, -1, CAST(GETDATE() AS DATE))
+						            THEN AvgTemp
+						        END), 1
+						    ) AS DECIMAL(10,1)
+						) AS yesterday,
+			
+						CAST(
+						    ROUND(
+						        AVG(CASE
+						            WHEN record_date = CAST(GETDATE() AS DATE)
+						            THEN AvgTemp
+						        END), 1
+						    ) AS DECIMAL(10,1)
+						) AS today
+									FROM HourlyData
+									GROUP BY HourNumber
+									ORDER BY HourNumber
 			""", nativeQuery = true)
 	List<Object[]> findCoolingTankHourlyCompareRaw(
 			@Param("fac") String fac,
@@ -233,10 +253,9 @@ public interface UtilityHourlyRepo extends JpaRepository<DummyEntity, Long> {
 	) {
 		return findCoolingTankHourlyCompareRaw(fac, hours).stream()
 				.map(r -> new HourlyTempCompareDto(
-						((Timestamp) r[0]).toLocalDateTime(),
+						((Number) r[0]).intValue(),
 						r[1] == null ? null : new BigDecimal(r[1].toString()),
-						r[2] == null ? null : new BigDecimal(r[2].toString()),
-						r[3] == null ? null : new BigDecimal(r[3].toString())
+						r[2] == null ? null : new BigDecimal(r[2].toString())
 				))
 				.toList();
 	}
