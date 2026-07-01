@@ -44,11 +44,20 @@ public class UtilityHourlyService {
 
 	public List<HourlyTempCompareDto> getCoolingTankHourly(
 			String facId,
-			Integer hours
+			String type
 	) {
-		String fac = facId == null || facId.isBlank() ? "KVH" : facId.trim();
-		int h = hours == null || hours <= 0 ? 24 : Math.min(hours, 24 * 7);
+		String fac = facId == null || facId.isBlank()
+				? "KVH"
+				: facId.trim();
 
-		return repo.findCoolingTankHourlyCompareDto(fac, h);
+		String utilityType = type == null || type.isBlank()
+				? "WATER"
+				: type.trim().toUpperCase();
+
+		if (!utilityType.equals("WATER") && !utilityType.equals("AIR")) {
+			utilityType = "WATER";
+		}
+
+		return repo.findCoolingTankHourlyCompareDto(fac, utilityType);
 	}
 }

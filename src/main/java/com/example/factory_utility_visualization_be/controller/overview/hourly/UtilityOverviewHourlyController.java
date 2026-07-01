@@ -33,11 +33,11 @@ public class UtilityOverviewHourlyController {
 				service.getHourly(facId, hours, nameEn, exchange, sepzone);
 	}
 
-	@GetMapping("/cooling-tank/hourly")
+	@GetMapping("/cooling-tank-hourly")
 	public List<HourlyTempCompareDto> getCoolingTankHourly(
 			@RequestParam(required = false) String facId,
-			@RequestParam(required = false) Integer hours
+			@RequestParam(required = false, defaultValue = "WATER") String type
 	) {
-		return service.getCoolingTankHourly(facId, hours);
+		return service.getCoolingTankHourly(facId, type);
 	}
 }

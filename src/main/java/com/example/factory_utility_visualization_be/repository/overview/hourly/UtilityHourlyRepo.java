@@ -164,69 +164,6 @@ public interface UtilityHourlyRepo extends JpaRepository<DummyEntity, Long> {
 			@Param("sepzone") BigDecimal sepzone
 	);
 
-	@Query(value = """
-			
-			WITH CleanData AS (
-			   SELECT *
-			   FROM dbo.F2_Utility_Para_History_Main
-			   WHERE pick_at >= DATEADD(DAY, -1, CAST(GETDATE() AS DATE))
-			     AND pick_at <  DATEADD(DAY, 1, CAST(GETDATE() AS DATE))
-			     AND [value] > 0
-			),
-			T1 AS (
-			    SELECT
-			        DATEPART(HOUR, hi.pick_at) AS HourNumber,
-			        CAST(hi.pick_at AS DATE) AS record_date,
-			        hi.[value]
-			    FROM CleanData hi
-			    INNER JOIN dbo.F2_Utility_Para pa
-			        ON hi.box_device_id = pa.box_device_id
-			       AND hi.plc_address = pa.plc_address
-			    INNER JOIN dbo.F2_Utility_Scada_Channel ch
-			        ON hi.box_device_id = ch.box_device_id
-			    INNER JOIN dbo.F2_Utility_Scada sc
-			        ON ch.scada_id = sc.scada_id
-			    WHERE pa.name_en LIKE '%Cooling tank%'
-			      AND (:fac = 'KVH' OR sc.fac = :fac)
-			),
-			HourlyData AS (
-			    SELECT
-			        HourNumber,
-			        record_date,
-			        AVG(CAST([value] AS DECIMAL(10,2))) AS AvgTemp
-			    FROM T1
-			    GROUP BY
-			        HourNumber,
-			        record_date
-			)
-					SELECT
-				    HourNumber AS scaleHour,
-			
-						CAST(
-						    ROUND(
-						        AVG(CASE
-						            WHEN record_date = DATEADD(DAY, -1, CAST(GETDATE() AS DATE))
-						            THEN AvgTemp
-						        END), 1
-						    ) AS DECIMAL(10,1)
-						) AS yesterday,
-			
-						CAST(
-						    ROUND(
-						        AVG(CASE
-						            WHEN record_date = CAST(GETDATE() AS DATE)
-						            THEN AvgTemp
-						        END), 1
-						    ) AS DECIMAL(10,1)
-						) AS today
-									FROM HourlyData
-									GROUP BY HourNumber
-									ORDER BY HourNumber
-			""", nativeQuery = true)
-	List<Object[]> findCoolingTankHourlyCompareRaw(
-			@Param("fac") String fac,
-			@Param("hours") int hours
-	);
 
 
 	default List<HourlyCompareDto> hourlyCompareDto(
@@ -247,11 +184,80 @@ public interface UtilityHourlyRepo extends JpaRepository<DummyEntity, Long> {
 				.toList();
 	}
 
+	@Query(value = """
+			WITH CleanData AS (
+			   SELECT *
+			   FROM dbo.F2_Utility_Para_History_Main
+			   WHERE pick_at >= DATEADD(DAY, -1, CAST(GETDATE() AS DATE))
+			     AND pick_at <  DATEADD(DAY, 1, CAST(GETDATE() AS DATE))
+			     AND [value] > 0
+			),
+			T1 AS (
+			    SELECT
+			        DATEPART(HOUR, hi.pick_at) AS HourNumber,
+			        CAST(hi.pick_at AS DATE) AS record_date,
+			        hi.[value]
+			    FROM CleanData hi
+			    INNER JOIN dbo.F2_Utility_Para pa
+			        ON hi.box_device_id = pa.box_device_id
+			       AND hi.plc_address = pa.plc_address
+			    INNER JOIN dbo.F2_Utility_Scada_Channel ch
+			        ON hi.box_device_id = ch.box_device_id
+			    INNER JOIN dbo.F2_Utility_Scada sc
+			        ON ch.scada_id = sc.scada_id
+			    WHERE (:fac = 'KVH' OR sc.fac = :fac)
+			      AND (
+			            (:type = 'WATER'
+			                AND pa.name_en LIKE '%Cooling tank%')
+			
+			         OR (:type = 'AIR'
+			                AND pa.name_en = 'Sensor compressed air pressure Data')
+			      )
+			),
+			HourlyData AS (
+			    SELECT
+			        HourNumber,
+			        record_date,
+			        AVG(CAST([value] AS DECIMAL(10,2))) AS AvgValue
+			    FROM T1
+			    GROUP BY
+			        HourNumber,
+			        record_date
+			)
+			SELECT
+			    HourNumber AS scaleHour,
+			
+			    CAST(
+			        ROUND(
+			            AVG(CASE
+			                WHEN record_date = DATEADD(DAY, -1, CAST(GETDATE() AS DATE))
+			                THEN AvgValue
+			            END), 1
+			        ) AS DECIMAL(10,1)
+			    ) AS yesterday,
+			
+			    CAST(
+			        ROUND(
+			            AVG(CASE
+			                WHEN record_date = CAST(GETDATE() AS DATE)
+			                THEN AvgValue
+			            END), 1
+			        ) AS DECIMAL(10,1)
+			    ) AS today
+			FROM HourlyData
+			GROUP BY HourNumber
+			ORDER BY HourNumber
+			""", nativeQuery = true)
+	List<Object[]> findCoolingTankHourlyCompareRaw(
+			@Param("fac") String fac,
+			@Param("type") String type
+	);
+
 	default List<HourlyTempCompareDto> findCoolingTankHourlyCompareDto(
 			String fac,
-			int hours
+			String type
 	) {
-		return findCoolingTankHourlyCompareRaw(fac, hours).stream()
+		return findCoolingTankHourlyCompareRaw(fac, type).stream()
 				.map(r -> new HourlyTempCompareDto(
 						((Number) r[0]).intValue(),
 						r[1] == null ? null : new BigDecimal(r[1].toString()),
