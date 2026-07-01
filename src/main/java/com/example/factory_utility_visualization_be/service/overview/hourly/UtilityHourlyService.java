@@ -42,7 +42,7 @@ public class UtilityHourlyService {
 		return repo.hourlyCompareDto(fac, hours, metric, safeExchange, safeSepzone);
 	}
 
-	public List<HourlyTempCompareDto> getCoolingTankHourly(
+	public List<HourlyTempCompareDto> getUtilityHourlySensorCompare(
 			String facId,
 			String type
 	) {
@@ -58,6 +58,6 @@ public class UtilityHourlyService {
 			utilityType = "WATER";
 		}
 
-		return repo.findCoolingTankHourlyCompareDto(fac, utilityType);
+		return repo.utilityHourlySensorCompareDto(fac, utilityType);
 	}
 }

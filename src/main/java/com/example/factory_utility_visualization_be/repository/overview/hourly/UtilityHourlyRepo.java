@@ -248,16 +248,16 @@ public interface UtilityHourlyRepo extends JpaRepository<DummyEntity, Long> {
 			GROUP BY HourNumber
 			ORDER BY HourNumber
 			""", nativeQuery = true)
-	List<Object[]> findCoolingTankHourlyCompareRaw(
+	List<Object[]> utilityHourlySensorCompareRaw(
 			@Param("fac") String fac,
 			@Param("type") String type
 	);
 
-	default List<HourlyTempCompareDto> findCoolingTankHourlyCompareDto(
+	default List<HourlyTempCompareDto> utilityHourlySensorCompareDto(
 			String fac,
 			String type
 	) {
-		return findCoolingTankHourlyCompareRaw(fac, type).stream()
+		return utilityHourlySensorCompareRaw(fac, type).stream()
 				.map(r -> new HourlyTempCompareDto(
 						((Number) r[0]).intValue(),
 						r[1] == null ? null : new BigDecimal(r[1].toString()),
