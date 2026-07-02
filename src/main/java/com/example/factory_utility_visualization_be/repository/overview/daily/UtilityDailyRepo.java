@@ -12,95 +12,59 @@ import java.util.List;
 
 @Repository
 public interface UtilityDailyRepo extends JpaRepository<DummyEntity, Long> {
-	//	@Query(value = """
-//    SELECT
-//      CAST(hi.pick_at AS date) AS record_date,
-//      SUM(hi.value) AS value
-//    FROM F2_Utility_Para_History_Main hi
-//    JOIN F2_Utility_Para pa
-//      ON hi.box_device_id = pa.box_device_id
-//     AND hi.plc_address  = pa.plc_address
-//    JOIN F2_Utility_Scada_Channel ch
-//      ON hi.box_device_id = ch.box_device_id
-//    JOIN F2_Utility_Scada sc
-//      ON ch.scada_id = sc.scada_id
-//    WHERE hi.pick_at >= :from
-//      AND hi.pick_at <  :to
-//      AND hi.value > 0
-//      AND pa.name_en = 'Total Energy Consumption'
-//      AND (:fac = 'KVH' OR sc.fac = :fac)
-//    GROUP BY CAST(hi.pick_at AS date)
-//    ORDER BY record_date
-//  """, nativeQuery = true)
-//	List<Object[]> sumDailyEnergy(
-//			@Param("fac") String fac,
-//			@Param("from") LocalDateTime from,
-//			@Param("to") LocalDateTime to
-//	);
 	@Query(value = """
-			
-			WITH CleanData AS (
-			                     SELECT *
-			                     FROM F2_Utility_Para_History_Main
-			                     WHERE [value] > 0
-			                 ),
-			                 FilteredData AS (
-			                     SELECT
-			                         sc.fac,
-			                         CAST(hi.pick_at AS DATE) AS record_date,
-			                         hi.[value]
-			                     FROM CleanData hi
-			                     INNER JOIN F2_Utility_Para pa
-			                         ON hi.box_device_id = pa.box_device_id
-			                        AND hi.plc_address  = pa.plc_address
-			                     INNER JOIN F2_Utility_Scada_Channel ch
-			                         ON hi.box_device_id = ch.box_device_id
-			                     INNER JOIN F2_Utility_Scada sc
-			                         ON ch.scada_id = sc.scada_id
-			                     WHERE pa.name_en = :nameEn
-			                       AND (:fac = 'KVH' OR sc.fac = :fac)
-			                       AND hi.pick_at >= :from
-			                       AND hi.pick_at < :to
-			                 )
-			
-			                 SELECT
-			                     record_date AS recordDate,
-			                     SUM(value) AS value
-			                 FROM FilteredData
-			                 GROUP BY record_date
-			                 ORDER BY record_date
-			""", nativeQuery = true)
-	List<Object[]> sumDailyEnergyByMonth(
+    WITH CleanData AS (
+        SELECT *
+        FROM F2_Utility_Para_History_Main
+        WHERE [value] > 0
+    ),
+    FilteredData AS (
+        SELECT
+            sc.fac,
+            CAST(hi.pick_at AS DATE) AS record_date,
+            hi.[value]
+        FROM CleanData hi
+        INNER JOIN F2_Utility_Para pa
+            ON hi.box_device_id = pa.box_device_id
+           AND hi.plc_address  = pa.plc_address
+        INNER JOIN F2_Utility_Scada_Channel ch
+            ON hi.box_device_id = ch.box_device_id
+        INNER JOIN F2_Utility_Scada sc
+            ON ch.scada_id = sc.scada_id
+        WHERE
+        (
+            (:type = 'ENERGY' AND pa.name_en = :nameEn)
+
+            OR
+
+            (:type = 'WATER'
+                AND pa.name_en LIKE '%Cooling tank%')
+
+            OR
+
+            (:type = 'AIR'
+                AND pa.name_en = 'Sensor compressed air pressure Data')
+        )
+        AND (:fac = 'KVH' OR sc.fac = :fac)
+        AND hi.pick_at >= :from
+        AND hi.pick_at < :to
+    )
+    SELECT
+        record_date AS recordDate,
+        CASE
+            WHEN :type IN ('WATER','AIR')
+                THEN AVG(value)
+            ELSE SUM(value)
+        END AS value
+    FROM FilteredData
+    GROUP BY record_date
+    ORDER BY record_date
+    """, nativeQuery = true)
+	List<Object[]> getDailyUtilityByMonth(
 			@Param("fac") String fac,
 			@Param("from") LocalDateTime from,
 			@Param("to") LocalDateTime to,
-			@Param("nameEn") String nameEn
-	);
-
-	@Query(value = """
-			SELECT
-			    COALESCE(SUM(hi.[value]), 0) AS totalValue
-			FROM F2_Utility_Para_History_Main hi
-			
-			INNER JOIN F2_Utility_Para pa
-			    ON hi.box_device_id = pa.box_device_id
-			   AND hi.plc_address  = pa.plc_address
-			
-			INNER JOIN F2_Utility_Scada_Channel ch
-			    ON hi.box_device_id = ch.box_device_id
-			
-			INNER JOIN F2_Utility_Scada sc
-			    ON ch.scada_id = sc.scada_id
-			
-			WHERE hi.[value] > 0
-			  AND pa.name_en = 'Total Energy Consumption'
-			  AND hi.pick_at >= :from
-			  AND hi.pick_at <  :to
-			  AND (:fac = 'KVH' OR sc.fac = :fac)
-			""", nativeQuery = true)
-	BigDecimal sumMonthlyEnergy(
-			@Param("fac") String fac,
-			@Param("from") LocalDateTime from,
-			@Param("to") LocalDateTime to
+			@Param("nameEn") String nameEn,
+			@Param("type") String type
 	);
 }

@@ -15,7 +15,12 @@ import java.util.List;
 public class UtilityEnergyDailyService {
 	private final UtilityDailyRepo repo;
 
-	public List<DailyDto> getDaily(String facId, String monthYyyyMm, String nameEn) {
+	public List<DailyDto> getDaily(
+			String facId,
+			String monthYyyyMm,
+			String nameEn,
+			String type
+	) {
 		if (monthYyyyMm == null || !monthYyyyMm.matches("\\d{6}")) {
 			throw new IllegalArgumentException("month must be yyyyMM (e.g. 202612)");
 		}
@@ -28,15 +33,40 @@ public class UtilityEnergyDailyService {
 
 		LocalDateTime from = firstDay.atStartOfDay();
 		LocalDateTime to = firstDayNext.atStartOfDay();
-		final String metric = (nameEn == null || nameEn.isBlank())
-				? "Total Energy Consumption"
-				: nameEn.trim();
-		List<Object[]> rows = repo.sumDailyEnergyByMonth(facId, from, to, metric);
+
+		final String utilityType =
+				(type == null || type.isBlank())
+						? "ENERGY"
+						: type.trim().toUpperCase();
+
+		final String metric =
+				(nameEn == null || nameEn.isBlank())
+						? defaultNameEn(utilityType)
+						: nameEn.trim();
+
+		List<Object[]> rows = repo.getDailyUtilityByMonth(
+				facId,
+				from,
+				to,
+				metric,
+				utilityType
+		);
 
 		return rows.stream().map(r -> {
 			LocalDate date = ((java.sql.Date) r[0]).toLocalDate();
-			BigDecimal value = (r[1] == null) ? BigDecimal.ZERO : new BigDecimal(r[1].toString());
+			BigDecimal value = (r[1] == null)
+					? BigDecimal.ZERO
+					: new BigDecimal(r[1].toString());
+
 			return new DailyDto(date, value);
 		}).toList();
+	}
+
+	private String defaultNameEn(String type) {
+		return switch (type) {
+			case "WATER" -> "Water Consumption";
+			case "AIR" -> "Compressed Air Consumption";
+			default -> "Total Energy Consumption";
+		};
 	}
 }

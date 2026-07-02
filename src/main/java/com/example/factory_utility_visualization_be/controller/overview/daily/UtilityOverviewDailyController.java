@@ -21,9 +21,9 @@ public class UtilityOverviewDailyController {
 	public List<DailyDto> energyDaily(
 			@RequestParam String facId,
 			@RequestParam String month,
-			@RequestParam(required = false) String nameEn
-
+			@RequestParam(required = false) String nameEn,
+			@RequestParam(required = false, defaultValue = "ENERGY") String type
 	) {
-		return service.getDaily(facId, month, nameEn);
+		return service.getDaily(facId, month, nameEn, type);
 	}
 }
