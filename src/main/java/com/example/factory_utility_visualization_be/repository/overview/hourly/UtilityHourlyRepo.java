@@ -165,7 +165,6 @@ public interface UtilityHourlyRepo extends JpaRepository<DummyEntity, Long> {
 	);
 
 
-
 	default List<HourlyCompareDto> hourlyCompareDto(
 			String fac,
 			int hours,
@@ -205,7 +204,11 @@ public interface UtilityHourlyRepo extends JpaRepository<DummyEntity, Long> {
 			        ON hi.box_device_id = ch.box_device_id
 			    INNER JOIN dbo.F2_Utility_Scada sc
 			        ON ch.scada_id = sc.scada_id
-			    WHERE (:fac = 'KVH' OR sc.fac = :fac)
+			    WHERE (
+			           :fac = 'KVH'
+			        OR (:type = 'AIR' AND :fac = 'Fac_A' AND sc.fac = 'Fac_B')
+			        OR sc.fac = :fac
+			    )
 			      AND (
 			            (:type = 'WATER'
 			                AND pa.name_en LIKE '%Cooling tank%')

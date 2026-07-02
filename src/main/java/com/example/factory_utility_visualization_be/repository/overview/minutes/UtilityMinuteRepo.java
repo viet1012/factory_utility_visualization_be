@@ -205,7 +205,11 @@ public interface UtilityMinuteRepo extends JpaRepository<DummyEntity, Long> {
             INNER JOIN F2_Utility_Scada sc
                 ON ch.scada_id = sc.scada_id
 
-            WHERE (:fac = 'KVH' OR sc.fac = :fac)
+		    WHERE (
+			           :fac = 'KVH'
+			        OR (:type = 'AIR' AND :fac = 'Fac_A' AND sc.fac = 'Fac_B')
+			        OR sc.fac = :fac
+			    )
               AND (
                     (:type = 'ELECTRICITY'
                         AND pa.name_en = 'Total Energy Consumption')
@@ -266,7 +270,10 @@ public interface UtilityMinuteRepo extends JpaRepository<DummyEntity, Long> {
 
         SELECT
             minute_time AS ts,
-            AVG([value]) AS value,
+		    CAST(
+		        ROUND(AVG(CAST([value] AS DECIMAL(10,2))), 1)
+		        AS DECIMAL(10,1)
+		    ) AS value,
             'AIR' AS name
         FROM Base
         WHERE :type = 'AIR'
