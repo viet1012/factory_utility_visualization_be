@@ -16,14 +16,13 @@ import java.util.List;
 public class UtilityOverviewMonthlyController {
 	private final UtilityEnergyMonthlyService service;
 
-	//	http://localhost:9999/api/utility/energy-monthly-summary?facId=Fac_B&month=202603
-	@GetMapping("/energy-monthly-summary")
+	//	http://localhost:9999/api/utility/monthly-summary?facId=Fac_B&month=202603
+	@GetMapping("/monthly-summary")
 	public List<MonthlySummaryDto> getMonthly(
 			@RequestParam String facId,
-			@RequestParam String month,
-			@RequestParam List<String> names
+			@RequestParam String month
 	) {
-		return service.getMonthlySummary(facId, month, names);
+		return service.getMonthlySummary(facId, month);
 	}
 
 }

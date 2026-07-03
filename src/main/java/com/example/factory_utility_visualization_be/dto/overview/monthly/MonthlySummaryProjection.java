@@ -4,19 +4,24 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 public interface MonthlySummaryProjection {
-
 	String getName();
-
 	String getCate();
-
+	String getUnit();
 	String getMonth();
 
 	BigDecimal getValue();
+	BigDecimal getAvgValue();
 
-	String getUnit();
+	BigDecimal getVndCost();
+	BigDecimal getUsdCost();
+
+	BigDecimal getPrevValue();
+	BigDecimal getPrevAvgValue();
+	BigDecimal getPrevVndCost();
+	BigDecimal getPrevUsdCost();
+
+	BigDecimal getDeltaValue();
+	BigDecimal getDeltaPercent();
 
 	LocalDateTime getPickAt();
-
-	LocalDateTime getTimestamp();
-
 }

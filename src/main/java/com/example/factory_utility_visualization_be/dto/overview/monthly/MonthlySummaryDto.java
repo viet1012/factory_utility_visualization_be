@@ -9,8 +9,16 @@ public record MonthlySummaryDto(
 		String name,
 		String month,
 		BigDecimal value,
+		BigDecimal avgValue,
+		BigDecimal vndCost,
+		BigDecimal usdCost,
+		BigDecimal prevValue,
+		BigDecimal prevAvgValue,
+		BigDecimal prevVndCost,
+		BigDecimal prevUsdCost,
+		BigDecimal deltaValue,
+		BigDecimal deltaPercent,
 		String unit,
-		LocalDateTime pick_at,
-		OffsetDateTime timestamp
-
+		LocalDateTime pickAt,
+		OffsetDateTime serverTime
 ) {}
