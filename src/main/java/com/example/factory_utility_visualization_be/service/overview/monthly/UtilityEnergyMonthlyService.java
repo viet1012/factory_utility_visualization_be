@@ -69,6 +69,11 @@ public class UtilityEnergyMonthlyService {
 						r.getName(),
 						r.getMonth(),
 
+						r.getMinValue(),
+						r.getMaxValue(),
+						r.getPrevMinValue(),
+						r.getPrevMaxValue(),
+
 						r.getValue(),
 						r.getAvgValue(),
 

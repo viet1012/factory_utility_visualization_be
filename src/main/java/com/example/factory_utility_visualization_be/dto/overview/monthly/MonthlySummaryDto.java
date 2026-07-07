@@ -8,6 +8,12 @@ public record MonthlySummaryDto(
 		String cate,
 		String name,
 		String month,
+
+		BigDecimal minValue,
+		BigDecimal maxValue,
+		BigDecimal prevMinValue,
+		BigDecimal prevMaxValue,
+
 		BigDecimal value,
 		BigDecimal avgValue,
 		BigDecimal vndCost,

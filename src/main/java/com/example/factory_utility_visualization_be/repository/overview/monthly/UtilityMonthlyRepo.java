@@ -193,60 +193,60 @@ public interface UtilityMonthlyRepo extends JpaRepository<DummyEntity, Long> {
                     e.cate,
                     e.unit
             ),
-            WaterMonthly AS (
-                SELECT
-                    'Cooling Tank Temperature' AS name,
-                    'Water' AS cate,
-                    MAX(unit) AS unit,
-
-                    CAST(
-                        ROUND(
-                            AVG(CASE
-                                WHEN period_type = 'CURRENT'
-                                THEN CAST([value] AS DECIMAL(10,2))
-                            END), 1
-                        ) AS DECIMAL(10,1)
-                    ) AS avgValue,
-
-                    CAST(
-                        ROUND(
-                            AVG(CASE
-                                WHEN period_type = 'PREV'
-                                THEN CAST([value] AS DECIMAL(10,2))
-                            END), 1
-                        ) AS DECIMAL(10,1)
-                    ) AS prevAvgValue
-
-                FROM Base
-                WHERE name_en LIKE '%Cooling tank%'
-            ),
-            AirMonthly AS (
-                SELECT
-                    'Sensor compressed air pressure Data' AS name,
-                    'Compressed Air' AS cate,
-                    MAX(unit) AS unit,
-
-                    CAST(
-                        ROUND(
-                            AVG(CASE
-                                WHEN period_type = 'CURRENT'
-                                THEN CAST([value] AS DECIMAL(10,2))
-                            END), 1
-                        ) AS DECIMAL(10,1)
-                    ) AS avgValue,
-
-                    CAST(
-                        ROUND(
-                            AVG(CASE
-                                WHEN period_type = 'PREV'
-                                THEN CAST([value] AS DECIMAL(10,2))
-                            END), 1
-                        ) AS DECIMAL(10,1)
-                    ) AS prevAvgValue
-
-                FROM Base
-                WHERE name_en = 'Sensor compressed air pressure Data'
-            ),
+			WaterMonthly AS (
+			    SELECT
+			        'Cooling Tank Temperature' AS name,
+			        'Water' AS cate,
+			        MAX(unit) AS unit,
+			
+			        CAST(ROUND(AVG(CASE WHEN period_type = 'CURRENT'
+			            THEN CAST([value] AS DECIMAL(10,2)) END), 1) AS DECIMAL(10,1)) AS avgValue,
+			
+			        CAST(ROUND(MIN(CASE WHEN period_type = 'CURRENT'
+			            THEN CAST([value] AS DECIMAL(10,2)) END), 1) AS DECIMAL(10,1)) AS minValue,
+			
+			        CAST(ROUND(MAX(CASE WHEN period_type = 'CURRENT'
+			            THEN CAST([value] AS DECIMAL(10,2)) END), 1) AS DECIMAL(10,1)) AS maxValue,
+			
+			        CAST(ROUND(AVG(CASE WHEN period_type = 'PREV'
+			            THEN CAST([value] AS DECIMAL(10,2)) END), 1) AS DECIMAL(10,1)) AS prevAvgValue,
+			
+			        CAST(ROUND(MIN(CASE WHEN period_type = 'PREV'
+			            THEN CAST([value] AS DECIMAL(10,2)) END), 1) AS DECIMAL(10,1)) AS prevMinValue,
+			
+			        CAST(ROUND(MAX(CASE WHEN period_type = 'PREV'
+			            THEN CAST([value] AS DECIMAL(10,2)) END), 1) AS DECIMAL(10,1)) AS prevMaxValue
+			
+			    FROM Base
+			    WHERE name_en LIKE '%Cooling tank%'
+			),
+			AirMonthly AS (
+			    SELECT
+			        'Sensor compressed air pressure Data' AS name,
+			        'Compressed Air' AS cate,
+			        MAX(unit) AS unit,
+			
+			        CAST(ROUND(AVG(CASE WHEN period_type = 'CURRENT'
+			            THEN CAST([value] AS DECIMAL(10,2)) END), 1) AS DECIMAL(10,1)) AS avgValue,
+			
+			        CAST(ROUND(MIN(CASE WHEN period_type = 'CURRENT'
+			            THEN CAST([value] AS DECIMAL(10,2)) END), 1) AS DECIMAL(10,1)) AS minValue,
+			
+			        CAST(ROUND(MAX(CASE WHEN period_type = 'CURRENT'
+			            THEN CAST([value] AS DECIMAL(10,2)) END), 1) AS DECIMAL(10,1)) AS maxValue,
+			
+			        CAST(ROUND(AVG(CASE WHEN period_type = 'PREV'
+			            THEN CAST([value] AS DECIMAL(10,2)) END), 1) AS DECIMAL(10,1)) AS prevAvgValue,
+			
+			        CAST(ROUND(MIN(CASE WHEN period_type = 'PREV'
+			            THEN CAST([value] AS DECIMAL(10,2)) END), 1) AS DECIMAL(10,1)) AS prevMinValue,
+			
+			        CAST(ROUND(MAX(CASE WHEN period_type = 'PREV'
+			            THEN CAST([value] AS DECIMAL(10,2)) END), 1) AS DECIMAL(10,1)) AS prevMaxValue
+			
+			    FROM Base
+			    WHERE name_en = 'Sensor compressed air pressure Data'
+			),
             LastPick AS (
                 SELECT MAX(pick_at) AS pickAt
                 FROM Base
@@ -257,7 +257,10 @@ public interface UtilityMonthlyRepo extends JpaRepository<DummyEntity, Long> {
                     e.name,
                     e.cate,
                     e.unit,
-
+			        CAST(NULL AS DECIMAL(18,1)) AS minValue,
+			        CAST(NULL AS DECIMAL(18,1)) AS maxValue,
+			        CAST(NULL AS DECIMAL(18,1)) AS prevMinValue,
+			        CAST(NULL AS DECIMAL(18,1)) AS prevMaxValue,
                     CAST(e.value AS DECIMAL(18,2)) AS value,
                     CAST(NULL AS DECIMAL(18,1)) AS avgValue,
 
@@ -278,7 +281,12 @@ public interface UtilityMonthlyRepo extends JpaRepository<DummyEntity, Long> {
                     w.name,
                     w.cate,
                     w.unit,
-
+			                    
+					w.minValue,
+					w.maxValue,
+					w.prevMinValue,
+					w.prevMaxValue,
+			                    
                     CAST(NULL AS DECIMAL(18,2)) AS value,
                     w.avgValue,
 
@@ -299,7 +307,10 @@ public interface UtilityMonthlyRepo extends JpaRepository<DummyEntity, Long> {
                     a.name,
                     a.cate,
                     a.unit,
-
+					a.minValue,
+					a.maxValue,
+					a.prevMinValue,
+					a.prevMaxValue,
                     CAST(NULL AS DECIMAL(18,2)) AS value,
                     a.avgValue,
 
@@ -319,7 +330,10 @@ public interface UtilityMonthlyRepo extends JpaRepository<DummyEntity, Long> {
                 f.cate AS cate,
                 f.unit AS unit,
                 :month AS month,
-
+				f.minValue AS minValue,
+				f.maxValue AS maxValue,
+				f.prevMinValue AS prevMinValue,
+				f.prevMaxValue AS prevMaxValue,
                 f.value AS value,
                 f.avgValue AS avgValue,
 

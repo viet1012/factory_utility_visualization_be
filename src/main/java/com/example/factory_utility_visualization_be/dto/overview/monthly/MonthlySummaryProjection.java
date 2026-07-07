@@ -9,6 +9,11 @@ public interface MonthlySummaryProjection {
 	String getUnit();
 	String getMonth();
 
+	BigDecimal getMinValue();
+	BigDecimal getMaxValue();
+	BigDecimal getPrevMinValue();
+	BigDecimal getPrevMaxValue();
+
 	BigDecimal getValue();
 	BigDecimal getAvgValue();
 
