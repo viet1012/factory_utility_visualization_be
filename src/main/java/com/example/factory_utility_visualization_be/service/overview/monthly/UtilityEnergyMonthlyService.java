@@ -51,18 +51,42 @@ public class UtilityEnergyMonthlyService {
 		Duration elapsed = Duration.between(from, currentTo);
 		LocalDateTime prevTo = prevFrom.plus(elapsed);
 
-		List<MonthlySummaryProjection> results =
-				repo.sumMonthlyByNamesRaw(
-						facId,
-						monthYyyyMm,
-						from,
-						currentTo,
-						prevFrom,
-						prevTo,
-						DEFAULT_EXCHANGE,
-						DEFAULT_SEPZONE
-				);
+//		List<MonthlySummaryProjection> results =
+//				repo.sumMonthlyByNamesRaw(
+//						facId,
+//						monthYyyyMm,
+//						from,
+//						currentTo,
+//						prevFrom,
+//						prevTo,
+//						DEFAULT_EXCHANGE,
+//						DEFAULT_SEPZONE
+//				);
+		final String fac = facId.trim();
+		List<MonthlySummaryProjection> results;
 
+		if ("KVH".equalsIgnoreCase(fac)) {
+			results = repo.sumMonthlyKvhRaw(
+					monthYyyyMm,
+					from,
+					currentTo,
+					prevFrom,
+					prevTo,
+					DEFAULT_EXCHANGE,
+					DEFAULT_SEPZONE
+			);
+		} else {
+			results = repo.sumMonthlyByFacRaw(
+					fac,
+					monthYyyyMm,
+					from,
+					currentTo,
+					prevFrom,
+					prevTo,
+					DEFAULT_EXCHANGE,
+					DEFAULT_SEPZONE
+			);
+		}
 		return results.stream()
 				.map(r -> new MonthlySummaryDto(
 						r.getCate(),
