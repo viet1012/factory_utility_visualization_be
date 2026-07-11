@@ -15,6 +15,24 @@ import java.util.Optional;
 
 public interface F2UtilityParaHistoryRepo extends JpaRepository<F2UtilityParaHistory, Long> {
 
+	@Query(value = """
+    SELECT *
+    FROM dbo.f2_utility_para_history
+    WHERE box_device_id = :boxDeviceId
+      AND recorded_at >= :from
+      AND recorded_at <= :to
+      AND DATEPART(HOUR, recorded_at) IN (:hours)
+      AND DATEPART(MINUTE, recorded_at) BETWEEN 0 AND :minuteWindow
+    ORDER BY recorded_at ASC, plc_address ASC
+    """, nativeQuery = true)
+	List<F2UtilityParaHistory> findByBoxDeviceIdAndDateRangeAndHours(
+			@Param("boxDeviceId") String boxDeviceId,
+			@Param("from") LocalDateTime from,
+			@Param("to") LocalDateTime to,
+			@Param("hours") List<Integer> hours,
+			@Param("minuteWindow") int minuteWindow
+	);
+
 	Optional<F2UtilityParaHistory> findTopByBoxDeviceIdAndPlcAddressOrderByRecordedAtDesc(
 			String boxDeviceId, String plcAddress
 	);
