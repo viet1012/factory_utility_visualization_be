@@ -31,7 +31,7 @@ public class UtilityQueryService {
 	private final F2UtilityParaHistoryRepo historyRepo;
 
 	// HELPER
-	private static String blankToNull(String s) {
+	public static String blankToNull(String s) {
 		return (s == null || s.isBlank()) ? null : s;
 	}
 

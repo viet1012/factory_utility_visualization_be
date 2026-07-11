@@ -51,17 +51,6 @@ public class UtilityEnergyMonthlyService {
 		Duration elapsed = Duration.between(from, currentTo);
 		LocalDateTime prevTo = prevFrom.plus(elapsed);
 
-//		List<MonthlySummaryProjection> results =
-//				repo.sumMonthlyByNamesRaw(
-//						facId,
-//						monthYyyyMm,
-//						from,
-//						currentTo,
-//						prevFrom,
-//						prevTo,
-//						DEFAULT_EXCHANGE,
-//						DEFAULT_SEPZONE
-//				);
 		final String fac = facId.trim();
 		List<MonthlySummaryProjection> results;
 
