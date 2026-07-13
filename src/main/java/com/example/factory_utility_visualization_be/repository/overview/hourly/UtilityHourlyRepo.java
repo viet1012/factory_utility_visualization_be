@@ -1,272 +1,449 @@
 package com.example.factory_utility_visualization_be.repository.overview.hourly;
 
-import com.example.factory_utility_visualization_be.dto.overview.hourly.HourlyCompareDto;
-import com.example.factory_utility_visualization_be.dto.overview.hourly.HourlyTempCompareDto;
+import com.example.factory_utility_visualization_be.dto.overview.hourly.HourlyEnergyCompareProjection;
+import com.example.factory_utility_visualization_be.dto.overview.hourly.HourlySensorCompareProjection;
 import com.example.factory_utility_visualization_be.model.DummyEntity;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.List;
 
-public interface UtilityHourlyRepo extends JpaRepository<DummyEntity, Long> {
+public interface UtilityHourlyRepo
+		extends JpaRepository<DummyEntity, Long> {
+
+	// ============================================================
+	// ELECTRICITY
+	// ============================================================
 
 	@Query(value = """
-			;WITH CleanData AS (
-			    SELECT *
-			    FROM dbo.F2_Utility_Para_History_Main
-			    WHERE pick_at > DATEADD(HOUR, -:hours, GETDATE())
-			      AND [value] > 0
-			),
-			T1 AS (
+            WITH Hours AS (
+                SELECT hour_number
+                FROM (
+                    VALUES
+                        (0), (1), (2), (3), (4), (5),
+                        (6), (7), (8), (9), (10), (11),
+                        (12), (13), (14), (15), (16), (17),
+                        (18), (19), (20), (21), (22), (23)
+                ) AS H(hour_number)
+            ),
+
+            EnergyBase AS (
+                SELECT
+                    DATEPART(HOUR, hi.pick_at) AS hour_number,
+                    CAST(hi.pick_at AS DATE) AS record_date,
+                    CAST(hi.[value] AS DECIMAL(19, 6)) AS energy_value
+                FROM dbo.F2_Utility_Para_History_Main hi
+
+                INNER JOIN dbo.F2_Utility_Para pa
+                    ON pa.box_device_id = hi.box_device_id
+                   AND pa.plc_address = hi.plc_address
+
+                INNER JOIN dbo.F2_Utility_Scada_Channel ch
+                    ON ch.box_device_id = hi.box_device_id
+
+                INNER JOIN dbo.F2_Utility_Scada sc
+                    ON sc.scada_id = ch.scada_id
+
+                WHERE hi.pick_at >= :fromTime
+                  AND hi.pick_at < :toTime
+                  AND hi.[value] > 0
+                  AND pa.name_en = :nameEn
+                  AND (
+                        :fac = 'KVH'
+                        OR sc.fac = :fac
+                  )
+            ),
+
+			HourlyEnergy AS (
 			    SELECT
-			        sc.fac,
-			        DATEADD(HOUR, DATEDIFF(HOUR, 0, hi.pick_at), 0) AS hour_time,
-			        CAST(hi.pick_at AS DATE) AS record_date,
-			        hi.pick_at,
-			        hi.[value],
-			        DATEPART(HOUR, hi.pick_at) AS HourNumber,
-			        CASE
-			            WHEN DATEPART(WEEKDAY, CAST(hi.pick_at AS DATE)) = 1 THEN '1'
-			            ELSE '2-7'
-			        END AS WD
-			    FROM CleanData hi
-			    INNER JOIN dbo.F2_Utility_Para pa
-			        ON hi.box_device_id = pa.box_device_id
-			       AND hi.plc_address  = pa.plc_address
-			    INNER JOIN dbo.F2_Utility_Scada_Channel ch
-			        ON hi.box_device_id = ch.box_device_id
-			    INNER JOIN dbo.F2_Utility_Scada sc
-			        ON ch.scada_id = sc.scada_id
-			    WHERE pa.name_en = :nameEn
-			      AND (:fac = 'KVH' OR sc.fac = :fac)
-			),
-			HourlyData AS (
-			    SELECT
-			        HourNumber,
-			        WD,
+			        hour_number,
 			        record_date,
-			        SUM([value]) AS HourValue
-			    FROM T1
-			    WHERE [value] IS NOT NULL
-			    GROUP BY HourNumber, WD, record_date
+			
+			        CASE
+			            WHEN (
+			                DATEDIFF(
+			                    DAY,
+			                    CAST('19000101' AS DATE),
+			                    record_date
+			                ) % 7
+			            ) = 6
+			                THEN '1'
+			            ELSE '2-7'
+			        END AS wd,
+			
+			        SUM(energy_value) AS hour_value
+			    FROM EnergyBase
+			    GROUP BY
+			        hour_number,
+			        record_date
 			),
-			Hours AS (
-			    SELECT 0 AS n UNION ALL SELECT 1  UNION ALL SELECT 2  UNION ALL
-			    SELECT 3      UNION ALL SELECT 4  UNION ALL SELECT 5  UNION ALL
-			    SELECT 6      UNION ALL SELECT 7  UNION ALL SELECT 8  UNION ALL
-			    SELECT 9      UNION ALL SELECT 10 UNION ALL SELECT 11 UNION ALL
-			    SELECT 12     UNION ALL SELECT 13 UNION ALL SELECT 14 UNION ALL
-			    SELECT 15     UNION ALL SELECT 16 UNION ALL SELECT 17 UNION ALL
-			    SELECT 18     UNION ALL SELECT 19 UNION ALL SELECT 20 UNION ALL
-			    SELECT 21     UNION ALL SELECT 22 UNION ALL SELECT 23
-			),
-			HourCost AS (
-			    SELECT
-			        c.WD,
-			        h.n AS HourNumber,
-			        SUM(
-			            CASE
-			                WHEN c.frTime < c.toTime THEN
-			                    (CASE WHEN c.toTime < h.n + 1 THEN c.toTime ELSE h.n + 1 END)
-			                  - (CASE WHEN c.frTime > h.n     THEN c.frTime ELSE h.n     END)
-			                ELSE
-			                    CASE
-			                        WHEN h.n >= FLOOR(c.frTime) THEN
-			                            (CASE WHEN 24.0 < h.n + 1 THEN 24.0 ELSE h.n + 1 END)
-			                          - (CASE WHEN c.frTime > h.n THEN c.frTime ELSE h.n END)
-			                        ELSE
-			                            (CASE WHEN c.toTime < h.n + 1 THEN c.toTime ELSE h.n + 1 END)
-			                          - (CASE WHEN 0.0 > h.n THEN 0.0 ELSE h.n END)
-			                    END
-			            END * c.vnd
-			        ) AS weighted_vnd_sum,
-			        SUM(
-			            CASE
-			                WHEN c.frTime < c.toTime THEN
-			                    (CASE WHEN c.toTime < h.n + 1 THEN c.toTime ELSE h.n + 1 END)
-			                  - (CASE WHEN c.frTime > h.n     THEN c.frTime ELSE h.n     END)
-			                ELSE
-			                    CASE
-			                        WHEN h.n >= FLOOR(c.frTime) THEN
-			                            (CASE WHEN 24.0 < h.n + 1 THEN 24.0 ELSE h.n + 1 END)
-			                          - (CASE WHEN c.frTime > h.n THEN c.frTime ELSE h.n END)
-			                        ELSE
-			                            (CASE WHEN c.toTime < h.n + 1 THEN c.toTime ELSE h.n + 1 END)
-			                          - (CASE WHEN 0.0 > h.n THEN 0.0 ELSE h.n END)
-			                    END
-			            END
-			        ) AS total_hours
-			    FROM dbo.F2_Utility_Cost_Master c
-			    CROSS JOIN Hours h
-			    WHERE (
-			        (c.frTime < c.toTime AND h.n < c.toTime AND h.n + 1 > c.frTime)
-			        OR
-			        (c.frTime > c.toTime AND (h.n + 1 > c.frTime OR h.n < c.toTime))
-			    )
-			    GROUP BY c.WD, h.n
-			),
-			FinalRate AS (
-			    SELECT
-			        WD,
-			        HourNumber,
-			        weighted_vnd_sum / NULLIF(total_hours, 0) AS vnd_rate
-			    FROM HourCost
-			),
-			CostMapped AS (
-			    SELECT
-			        d.HourNumber,
-			        d.WD,
-			        d.record_date,
-			        d.HourValue,
-			        f.vnd_rate
-			    FROM HourlyData d
-			    INNER JOIN FinalRate f
-			        ON d.WD = f.WD
-			       AND d.HourNumber = f.HourNumber
-			)
-			SELECT
-			    HourNumber AS scaleHour,
-			    SUM(CASE
-			            WHEN record_date = DATEADD(DAY, -1, CAST(GETDATE() AS DATE))
-			            THEN HourValue
-			        END) AS yesterday,
-			    SUM(CASE
-			            WHEN record_date = CAST(GETDATE() AS DATE)
-			            THEN HourValue
-			        END) AS today,
-			    SUM(CASE
-			            WHEN record_date = DATEADD(DAY, -1, CAST(GETDATE() AS DATE))
-			            THEN HourValue * vnd_rate
-			        END) AS yesterdayVnd,
-			    SUM(CASE
-			            WHEN record_date = CAST(GETDATE() AS DATE)
-			            THEN HourValue * vnd_rate
-			        END) AS todayVnd,
-			    SUM(CASE
-			            WHEN record_date = DATEADD(DAY, -1, CAST(GETDATE() AS DATE))
-			            THEN HourValue * vnd_rate
-			        END) / :exchange * :sepzone AS yesterdayUsd,
-			    SUM(CASE
-			            WHEN record_date = CAST(GETDATE() AS DATE)
-			            THEN HourValue * vnd_rate
-			        END) / :exchange * :sepzone AS todayUsd
-			FROM CostMapped
-			GROUP BY HourNumber
-			ORDER BY HourNumber
-			""", nativeQuery = true)
-	List<Object[]> hourlyCompareRaw(
+
+            HourRate AS (
+                SELECT
+                    c.WD AS wd,
+                    h.hour_number,
+
+                    SUM(
+                        CASE
+                            WHEN c.frTime < c.toTime THEN
+                                CASE
+                                    WHEN h.hour_number < c.toTime
+                                     AND h.hour_number + 1 > c.frTime
+                                    THEN
+                                        (
+                                            CASE
+                                                WHEN c.toTime < h.hour_number + 1
+                                                    THEN c.toTime
+                                                ELSE h.hour_number + 1
+                                            END
+                                        )
+                                        -
+                                        (
+                                            CASE
+                                                WHEN c.frTime > h.hour_number
+                                                    THEN c.frTime
+                                                ELSE h.hour_number
+                                            END
+                                        )
+                                    ELSE 0
+                                END
+
+                            ELSE
+                                CASE
+                                    WHEN h.hour_number + 1 > c.frTime THEN
+                                        (
+                                            CASE
+                                                WHEN 24.0 < h.hour_number + 1
+                                                    THEN 24.0
+                                                ELSE h.hour_number + 1
+                                            END
+                                        )
+                                        -
+                                        (
+                                            CASE
+                                                WHEN c.frTime > h.hour_number
+                                                    THEN c.frTime
+                                                ELSE h.hour_number
+                                            END
+                                        )
+
+                                    WHEN h.hour_number < c.toTime THEN
+                                        (
+                                            CASE
+                                                WHEN c.toTime < h.hour_number + 1
+                                                    THEN c.toTime
+                                                ELSE h.hour_number + 1
+                                            END
+                                        )
+                                        -
+                                        h.hour_number
+
+                                    ELSE 0
+                                END
+                        END
+                        * c.vnd
+                    ) AS weighted_vnd,
+
+                    SUM(
+                        CASE
+                            WHEN c.frTime < c.toTime THEN
+                                CASE
+                                    WHEN h.hour_number < c.toTime
+                                     AND h.hour_number + 1 > c.frTime
+                                    THEN
+                                        (
+                                            CASE
+                                                WHEN c.toTime < h.hour_number + 1
+                                                    THEN c.toTime
+                                                ELSE h.hour_number + 1
+                                            END
+                                        )
+                                        -
+                                        (
+                                            CASE
+                                                WHEN c.frTime > h.hour_number
+                                                    THEN c.frTime
+                                                ELSE h.hour_number
+                                            END
+                                        )
+                                    ELSE 0
+                                END
+
+                            ELSE
+                                CASE
+                                    WHEN h.hour_number + 1 > c.frTime THEN
+                                        (
+                                            CASE
+                                                WHEN 24.0 < h.hour_number + 1
+                                                    THEN 24.0
+                                                ELSE h.hour_number + 1
+                                            END
+                                        )
+                                        -
+                                        (
+                                            CASE
+                                                WHEN c.frTime > h.hour_number
+                                                    THEN c.frTime
+                                                ELSE h.hour_number
+                                            END
+                                        )
+
+                                    WHEN h.hour_number < c.toTime THEN
+                                        (
+                                            CASE
+                                                WHEN c.toTime < h.hour_number + 1
+                                                    THEN c.toTime
+                                                ELSE h.hour_number + 1
+                                            END
+                                        )
+                                        -
+                                        h.hour_number
+
+                                    ELSE 0
+                                END
+                        END
+                    ) AS total_hours
+
+                FROM dbo.F2_Utility_Cost_Master c
+                CROSS JOIN Hours h
+
+                GROUP BY
+                    c.WD,
+                    h.hour_number
+            ),
+
+            FinalRate AS (
+                SELECT
+                    wd,
+                    hour_number,
+                    weighted_vnd / NULLIF(total_hours, 0) AS vnd_rate
+                FROM HourRate
+                WHERE total_hours > 0
+            ),
+
+            CostMapped AS (
+                SELECT
+                    e.hour_number,
+                    e.record_date,
+                    e.hour_value,
+                    r.vnd_rate
+                FROM HourlyEnergy e
+
+                LEFT JOIN FinalRate r
+                    ON r.wd = e.wd
+                   AND r.hour_number = e.hour_number
+            )
+
+            SELECT
+                hour_number AS scaleHour,
+
+                CAST(
+                    SUM(
+                        CASE
+                            WHEN record_date = CAST(:yesterdayDate AS DATE)
+                                THEN hour_value
+                        END
+                    )
+                    AS DECIMAL(19, 4)
+                ) AS yesterday,
+
+                CAST(
+                    SUM(
+                        CASE
+                            WHEN record_date = CAST(:todayDate AS DATE)
+                                THEN hour_value
+                        END
+                    )
+                    AS DECIMAL(19, 4)
+                ) AS today,
+
+                CAST(
+                    SUM(
+                        CASE
+                            WHEN record_date = CAST(:yesterdayDate AS DATE)
+                                THEN hour_value * ISNULL(vnd_rate, 0)
+                        END
+                    )
+                    / NULLIF(:exchange, 0)
+                    * :sepzone
+                    AS DECIMAL(19, 4)
+                ) AS yesterdayUsd,
+
+                CAST(
+                    SUM(
+                        CASE
+                            WHEN record_date = CAST(:todayDate AS DATE)
+                                THEN hour_value * ISNULL(vnd_rate, 0)
+                        END
+                    )
+                    / NULLIF(:exchange, 0)
+                    * :sepzone
+                    AS DECIMAL(19, 4)
+                ) AS todayUsd
+
+            FROM CostMapped
+
+            GROUP BY hour_number
+            ORDER BY hour_number
+            """, nativeQuery = true)
+	List<HourlyEnergyCompareProjection>
+	findHourlyElectricityCompare(
 			@Param("fac") String fac,
-			@Param("hours") int hours,
+			@Param("fromTime") LocalDateTime fromTime,
+			@Param("toTime") LocalDateTime toTime,
+			@Param("todayDate") LocalDateTime todayDate,
+			@Param("yesterdayDate") LocalDateTime yesterdayDate,
 			@Param("nameEn") String nameEn,
 			@Param("exchange") BigDecimal exchange,
 			@Param("sepzone") BigDecimal sepzone
 	);
 
-
-	default List<HourlyCompareDto> hourlyCompareDto(
-			String fac,
-			int hours,
-			String nameEn,
-			BigDecimal exchange,
-			BigDecimal sepzone
-	) {
-		return hourlyCompareRaw(fac, hours, nameEn, exchange, sepzone).stream()
-				.map(r -> new HourlyCompareDto(
-						((Number) r[0]).intValue(),
-						r[1] == null ? null : new BigDecimal(r[1].toString()), // yesterday
-						r[2] == null ? null : new BigDecimal(r[2].toString()), // today
-						r[5] == null ? null : new BigDecimal(r[5].toString()), // yesterdayUsd
-						r[6] == null ? null : new BigDecimal(r[6].toString())  // todayUsd
-				))
-				.toList();
-	}
+	// ============================================================
+	// WATER + AIR IN ONE QUERY
+	// ============================================================
 
 	@Query(value = """
-			WITH CleanData AS (
-			   SELECT *
-			   FROM dbo.F2_Utility_Para_History_Main
-			   WHERE pick_at >= DATEADD(DAY, -1, CAST(GETDATE() AS DATE))
-			     AND pick_at <  DATEADD(DAY, 1, CAST(GETDATE() AS DATE))
-			     AND [value] > 0
-			),
-			T1 AS (
-			    SELECT
-			        DATEPART(HOUR, hi.pick_at) AS HourNumber,
-			        CAST(hi.pick_at AS DATE) AS record_date,
-			        hi.[value]
-			    FROM CleanData hi
-			    INNER JOIN dbo.F2_Utility_Para pa
-			        ON hi.box_device_id = pa.box_device_id
-			       AND hi.plc_address = pa.plc_address
-			    INNER JOIN dbo.F2_Utility_Scada_Channel ch
-			        ON hi.box_device_id = ch.box_device_id
-			    INNER JOIN dbo.F2_Utility_Scada sc
-			        ON ch.scada_id = sc.scada_id
-			    WHERE (
-			           :fac = 'KVH'
-			        OR (:type = 'AIR' AND :fac = 'Fac_A' AND sc.fac = 'Fac_B')
-			        OR sc.fac = :fac
-			    )
-			      AND (
-			            (:type = 'WATER'
-			                AND pa.name_en LIKE '%Cooling tank%')
-			
-			         OR (:type = 'AIR'
-			                AND pa.name_en = 'Sensor compressed air pressure Data')
-			      )
-			),
-			HourlyData AS (
-			    SELECT
-			        HourNumber,
-			        record_date,
-			        AVG(CAST([value] AS DECIMAL(10,2))) AS AvgValue
-			    FROM T1
-			    GROUP BY
-			        HourNumber,
-			        record_date
-			)
-			SELECT
-			    HourNumber AS scaleHour,
-			
-			    CAST(
-			        ROUND(
-			            AVG(CASE
-			                WHEN record_date = DATEADD(DAY, -1, CAST(GETDATE() AS DATE))
-			                THEN AvgValue
-			            END), 1
-			        ) AS DECIMAL(10,1)
-			    ) AS yesterday,
-			
-			    CAST(
-			        ROUND(
-			            AVG(CASE
-			                WHEN record_date = CAST(GETDATE() AS DATE)
-			                THEN AvgValue
-			            END), 1
-			        ) AS DECIMAL(10,1)
-			    ) AS today
-			FROM HourlyData
-			GROUP BY HourNumber
-			ORDER BY HourNumber
-			""", nativeQuery = true)
-	List<Object[]> utilityHourlySensorCompareRaw(
+            WITH Classified AS (
+                SELECT
+                    sc.fac,
+
+                    CASE
+                        WHEN pa.name_en LIKE '%Cooling tank%'
+                            THEN 'WATER'
+
+                        WHEN pa.name_en =
+                             'Sensor compressed air pressure Data'
+                            THEN 'AIR'
+
+                        ELSE NULL
+                    END AS utility_type,
+
+                    DATEPART(HOUR, hi.pick_at) AS hour_number,
+                    CAST(hi.pick_at AS DATE) AS record_date,
+
+                    CAST(
+                        hi.[value] AS DECIMAL(19, 6)
+                    ) AS sensor_value
+
+                FROM dbo.F2_Utility_Para_History_Main hi
+
+                INNER JOIN dbo.F2_Utility_Para pa
+                    ON pa.box_device_id = hi.box_device_id
+                   AND pa.plc_address = hi.plc_address
+
+                INNER JOIN dbo.F2_Utility_Scada_Channel ch
+                    ON ch.box_device_id = hi.box_device_id
+
+                INNER JOIN dbo.F2_Utility_Scada sc
+                    ON sc.scada_id = ch.scada_id
+
+                WHERE hi.pick_at >= :fromTime
+                  AND hi.pick_at < :toTime
+                  AND hi.[value] > 0
+
+                  AND (
+                        pa.name_en LIKE '%Cooling tank%'
+                        OR pa.name_en =
+                           'Sensor compressed air pressure Data'
+                  )
+            ),
+
+            Filtered AS (
+                SELECT
+                    utility_type,
+                    hour_number,
+                    record_date,
+                    sensor_value
+                FROM Classified
+
+                WHERE utility_type IS NOT NULL
+
+                  AND (
+                        :fac = 'KVH'
+
+                        OR (
+                            utility_type = 'AIR'
+                            AND :fac = 'Fac_A'
+                            AND fac = 'Fac_B'
+                        )
+
+                        OR (
+                            NOT (
+                                utility_type = 'AIR'
+                                AND :fac = 'Fac_A'
+                            )
+                            AND fac = :fac
+                        )
+                  )
+            ),
+
+            HourlySensor AS (
+                SELECT
+                    utility_type,
+                    hour_number,
+                    record_date,
+
+                    AVG(sensor_value) AS avg_value
+
+                FROM Filtered
+
+                GROUP BY
+                    utility_type,
+                    hour_number,
+                    record_date
+            )
+
+            SELECT
+                utility_type AS utilityType,
+                hour_number AS scaleHour,
+
+                CAST(
+                    ROUND(
+                        MAX(
+                            CASE
+                                WHEN record_date =
+                                     CAST(:yesterdayDate AS DATE)
+                                    THEN avg_value
+                            END
+                        ),
+                        1
+                    )
+                    AS DECIMAL(19, 1)
+                ) AS yesterday,
+
+                CAST(
+                    ROUND(
+                        MAX(
+                            CASE
+                                WHEN record_date =
+                                     CAST(:todayDate AS DATE)
+                                    THEN avg_value
+                            END
+                        ),
+                        1
+                    )
+                    AS DECIMAL(19, 1)
+                ) AS today
+
+            FROM HourlySensor
+
+            GROUP BY
+                utility_type,
+                hour_number
+
+            ORDER BY
+                utility_type,
+                hour_number
+            """, nativeQuery = true)
+	List<HourlySensorCompareProjection>
+	findHourlySensorCompare(
 			@Param("fac") String fac,
-			@Param("type") String type
+			@Param("fromTime") LocalDateTime fromTime,
+			@Param("toTime") LocalDateTime toTime,
+			@Param("todayDate") LocalDateTime todayDate,
+			@Param("yesterdayDate") LocalDateTime yesterdayDate
 	);
-
-	default List<HourlyTempCompareDto> utilityHourlySensorCompareDto(
-			String fac,
-			String type
-	) {
-		return utilityHourlySensorCompareRaw(fac, type).stream()
-				.map(r -> new HourlyTempCompareDto(
-						((Number) r[0]).intValue(),
-						r[1] == null ? null : new BigDecimal(r[1].toString()),
-						r[2] == null ? null : new BigDecimal(r[2].toString())
-				))
-				.toList();
-	}
-
 }
