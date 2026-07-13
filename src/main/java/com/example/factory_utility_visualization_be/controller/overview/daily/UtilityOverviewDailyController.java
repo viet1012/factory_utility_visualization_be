@@ -1,6 +1,7 @@
 package com.example.factory_utility_visualization_be.controller.overview.daily;
 
 import com.example.factory_utility_visualization_be.dto.overview.daily.DailyDto;
+import com.example.factory_utility_visualization_be.dto.overview.daily.UtilityDailyDashboardDto;
 import com.example.factory_utility_visualization_be.service.overview.daily.UtilityEnergyDailyService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -18,12 +19,13 @@ public class UtilityOverviewDailyController {
 
 	//	http://localhost:9999/api/utility/energy-daily?facId=Fac_B&month=202603
 	@GetMapping("/energy-daily")
-	public List<DailyDto> energyDaily(
+	public UtilityDailyDashboardDto getDailyDashboard(
 			@RequestParam String facId,
-			@RequestParam String month,
-			@RequestParam(required = false) String nameEn,
-			@RequestParam(required = false, defaultValue = "ENERGY") String type
+			@RequestParam String month
 	) {
-		return service.getDaily(facId, month, nameEn, type);
+		return service.getDailyDashboard(
+				facId,
+				month
+		);
 	}
 }
