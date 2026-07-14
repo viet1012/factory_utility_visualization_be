@@ -8,7 +8,7 @@ import java.time.LocalDateTime;
 //
 //import java.time.LocalDateTime;
 //
-public record MinutePointDto(
+public record OverviewMinutePointDto(
 		LocalDateTime ts,
 		Double value,
 		String nameEn
