@@ -27,10 +27,12 @@ public interface UtilityMonthlyRepo extends JpaRepository<DummyEntity, Long> {
 			        CASE
 			            WHEN pa.name_en = 'Total Energy Consumption'
 			                THEN 'Electricity'
-			            WHEN pa.name_en LIKE '%Cooling tank%'
-			                THEN 'Water'
-			            WHEN pa.name_en = 'Sensor compressed air pressure Data'
-			                THEN 'Compressed Air'
+						WHEN pa.name_en LIKE '%Cooling tank%'
+					     	THEN 'Water'
+						WHEN pa.name_en = 'Data Pipeline pressure'
+					     	THEN 'Water'
+						WHEN pa.name_en = 'Sensor compressed air pressure Data'
+					     THEN 'Compressed Air'
 			            ELSE ch.cate
 			        END AS cate,
 			        pa.unit,
@@ -47,6 +49,7 @@ public interface UtilityMonthlyRepo extends JpaRepository<DummyEntity, Long> {
 			            AND (
 			                   pa.name_en = 'Total Energy Consumption'
 			                OR pa.name_en LIKE '%Cooling tank%'
+						    OR pa.name_en = 'Data Pipeline pressure'
 			                OR pa.name_en = 'Sensor compressed air pressure Data'
 			            )
 			        )
@@ -276,7 +279,88 @@ public interface UtilityMonthlyRepo extends JpaRepository<DummyEntity, Long> {
 			    FROM Base
 			    WHERE name_en LIKE '%Cooling tank%'
 			),
+						        
+			PipelinePressureMonthly AS (
+			    SELECT
+			        'Data Pipeline pressure' AS name,
+			        'Water' AS cate,
+			        MAX(unit) AS unit,
 			
+			        CAST(
+			            ROUND(
+			                AVG(
+			                    CASE
+			                        WHEN period_type = 'CURRENT'
+			                        THEN CAST([value] AS DECIMAL(18,4))
+			                    END
+			                ),
+			                1
+			            ) AS DECIMAL(18,1)
+			        ) AS avgValue,
+			
+			        CAST(
+			            ROUND(
+			                MIN(
+			                    CASE
+			                        WHEN period_type = 'CURRENT'
+			                        THEN CAST([value] AS DECIMAL(18,4))
+			                    END
+			                ),
+			                1
+			            ) AS DECIMAL(18,1)
+			        ) AS minValue,
+			
+			        CAST(
+			            ROUND(
+			                MAX(
+			                    CASE
+			                        WHEN period_type = 'CURRENT'
+			                        THEN CAST([value] AS DECIMAL(18,4))
+			                    END
+			                ),
+			                1
+			            ) AS DECIMAL(18,1)
+			        ) AS maxValue,
+			
+			        CAST(
+			            ROUND(
+			                AVG(
+			                    CASE
+			                        WHEN period_type = 'PREV'
+			                        THEN CAST([value] AS DECIMAL(18,4))
+			                    END
+			                ),
+			                1
+			            ) AS DECIMAL(18,1)
+			        ) AS prevAvgValue,
+			
+			        CAST(
+			            ROUND(
+			                MIN(
+			                    CASE
+			                        WHEN period_type = 'PREV'
+			                        THEN CAST([value] AS DECIMAL(18,4))
+			                    END
+			                ),
+			                1
+			            ) AS DECIMAL(18,1)
+			        ) AS prevMinValue,
+			
+			        CAST(
+			            ROUND(
+			                MAX(
+			                    CASE
+			                        WHEN period_type = 'PREV'
+			                        THEN CAST([value] AS DECIMAL(18,4))
+			                    END
+			                ),
+			                1
+			            ) AS DECIMAL(18,1)
+			        ) AS prevMaxValue
+			
+			    FROM Base
+			    WHERE name_en = 'Data Pipeline pressure'
+			),			
 			AirMonthly AS (
 			    SELECT
 			        'Sensor compressed air pressure Data' AS name,
@@ -361,7 +445,30 @@ public interface UtilityMonthlyRepo extends JpaRepository<DummyEntity, Long> {
 			    FROM WaterMonthly w
 			
 			    UNION ALL
-			
+				SELECT
+			       p.name,
+			       p.cate,
+			       p.unit,
+			   
+			       p.minValue,
+			       p.maxValue,
+			       p.prevMinValue,
+			       p.prevMaxValue,
+			   
+			       CAST(NULL AS DECIMAL(18,2)) AS value,
+			       p.avgValue,
+			   
+			       CAST(NULL AS DECIMAL(18,2)) AS vndCost,
+			       CAST(NULL AS DECIMAL(18,2)) AS usdCost,
+			   
+			       CAST(NULL AS DECIMAL(18,2)) AS prevValue,
+			       p.prevAvgValue,
+			   
+			       CAST(NULL AS DECIMAL(18,2)) AS prevVndCost,
+			       CAST(NULL AS DECIMAL(18,2)) AS prevUsdCost
+				FROM PipelinePressureMonthly p
+				UNION ALL
+							
 			    SELECT
 			        a.name,
 			        a.cate,
@@ -437,10 +544,19 @@ public interface UtilityMonthlyRepo extends JpaRepository<DummyEntity, Long> {
 			ORDER BY
 			    CASE
 			        WHEN f.cate = 'Electricity' THEN 1
-			        WHEN f.cate = 'Water' THEN 2
-			        WHEN f.cate = 'Compressed Air' THEN 3
+			
+			        WHEN f.cate = 'Water'
+			             AND f.name = 'Cooling Tank Temperature'
+			            THEN 2
+			
+			        WHEN f.cate = 'Water'
+			             AND f.name = 'Data Pipeline pressure'
+			            THEN 3
+			
+			        WHEN f.cate = 'Compressed Air' THEN 4
+			
 			        ELSE 9
-			    END
+			END
 			OPTION (RECOMPILE)
 			""", nativeQuery = true)
 	List<MonthlySummaryProjection> sumMonthlyByFacRaw(
@@ -469,6 +585,8 @@ public interface UtilityMonthlyRepo extends JpaRepository<DummyEntity, Long> {
 			                THEN 'Electricity'
 			            WHEN pa.name_en LIKE '%Cooling tank%'
 			                THEN 'Water'
+						WHEN pa.name_en = 'Data Pipeline pressure'
+		                     THEN 'Water'
 			            WHEN pa.name_en = 'Sensor compressed air pressure Data'
 			                THEN 'Compressed Air'
 			            ELSE ch.cate
@@ -484,6 +602,7 @@ public interface UtilityMonthlyRepo extends JpaRepository<DummyEntity, Long> {
 			    WHERE (
 			           pa.name_en = 'Total Energy Consumption'
 			        OR pa.name_en LIKE '%Cooling tank%'
+					OR pa.name_en = 'Data Pipeline pressure'
 			        OR pa.name_en = 'Sensor compressed air pressure Data'
 			    )
 			),
@@ -705,7 +824,87 @@ public interface UtilityMonthlyRepo extends JpaRepository<DummyEntity, Long> {
 			    FROM Base
 			    WHERE name_en LIKE '%Cooling tank%'
 			),
+			PipelinePressureMonthly AS (
+			    SELECT
+			        'Data Pipeline pressure' AS name,
+			        'Water' AS cate,
+			        MAX(unit) AS unit,
 			
+			        CAST(
+			            ROUND(
+			                AVG(
+			                    CASE
+			                        WHEN period_type = 'CURRENT'
+			                        THEN CAST([value] AS DECIMAL(18,4))
+			                    END
+			                ),
+			                1
+			            ) AS DECIMAL(18,1)
+			        ) AS avgValue,
+			
+			        CAST(
+			            ROUND(
+			                MIN(
+			                    CASE
+			                        WHEN period_type = 'CURRENT'
+			                        THEN CAST([value] AS DECIMAL(18,4))
+			                    END
+			                ),
+			                1
+			            ) AS DECIMAL(18,1)
+			        ) AS minValue,
+			
+			        CAST(
+			            ROUND(
+			                MAX(
+			                    CASE
+			                        WHEN period_type = 'CURRENT'
+			                        THEN CAST([value] AS DECIMAL(18,4))
+			                    END
+			                ),
+			                1
+			            ) AS DECIMAL(18,1)
+			        ) AS maxValue,
+			
+			        CAST(
+			            ROUND(
+			                AVG(
+			                    CASE
+			                        WHEN period_type = 'PREV'
+			                        THEN CAST([value] AS DECIMAL(18,4))
+			                    END
+			                ),
+			                1
+			            ) AS DECIMAL(18,1)
+			        ) AS prevAvgValue,
+			
+			        CAST(
+			            ROUND(
+			                MIN(
+			                    CASE
+			                        WHEN period_type = 'PREV'
+			                        THEN CAST([value] AS DECIMAL(18,4))
+			                    END
+			                ),
+			                1
+			            ) AS DECIMAL(18,1)
+			        ) AS prevMinValue,
+			
+			        CAST(
+			            ROUND(
+			                MAX(
+			                    CASE
+			                        WHEN period_type = 'PREV'
+			                        THEN CAST([value] AS DECIMAL(18,4))
+			                    END
+			                ),
+			                1
+			            ) AS DECIMAL(18,1)
+			        ) AS prevMaxValue
+			
+			    FROM Base
+			    WHERE name_en = 'Data Pipeline pressure'
+			),
 			AirMonthly AS (
 			    SELECT
 			        'Sensor compressed air pressure Data' AS name,
@@ -790,7 +989,30 @@ public interface UtilityMonthlyRepo extends JpaRepository<DummyEntity, Long> {
 			    FROM WaterMonthly w
 			
 			    UNION ALL
-			
+				SELECT
+			       p.name,
+			       p.cate,
+			       p.unit,
+			       p.minValue,
+			       p.maxValue,
+			       p.prevMinValue,
+			       p.prevMaxValue,
+			   
+			       CAST(NULL AS DECIMAL(18,2)) AS value,
+			       p.avgValue,
+			   
+			       CAST(NULL AS DECIMAL(18,2)) AS vndCost,
+			       CAST(NULL AS DECIMAL(18,2)) AS usdCost,
+			   
+			       CAST(NULL AS DECIMAL(18,2)) AS prevValue,
+			       p.prevAvgValue,
+			   
+			       CAST(NULL AS DECIMAL(18,2)) AS prevVndCost,
+			       CAST(NULL AS DECIMAL(18,2)) AS prevUsdCost
+				FROM PipelinePressureMonthly p
+				
+				UNION ALL
+							
 			    SELECT
 			        a.name,
 			        a.cate,
@@ -838,38 +1060,47 @@ public interface UtilityMonthlyRepo extends JpaRepository<DummyEntity, Long> {
 			    f.prevVndCost AS prevVndCost,
 			    f.prevUsdCost AS prevUsdCost,
 			
-			    CAST(
-			        COALESCE(f.value, f.avgValue, 0)
-			        -
-			        COALESCE(f.prevValue, f.prevAvgValue, 0)
-			        AS DECIMAL(18,2)
-			    ) AS deltaValue,
-			
-			    CAST(
-			        CASE
-			            WHEN COALESCE(f.prevValue, f.prevAvgValue, 0) = 0 THEN NULL
-			            ELSE (
-			                (
-			                    COALESCE(f.value, f.avgValue, 0)
-			                    -
-			                    COALESCE(f.prevValue, f.prevAvgValue, 0)
-			                )
-			                / COALESCE(f.prevValue, f.prevAvgValue, 0)
-			            ) * 100
-			        END AS DECIMAL(10,2)
-			    ) AS deltaPercent,
-			
-			    lp.pickAt AS pickAt
+		    CAST(
+		        COALESCE(f.value, f.avgValue, 0)
+		        -
+		        COALESCE(f.prevValue, f.prevAvgValue, 0)
+		        AS DECIMAL(18,2)
+		    ) AS deltaValue,
+		
+		    CAST(
+		        CASE
+		            WHEN COALESCE(f.prevValue, f.prevAvgValue, 0) = 0 THEN NULL
+		            ELSE (
+		                (
+		                    COALESCE(f.value, f.avgValue, 0)
+		                    -
+		                    COALESCE(f.prevValue, f.prevAvgValue, 0)
+		                )
+		                / COALESCE(f.prevValue, f.prevAvgValue, 0)
+		            ) * 100
+		        END AS DECIMAL(10,2)
+		    ) AS deltaPercent,
+		
+		    lp.pickAt AS pickAt
 			
 			FROM FinalRows f
 			CROSS JOIN LastPick lp
 			ORDER BY
 			    CASE
 			        WHEN f.cate = 'Electricity' THEN 1
-			        WHEN f.cate = 'Water' THEN 2
-			        WHEN f.cate = 'Compressed Air' THEN 3
+			
+			        WHEN f.cate = 'Water'
+			             AND f.name = 'Cooling Tank Temperature'
+			            THEN 2
+			
+			        WHEN f.cate = 'Water'
+			             AND f.name = 'Data Pipeline pressure'
+			            THEN 3
+			
+			        WHEN f.cate = 'Compressed Air' THEN 4
+			
 			        ELSE 9
-			    END
+			END
 			OPTION (RECOMPILE)
 			""", nativeQuery = true)
 	List<MonthlySummaryProjection> sumMonthlyKvhRaw(
