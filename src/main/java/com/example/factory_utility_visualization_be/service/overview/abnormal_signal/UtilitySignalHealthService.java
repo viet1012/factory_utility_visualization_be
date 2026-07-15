@@ -134,6 +134,7 @@ public class UtilitySignalHealthService {
 				row.getRecordedAt()
 		);
 	}
+
 	public List<SignalHealthMatrixDto> getSignalHealthMatrix() {
 
 		List<UtilitySignalHealthMatrixProjection> rows =
