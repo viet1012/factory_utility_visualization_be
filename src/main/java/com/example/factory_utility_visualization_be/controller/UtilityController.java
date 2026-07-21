@@ -1,6 +1,7 @@
 package com.example.factory_utility_visualization_be.controller;
 
 import com.example.factory_utility_visualization_be.dto.*;
+import com.example.factory_utility_visualization_be.dto.latest.LatestFacilityDto;
 import com.example.factory_utility_visualization_be.request.UtilitySeriesRequest;
 import com.example.factory_utility_visualization_be.response.UtilitySeriesResponse;
 import com.example.factory_utility_visualization_be.service.UtilityQueryService;
@@ -49,8 +50,8 @@ public class UtilityController {
 	}
 
 	// Latest theo device/param (nhiều param một lần)
-	@GetMapping("/latest")
-	public ResponseEntity<List<LatestRecordDto>> getLatest(
+	@GetMapping("/lates1t")
+	public ResponseEntity<List<LatestRecordDto>> getLatest1(
 			@RequestParam(required = false) String facId,
 			@RequestParam(required = false) String scadaId,
 			@RequestParam(required = false) String cate,
@@ -65,18 +66,27 @@ public class UtilityController {
 					.toList();
 		}
 
-		var result = service.getLatest(facId, scadaId, cate, boxDeviceId, cateIds);
+		var result = service.getLatest1(facId, scadaId, cate, boxDeviceId, cateIds);
 		return ResponseEntity.ok(result);
 	}
 
-
-	// Latest cho 1 param
-	@GetMapping("/latest/one")
-	public LatestRecordDto latestOne(
-			@RequestParam String boxDeviceId,
-			@RequestParam String plcAddress
+	@GetMapping("/latest")
+	public ResponseEntity<List<LatestFacilityDto>> getLatest(
+			@RequestParam(required = false) String facId,
+			@RequestParam(required = false) String scadaId,
+			@RequestParam(required = false) String cate,
+			@RequestParam(required = false) String boxDeviceId,
+			@RequestParam(required = false) List<String> cateIds
 	) {
-		return service.getLatestOne(boxDeviceId, plcAddress);
+		return ResponseEntity.ok(
+				service.getLatest(
+						facId,
+						scadaId,
+						cate,
+						boxDeviceId,
+						cateIds
+				)
+		);
 	}
 
 	@GetMapping("/series/minute")
@@ -133,34 +143,6 @@ public class UtilityController {
 	}
 
 
-	// Series theo request
-	@PostMapping("/series")
-	public UtilitySeriesResponse series(@RequestBody UtilitySeriesRequest req) {
-		return service.getSeries(req);
-	}
-
-	@GetMapping("/sum-compare")
-	public List<SumCompareDto> sumCompare(
-			@RequestParam(required = false) String facId,
-			@RequestParam(required = false) String scadaId,
-			@RequestParam(required = false) String cate,
-			@RequestParam(required = false) String boxDeviceId,
-			@RequestParam(required = false) List<String> deviceIds,
-			@RequestParam(required = false) List<String> cateIds,
-
-			// ✅ NEW
-			@RequestParam(required = false) List<String> nameEns
-	) {
-		return service.sumCompareByCateAndNameEn(
-				facId,
-				scadaId,
-				cate,
-				boxDeviceId,
-				deviceIds,
-				cateIds,
-				nameEns
-		);
-	}
 
 	@GetMapping("/series/hourly")
 	public List<HourPointDto> seriesHourly(

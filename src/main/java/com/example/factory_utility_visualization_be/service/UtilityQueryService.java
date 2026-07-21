@@ -2,7 +2,9 @@ package com.example.factory_utility_visualization_be.service;
 
 
 import com.example.factory_utility_visualization_be.dto.*;
+import com.example.factory_utility_visualization_be.dto.latest.*;
 import com.example.factory_utility_visualization_be.dto.mapper.HourPointView;
+import com.example.factory_utility_visualization_be.dto.mapper.LatestRecordView;
 import com.example.factory_utility_visualization_be.dto.mapper.MinutePointView;
 import com.example.factory_utility_visualization_be.model.F2UtilityPara;
 import com.example.factory_utility_visualization_be.model.F2UtilityScada;
@@ -19,6 +21,8 @@ import org.springframework.stereotype.Service;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 @Service
@@ -95,7 +99,282 @@ public class UtilityQueryService {
 		return LatestRecordDto.builder().boxDeviceId(h.getBoxDeviceId()).plcAddress(h.getPlcAddress()).value(h.getValue()).recordedAt(h.getRecordedAt()).scadaId(ch == null ? null : ch.getScadaId()).fac(sc == null ? null : sc.getFac()).cate(ch == null ? null : ch.getCate()).boxId(ch == null ? null : ch.getBoxId()).build();
 	}
 
-	public List<LatestRecordDto> getLatest(String facId, String scadaId, String cate, String boxDeviceId, List<String> cateIds) {
+
+	public List<LatestFacilityDto> getLatest(
+			String facId,
+			String scadaId,
+			String cate,
+			String boxDeviceId,
+			List<String> cateIds
+	) {
+		String normalizedFac = blankToNull(facId);
+		String normalizedScada = blankToNull(scadaId);
+		String normalizedCate = blankToNull(cate);
+		String normalizedDevice = blankToNull(boxDeviceId);
+
+		List<ChannelDto> channelDtos = getChannels(
+				normalizedFac,
+				normalizedScada,
+				normalizedCate
+		);
+
+		Set<String> filteredDeviceIds = channelDtos.stream()
+				.map(ChannelDto::getBoxDeviceId)
+				.filter(Objects::nonNull)
+				.map(String::trim)
+				.filter(value -> !value.isEmpty())
+				.collect(Collectors.toCollection(LinkedHashSet::new));
+
+		final List<String> deviceIds;
+
+		if (normalizedDevice != null) {
+			if (!filteredDeviceIds.isEmpty()
+					&& !filteredDeviceIds.contains(normalizedDevice)) {
+				return List.of();
+			}
+
+			deviceIds = List.of(normalizedDevice);
+		} else {
+			deviceIds = new ArrayList<>(filteredDeviceIds);
+		}
+
+		boolean hasChannelFilter =
+				normalizedFac != null
+						|| normalizedScada != null
+						|| normalizedCate != null;
+
+		if (deviceIds.isEmpty() && hasChannelFilter) {
+			return List.of();
+		}
+
+		int useDeviceIds = deviceIds.isEmpty() ? 0 : 1;
+
+		List<String> safeDeviceIds = useDeviceIds == 1
+				? deviceIds
+				: List.of("__NO_DEVICE__");
+
+		List<String> normalizedCateIds = normalizeStringList(cateIds);
+
+		int useCateIds = normalizedCateIds.isEmpty() ? 0 : 1;
+
+		List<String> safeCateIds = useCateIds == 1
+				? normalizedCateIds
+				: List.of("__NO_CATE__");
+
+		List<LatestRecordView> rows = historyRepo.latestPerKey(
+				normalizedFac,
+				normalizedScada,
+				normalizedCate,
+				normalizedDevice,
+				useDeviceIds,
+				safeDeviceIds,
+				useCateIds,
+				safeCateIds
+		);
+
+		return buildLatestTree(rows);
+	}
+
+	private List<String> normalizeStringList(List<String> values) {
+		if (values == null || values.isEmpty()) {
+			return List.of();
+		}
+
+		return values.stream()
+				.filter(Objects::nonNull)
+				.map(String::trim)
+				.filter(value -> !value.isEmpty())
+				.distinct()
+				.toList();
+	}
+
+	private List<LatestFacilityDto> buildLatestTree(
+			List<LatestRecordView> rows
+	) {
+		if (rows == null || rows.isEmpty()) {
+			return List.of();
+		}
+
+		Map<String, Map<String, Map<String, Map<String,
+				Map<String, List<LatestRecordView>>>>>> grouped =
+				rows.stream()
+						.collect(
+								Collectors.groupingBy(
+										row -> safeText(row.getFac()),
+										LinkedHashMap::new,
+										Collectors.groupingBy(
+												row -> safeText(row.getCate()),
+												LinkedHashMap::new,
+												Collectors.groupingBy(
+														row -> safeText(
+																row.getScadaId()
+														),
+														LinkedHashMap::new,
+														Collectors.groupingBy(
+																row -> safeText(
+																		row.getBoxId()
+																),
+																LinkedHashMap::new,
+																Collectors.groupingBy(
+																		row -> safeText(
+																				row.getBoxDeviceId()
+																		),
+																		LinkedHashMap::new,
+																		Collectors.toList()
+																)
+														)
+												)
+										)
+								)
+						);
+
+		return grouped.entrySet()
+				.stream()
+				.map(facEntry -> LatestFacilityDto.builder()
+						.fac(facEntry.getKey())
+						.categories(
+								facEntry.getValue()
+										.entrySet()
+										.stream()
+										.map(cateEntry ->
+												LatestCategoryDto.builder()
+														.cate(cateEntry.getKey())
+														.scadas(
+																cateEntry.getValue()
+																		.entrySet()
+																		.stream()
+																		.map(scadaEntry ->
+																				LatestScadaDto.builder()
+																						.scadaId(
+																								scadaEntry.getKey()
+																						)
+																						.boxes(
+																								scadaEntry.getValue()
+																										.entrySet()
+																										.stream()
+																										.map(boxEntry ->
+																												LatestBoxDto.builder()
+																														.boxId(
+																																boxEntry.getKey()
+																														)
+																														.devices(
+																																boxEntry.getValue()
+																																		.entrySet()
+																																		.stream()
+																																		.map(deviceEntry ->
+																																				LatestDeviceDto.builder()
+																																						.boxDeviceId(
+																																								deviceEntry.getKey()
+																																						)
+																																						.signals(
+																																								deviceEntry.getValue()
+																																										.stream()
+																																										.map(this::toLatestSignal)
+																																										.sorted(
+																																												Comparator.comparing(
+																																														LatestSignalDto::getPlcAddress,
+																																														Comparator.nullsLast(
+																																																this::comparePlcAddress
+																																														)
+																																												)
+																																										)
+																																										.toList()
+																																						)
+																																						.build()
+																																		)
+																																		.toList()
+																														)
+																														.build()
+																										)
+																										.toList()
+																						)
+																						.build()
+																		)
+																		.toList()
+														)
+														.build()
+										)
+										.toList()
+						)
+						.build()
+				)
+				.toList();
+	}
+
+	private LatestSignalDto toLatestSignal(
+			LatestRecordView row
+	) {
+		return LatestSignalDto.builder()
+				.plcAddress(row.getPlcAddress())
+				.cateId(row.getCateId())
+				.nameEn(row.getNameEn())
+				.value(row.getValue())
+				.unit(row.getUnit())
+				.recordedAt(row.getRecordedAt())
+				.build();
+	}
+
+	private String safeText(String value) {
+		if (value == null || value.isBlank()) {
+			return "UNKNOWN";
+		}
+
+		return value.trim();
+	}
+
+	private int comparePlcAddress(
+			String first,
+			String second
+	) {
+		if (first == null && second == null) {
+			return 0;
+		}
+
+		if (first == null) {
+			return 1;
+		}
+
+		if (second == null) {
+			return -1;
+		}
+
+		Pattern pattern = Pattern.compile(
+				"^([A-Za-z]+)(\\d+)$"
+		);
+
+		Matcher firstMatcher = pattern.matcher(first);
+		Matcher secondMatcher = pattern.matcher(second);
+
+		if (!firstMatcher.matches()
+				|| !secondMatcher.matches()) {
+			return first.compareToIgnoreCase(second);
+		}
+
+		int prefixCompare = firstMatcher
+				.group(1)
+				.compareToIgnoreCase(
+						secondMatcher.group(1)
+				);
+
+		if (prefixCompare != 0) {
+			return prefixCompare;
+		}
+
+		int firstNumber = Integer.parseInt(
+				firstMatcher.group(2)
+		);
+
+		int secondNumber = Integer.parseInt(
+				secondMatcher.group(2)
+		);
+
+		return Integer.compare(
+				firstNumber,
+				secondNumber
+		);
+	}
+
+	public List<LatestRecordDto> getLatest1(String facId, String scadaId, String cate, String boxDeviceId, List<String> cateIds) {
 		List<ChannelDto> channelDtos = getChannels(facId, scadaId, cate);
 
 		Set<String> filteredDeviceIds = channelDtos.stream().map(ChannelDto::getBoxDeviceId).collect(Collectors.toSet());
@@ -154,81 +433,7 @@ public class UtilityQueryService {
 				useCateIds, safeCateIds);
 	}
 
-	// 6) POST /series
-	public UtilitySeriesResponse getSeries(UtilitySeriesRequest req) {
-		if (req.getFrom() == null || req.getTo() == null) {
-			throw new IllegalArgumentException("from/to is required");
-		}
 
-		final List<UtilitySeriesRequest.SeriesParamKey> paramsToQuery;
-		Integer importantOnly = (req.getIsImportant() != null && req.getIsImportant()) ? 1 : 0;
-		if (req.getParams() != null && !req.getParams().isEmpty()) {
-			paramsToQuery = req.getParams();
-		} else {
-			List<ChannelDto> chs = getChannels(req.getFacId(), req.getScadaId(), req.getCate());
-			Set<String> devs = chs.stream().map(ChannelDto::getBoxDeviceId).collect(Collectors.toSet());
-			if (devs.isEmpty()) return UtilitySeriesResponse.builder().series(List.of()).build();
-
-			List<ParamDto> ps = getParams(null, req.getCate(), req.getFacId(), importantOnly);
-
-			paramsToQuery = ps.stream().filter(p -> devs.contains(p.getBoxDeviceId())).map(p -> UtilitySeriesRequest.SeriesParamKey.builder().boxDeviceId(p.getBoxDeviceId()).plcAddress(p.getPlcAddress()).build()).toList();
-		}
-
-		List<UtilitySeriesResponse.SeriesItem> items = new ArrayList<>();
-		for (var k : paramsToQuery) {
-			var rows = historyRepo.seriesRaw(k.getBoxDeviceId(), k.getPlcAddress(), req.getFrom(), req.getTo());
-			var points = rows.stream().map(r -> UtilitySeriesResponse.Point.builder().t(r.getRecordedAt()).v(r.getValue()).build()).toList();
-
-			items.add(UtilitySeriesResponse.SeriesItem.builder().boxDeviceId(k.getBoxDeviceId()).plcAddress(k.getPlcAddress()).points(points).build());
-		}
-
-		return UtilitySeriesResponse.builder().series(items).build();
-	}
-
-	public List<SumCompareDto> sumCompareByCateAndNameEn(String facId, String scadaId, String cate, String boxDeviceId, List<String> deviceIds, List<String> cateIds, List<String> nameEns) {
-		int useDeviceIds = (deviceIds != null && !deviceIds.isEmpty()) ? 1 : 0;
-		int useCateIds = (cateIds != null && !cateIds.isEmpty()) ? 1 : 0;
-		int useNameEns = (nameEns != null && !nameEns.isEmpty()) ? 1 : 0;
-
-		// ✅ tránh lỗi IN () bind rỗng trong native query
-		List<String> safeDeviceIds = (useDeviceIds == 1) ? deviceIds : List.of("__DUMMY__");
-		List<String> safeCateIds = (useCateIds == 1) ? cateIds : List.of("__DUMMY__");
-		List<String> safeNameEns = (useNameEns == 1) ? nameEns : List.of("__DUMMY__");
-
-		LocalDate today = LocalDate.now();
-		LocalDate yesterday = today.minusDays(1);
-
-		LocalDateTime nowCutoff = today.atTime(23, 59, 59);
-		LocalDateTime prevCutoff = yesterday.atTime(23, 59, 59);
-
-		List<Object[]> rows = historyRepo.sumCompareByCateAndNameEn(nowCutoff, prevCutoff, facId, scadaId, cate, boxDeviceId, useDeviceIds, safeDeviceIds, useCateIds, safeCateIds, useNameEns, safeNameEns);
-
-		final double EPS = 0.01;
-
-		return rows.stream().map(r -> {
-			String cateKey = r[0] == null ? "UNKNOWN" : r[0].toString();
-			String nameEn = r[1] == null ? "UNKNOWN" : r[1].toString();
-
-			double nowV = r[2] == null ? 0.0 : ((Number) r[2]).doubleValue();
-			double prevV = r[3] == null ? 0.0 : ((Number) r[3]).doubleValue();
-
-			double delta = nowV - prevV;
-			Double pct = (prevV == 0) ? null : (delta / prevV) * 100.0;
-
-			double nowR = round2(nowV);
-			double prevR = round2(prevV);
-			double deltaR = round2(delta);
-			Double pctR = (pct == null) ? null : round2(pct);
-
-			String trend = trendFromDelta(deltaR, EPS);
-			String pctText = fmtPct(pctR);
-
-			// ✅ key hiển thị: cate + nameEn (bạn có thể đổi format)
-			String key = cateKey + " | " + nameEn;
-
-			return new SumCompareDto(key, today.toString(), yesterday.toString(), nowR, prevR, deltaR, pctR, pctText, trend);
-		}).toList();
-	}
 
 	public List<HourPointDto> seriesHourlySum(LocalDateTime fromTs, LocalDateTime toTs, String fac, String scadaId, String cate, String boxDeviceId, String plcAddress, String cateId,          // single
 	                                          List<String> cateIds    // list
