@@ -43,18 +43,25 @@ public interface UtilityMinuteRepo
                     OR pa.name_en =
                        'Sensor compressed air pressure Data'
             ),
-
-            DeviceFacility AS (
+			DeviceFacility AS (
                 SELECT DISTINCT
                     ch.box_device_id,
+                    ch.box_id,
                     sc.fac
-
+            
                 FROM dbo.F2_Utility_Scada_Channel ch
-
+            
                 INNER JOIN dbo.F2_Utility_Scada sc
                     ON sc.scada_id = ch.scada_id
+            
+                WHERE UPPER(
+                    LTRIM(
+                        RTRIM(
+                            ISNULL(ch.box_id, '')
+                        )
+                    )
+                ) <> 'SOLAR'
             ),
-
             RawData AS (
                 SELECT
                     rp.utility_type,

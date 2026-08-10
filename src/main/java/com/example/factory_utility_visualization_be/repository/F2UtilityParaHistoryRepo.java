@@ -221,8 +221,6 @@ public interface F2UtilityParaHistoryRepo extends JpaRepository<F2UtilityParaHis
 	);
 
 
-
-
 	@Query(value = """
 			WITH t AS (
 			    SELECT
@@ -281,5 +279,6 @@ public interface F2UtilityParaHistoryRepo extends JpaRepository<F2UtilityParaHis
 			@Param("useCateIds") int useCateIds,
 			@Param("cateIds") List<String> cateIds
 	);
+
 }
 

@@ -1,6 +1,6 @@
-package com.example.factory_utility_visualization_be.dto.overview.monthly;
+package com.example.factory_utility_visualization_be.service.overview.monthly;
 
-
+import com.example.factory_utility_visualization_be.dto.overview.monthly.MonthlyQueryRange;
 import com.example.factory_utility_visualization_be.dto.overview.monthly.MonthlySummaryDto;
 import com.example.factory_utility_visualization_be.dto.overview.monthly.MonthlySummaryProjection;
 import com.example.factory_utility_visualization_be.repository.overview.monthly.UtilityMonthlyRepo;
@@ -29,6 +29,8 @@ public class UtilityMonthlyQueryService {
 	private static final ZoneId APP_ZONE =
 			ZoneId.of("Asia/Ho_Chi_Minh");
 
+	private static final String KVH = "KVH";
+
 	private final UtilityMonthlyRepo repo;
 
 	@Transactional(readOnly = true)
@@ -37,9 +39,11 @@ public class UtilityMonthlyQueryService {
 			String monthYyyyMm,
 			MonthlyQueryRange range
 	) {
+		final String normalizedFac = normalizeFac(fac);
+
 		log.info(
 				"Query monthly DB: fac={}, month={}, from={}, currentTo={}, prevFrom={}, prevTo={}",
-				fac,
+				normalizedFac,
 				monthYyyyMm,
 				range.from(),
 				range.currentTo(),
@@ -47,30 +51,12 @@ public class UtilityMonthlyQueryService {
 				range.prevTo()
 		);
 
-		final List<MonthlySummaryProjection> projections;
-
-		if ("KVH".equalsIgnoreCase(fac)) {
-			projections = repo.sumMonthlyKvhRaw(
-					monthYyyyMm,
-					range.from(),
-					range.currentTo(),
-					range.prevFrom(),
-					range.prevTo(),
-					DEFAULT_EXCHANGE,
-					DEFAULT_SEPZONE
-			);
-		} else {
-			projections = repo.sumMonthlyByFacRaw(
-					fac,
-					monthYyyyMm,
-					range.from(),
-					range.currentTo(),
-					range.prevFrom(),
-					range.prevTo(),
-					DEFAULT_EXCHANGE,
-					DEFAULT_SEPZONE
-			);
-		}
+		final List<MonthlySummaryProjection> projections =
+				loadProjections(
+						normalizedFac,
+						monthYyyyMm,
+						range
+				);
 
 		if (projections == null || projections.isEmpty()) {
 			return List.of();
@@ -96,6 +82,35 @@ public class UtilityMonthlyQueryService {
 		}
 
 		return List.copyOf(result);
+	}
+
+	private List<MonthlySummaryProjection> loadProjections(
+			String fac,
+			String monthYyyyMm,
+			MonthlyQueryRange range
+	) {
+		if (KVH.equalsIgnoreCase(fac)) {
+			return repo.sumMonthlyKvhRaw(
+					monthYyyyMm,
+					range.from(),
+					range.currentTo(),
+					range.prevFrom(),
+					range.prevTo(),
+					DEFAULT_EXCHANGE,
+					DEFAULT_SEPZONE
+			);
+		}
+
+		return repo.sumMonthlyByFacRaw(
+				fac,
+				monthYyyyMm,
+				range.from(),
+				range.currentTo(),
+				range.prevFrom(),
+				range.prevTo(),
+				DEFAULT_EXCHANGE,
+				DEFAULT_SEPZONE
+		);
 	}
 
 	private MonthlySummaryDto mapToDto(
@@ -129,7 +144,25 @@ public class UtilityMonthlyQueryService {
 
 				row.getUnit(),
 				row.getPickAt(),
+
+				// ============================
+				// Solar monthly information
+				// ============================
+				row.getSolarValue(),
+				row.getPrevSolarValue(),
+				row.getTotalEnergyValue(),
+				row.getPrevTotalEnergyValue(),
+				row.getSolarSharePercent(),
+
 				generatedAt
 		);
+	}
+
+	private String normalizeFac(String fac) {
+		if (fac == null || fac.isBlank()) {
+			return KVH;
+		}
+
+		return fac.trim();
 	}
 }

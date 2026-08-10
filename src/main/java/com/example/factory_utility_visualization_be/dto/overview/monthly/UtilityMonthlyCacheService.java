@@ -2,7 +2,7 @@ package com.example.factory_utility_visualization_be.dto.overview.monthly;
 
 
 import com.example.factory_utility_visualization_be.cache_config.UtilityCacheNames;
-import com.example.factory_utility_visualization_be.dto.overview.monthly.MonthlySummaryDto;
+import com.example.factory_utility_visualization_be.service.overview.monthly.UtilityMonthlyQueryService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;

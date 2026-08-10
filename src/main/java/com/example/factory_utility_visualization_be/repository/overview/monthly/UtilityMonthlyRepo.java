@@ -15,195 +15,585 @@ import java.util.List;
 public interface UtilityMonthlyRepo extends JpaRepository<DummyEntity, Long> {
 	// =========================================================
 	// FAC_A / FAC_B / FAC_C
-	// - Lọc sensor trước.
-	// - Sau đó mới join history.
-	// - Fac_A vẫn lấy thêm Compressed Air từ Fac_B theo rule cũ.
+	//
+	// BUSINESS LOGIC:
+	//
+	// grossValue = meter electricity hiện tại
+	// solarValue = điện Solar
+	//
+	// gridValue = grossValue - solarValue
+	//
+	// value trả ra API = gridValue
+	//
+	// Lưu ý:
+	// - TargetPara vẫn loại box_id = SOLAR.
+	// - Vì meter điện chính vẫn đã bao gồm phần Solar,
+	//   nên phải trừ Solar thêm một lần ở EnergyNetMonthly.
 	// =========================================================
+
 	@Query(value = """
 			WITH TargetPara AS (
 			    SELECT DISTINCT
 			        sc.fac,
 			        pa.name_en,
+
 			        CASE
 			            WHEN pa.name_en = 'Total Energy Consumption'
 			                THEN 'Electricity'
-						WHEN pa.name_en LIKE '%Cooling tank%'
-					     	THEN 'Water'
-						WHEN pa.name_en = 'Data Pipeline pressure'
-					     	THEN 'Water'
-						WHEN pa.name_en = 'Sensor compressed air pressure Data'
-					     THEN 'Compressed Air'
+
+			            WHEN pa.name_en LIKE '%Cooling tank%'
+			                THEN 'Water'
+
+			            WHEN pa.name_en = 'Data Pipeline pressure'
+			                THEN 'Water'
+
+			            WHEN pa.name_en =
+			                 'Sensor compressed air pressure Data'
+			                THEN 'Compressed Air'
+
 			            ELSE ch.cate
 			        END AS cate,
+
 			        pa.unit,
 			        pa.box_device_id,
 			        pa.plc_address
+
 			    FROM dbo.F2_Utility_Para pa
+
 			    INNER JOIN dbo.F2_Utility_Scada_Channel ch
-			        ON pa.box_device_id = ch.box_device_id
+			        ON ch.box_device_id = pa.box_device_id
+
 			    INNER JOIN dbo.F2_Utility_Scada sc
-			        ON ch.scada_id = sc.scada_id
-			    WHERE (
-			        (
-			            sc.fac = :fac
-			            AND (
-			                   pa.name_en = 'Total Energy Consumption'
-			                OR pa.name_en LIKE '%Cooling tank%'
-						    OR pa.name_en = 'Data Pipeline pressure'
-			                OR pa.name_en = 'Sensor compressed air pressure Data'
+			        ON sc.scada_id = ch.scada_id
+
+			    WHERE
+			        UPPER(
+			            LTRIM(
+			                RTRIM(
+			                    ISNULL(ch.box_id, '')
+			                )
+			            )
+			        ) <> 'SOLAR'
+
+			        AND (
+			            (
+			                UPPER(sc.fac) = UPPER(:fac)
+
+			                AND (
+			                       pa.name_en =
+			                           'Total Energy Consumption'
+
+			                    OR pa.name_en LIKE
+			                       '%Cooling tank%'
+
+			                    OR pa.name_en =
+			                       'Data Pipeline pressure'
+
+			                    OR pa.name_en =
+			                       'Sensor compressed air pressure Data'
+			                )
+			            )
+
+			            OR
+
+			            (
+			                UPPER(:fac) = 'FAC_A'
+
+			                AND UPPER(sc.fac) = 'FAC_B'
+
+			                AND pa.name_en =
+			                    'Sensor compressed air pressure Data'
 			            )
 			        )
-			        OR
-			        (
-			            :fac = 'Fac_A'
-			            AND sc.fac = 'Fac_B'
-			            AND pa.name_en = 'Sensor compressed air pressure Data'
-			        )
-			    )
 			),
-			
+
+			-- =====================================================
+			-- SOLAR DEVICES
+			-- =====================================================
+
+			SolarTargetPara AS (
+			    SELECT DISTINCT
+			        pa.box_device_id,
+			        pa.plc_address
+
+			    FROM dbo.F2_Utility_Para pa
+
+			    INNER JOIN dbo.F2_Utility_Scada_Channel ch
+			        ON ch.box_device_id =
+			           pa.box_device_id
+
+			    INNER JOIN dbo.F2_Utility_Scada sc
+			        ON sc.scada_id =
+			           ch.scada_id
+
+			    WHERE
+			        pa.name_en =
+			            'Total Energy Consumption'
+
+			        AND UPPER(
+			            LTRIM(
+			                RTRIM(
+			                    ISNULL(ch.box_id, '')
+			                )
+			            )
+			        ) = 'SOLAR'
+
+			        AND UPPER(sc.fac) =
+			            UPPER(:fac)
+			),
+
+			-- =====================================================
+			-- SOLAR RAW
+			-- =====================================================
+
+			SolarBase AS (
+			    SELECT
+			        'CURRENT' AS period_type,
+
+			        hm.pick_at,
+
+			        CAST(
+			            hm.[value]
+			            AS DECIMAL(19, 6)
+			        ) AS solar_value,
+
+			        DATEPART(
+			            HOUR,
+			            hm.pick_at
+			        ) AS HourNumber,
+
+			        CASE
+			            WHEN DATEPART(
+			                WEEKDAY,
+			                CAST(hm.pick_at AS DATE)
+			            ) = 1
+			                THEN '1'
+			            ELSE '2-7'
+			        END AS WD
+
+			    FROM SolarTargetPara stp
+
+			    INNER JOIN
+			        dbo.F2_Utility_Para_History_Main hm
+
+			        ON hm.box_device_id =
+			           stp.box_device_id
+
+			       AND hm.plc_address =
+			           stp.plc_address
+
+			    WHERE
+			        hm.pick_at >= :from
+
+			        AND hm.pick_at < :currentTo
+
+			        AND hm.[value] > 0
+
+			        AND ISNULL(
+			            hm.MTD,
+			            ''
+			        ) = 'MTD'
+
+			    UNION ALL
+
+			    SELECT
+			        'PREV' AS period_type,
+
+			        hm.pick_at,
+
+			        CAST(
+			            hm.[value]
+			            AS DECIMAL(19, 6)
+			        ) AS solar_value,
+
+			        DATEPART(
+			            HOUR,
+			            hm.pick_at
+			        ) AS HourNumber,
+
+			        CASE
+			            WHEN DATEPART(
+			                WEEKDAY,
+			                CAST(hm.pick_at AS DATE)
+			            ) = 1
+			                THEN '1'
+			            ELSE '2-7'
+			        END AS WD
+
+			    FROM SolarTargetPara stp
+
+			    INNER JOIN
+			        dbo.F2_Utility_Para_History_Main hm
+
+			        ON hm.box_device_id =
+			           stp.box_device_id
+
+			       AND hm.plc_address =
+			           stp.plc_address
+
+			    WHERE
+			        hm.pick_at >= :prevFrom
+
+			        AND hm.pick_at < :prevTo
+
+			        AND hm.[value] > 0
+
+			        AND ISNULL(
+			            hm.MTD,
+			            ''
+			        ) = 'MTD'
+			),
+
+			-- =====================================================
+			-- SOLAR THEO KHUNG GIỜ
+			--
+			-- Cần CTE này để tiền điện Solar được trừ đúng tariff.
+			-- =====================================================
+
+			SolarHourly AS (
+			    SELECT
+			        period_type,
+			        WD,
+			        HourNumber,
+
+			        SUM(solar_value)
+			            AS solar_hour_value
+
+			    FROM SolarBase
+
+			    GROUP BY
+			        period_type,
+			        WD,
+			        HourNumber
+			),
+
+			-- =====================================================
+			-- SOLAR MONTHLY TOTAL
+			-- =====================================================
+
+			SolarMonthly AS (
+			    SELECT
+			        CAST(
+			            COALESCE(
+			                SUM(
+			                    CASE
+			                        WHEN period_type =
+			                             'CURRENT'
+			                            THEN solar_value
+			                        ELSE 0
+			                    END
+			                ),
+			                0
+			            )
+			            AS DECIMAL(18, 2)
+			        ) AS solarValue,
+
+			        CAST(
+			            COALESCE(
+			                SUM(
+			                    CASE
+			                        WHEN period_type =
+			                             'PREV'
+			                            THEN solar_value
+			                        ELSE 0
+			                    END
+			                ),
+			                0
+			            )
+			            AS DECIMAL(18, 2)
+			        ) AS prevSolarValue
+
+			    FROM SolarBase
+			),
+
+			-- =====================================================
+			-- NORMAL UTILITY DATA
+			-- =====================================================
+
 			Base AS (
 			    SELECT
 			        'CURRENT' AS period_type,
+
 			        tp.fac,
 			        tp.name_en,
 			        tp.cate,
 			        tp.unit,
+
 			        hi.pick_at,
 			        hi.[value],
-			        DATEPART(HOUR, hi.pick_at) AS HourNumber,
+
+			        DATEPART(
+			            HOUR,
+			            hi.pick_at
+			        ) AS HourNumber,
+
 			        CASE
-			            WHEN DATEPART(WEEKDAY, CAST(hi.pick_at AS DATE)) = 1 THEN '1'
+			            WHEN DATEPART(
+			                WEEKDAY,
+			                CAST(hi.pick_at AS DATE)
+			            ) = 1
+			                THEN '1'
 			            ELSE '2-7'
 			        END AS WD
+
 			    FROM TargetPara tp
-			    INNER JOIN dbo.F2_Utility_Para_History_Main hi
-			        ON hi.box_device_id = tp.box_device_id
-			       AND hi.plc_address = tp.plc_address
+
+			    INNER JOIN
+			        dbo.F2_Utility_Para_History_Main hi
+
+			        ON hi.box_device_id =
+			           tp.box_device_id
+
+			       AND hi.plc_address =
+			           tp.plc_address
+
 			       AND hi.pick_at >= :from
-			       AND hi.pick_at <  :currentTo
+
+			       AND hi.pick_at < :currentTo
+
 			       AND hi.[value] > 0
-			
+
 			    UNION ALL
-			
+
 			    SELECT
 			        'PREV' AS period_type,
+
 			        tp.fac,
 			        tp.name_en,
 			        tp.cate,
 			        tp.unit,
+
 			        hi.pick_at,
 			        hi.[value],
-			        DATEPART(HOUR, hi.pick_at) AS HourNumber,
+
+			        DATEPART(
+			            HOUR,
+			            hi.pick_at
+			        ) AS HourNumber,
+
 			        CASE
-			            WHEN DATEPART(WEEKDAY, CAST(hi.pick_at AS DATE)) = 1 THEN '1'
+			            WHEN DATEPART(
+			                WEEKDAY,
+			                CAST(hi.pick_at AS DATE)
+			            ) = 1
+			                THEN '1'
 			            ELSE '2-7'
 			        END AS WD
+
 			    FROM TargetPara tp
-			    INNER JOIN dbo.F2_Utility_Para_History_Main hi
-			        ON hi.box_device_id = tp.box_device_id
-			       AND hi.plc_address = tp.plc_address
+
+			    INNER JOIN
+			        dbo.F2_Utility_Para_History_Main hi
+
+			        ON hi.box_device_id =
+			           tp.box_device_id
+
+			       AND hi.plc_address =
+			           tp.plc_address
+
 			       AND hi.pick_at >= :prevFrom
-			       AND hi.pick_at <  :prevTo
+
+			       AND hi.pick_at < :prevTo
+
 			       AND hi.[value] > 0
 			),
-			
+
+			-- =====================================================
+			-- 24 HOURS
+			-- =====================================================
+
 			Hours AS (
 			    SELECT v.n
-			    FROM (VALUES
-			        (0),(1),(2),(3),(4),(5),(6),(7),
-			        (8),(9),(10),(11),(12),(13),(14),(15),
-			        (16),(17),(18),(19),(20),(21),(22),(23)
+
+			    FROM (
+			        VALUES
+			            (0),(1),(2),(3),(4),(5),
+			            (6),(7),(8),(9),(10),(11),
+			            (12),(13),(14),(15),(16),(17),
+			            (18),(19),(20),(21),(22),(23)
 			    ) v(n)
 			),
-			
+
+			-- =====================================================
+			-- ELECTRICITY RATE
+			-- =====================================================
+
 			HourCost AS (
 			    SELECT
 			        c.WD,
+
 			        h.n AS HourNumber,
-			
+
 			        SUM(
 			            CASE
-			                WHEN c.frTime < c.toTime THEN
+			                WHEN c.frTime < c.toTime
+			                THEN
 			                    (
-			                        CASE WHEN c.toTime < h.n + 1 THEN c.toTime ELSE h.n + 1 END
+			                        CASE
+			                            WHEN c.toTime < h.n + 1
+			                                THEN c.toTime
+			                            ELSE h.n + 1
+			                        END
 			                    )
 			                    -
 			                    (
-			                        CASE WHEN c.frTime > h.n THEN c.frTime ELSE h.n END
+			                        CASE
+			                            WHEN c.frTime > h.n
+			                                THEN c.frTime
+			                            ELSE h.n
+			                        END
 			                    )
+
 			                ELSE
 			                    CASE
-			                        WHEN h.n >= FLOOR(c.frTime) THEN
+			                        WHEN h.n >= FLOOR(c.frTime)
+			                        THEN
 			                            (
-			                                CASE WHEN 24.0 < h.n + 1 THEN 24.0 ELSE h.n + 1 END
+			                                CASE
+			                                    WHEN 24.0 < h.n + 1
+			                                        THEN 24.0
+			                                    ELSE h.n + 1
+			                                END
 			                            )
 			                            -
 			                            (
-			                                CASE WHEN c.frTime > h.n THEN c.frTime ELSE h.n END
+			                                CASE
+			                                    WHEN c.frTime > h.n
+			                                        THEN c.frTime
+			                                    ELSE h.n
+			                                END
 			                            )
+
 			                        ELSE
 			                            (
-			                                CASE WHEN c.toTime < h.n + 1 THEN c.toTime ELSE h.n + 1 END
+			                                CASE
+			                                    WHEN c.toTime < h.n + 1
+			                                        THEN c.toTime
+			                                    ELSE h.n + 1
+			                                END
 			                            )
 			                            -
 			                            (
-			                                CASE WHEN 0.0 > h.n THEN 0.0 ELSE h.n END
+			                                CASE
+			                                    WHEN 0.0 > h.n
+			                                        THEN 0.0
+			                                    ELSE h.n
+			                                END
 			                            )
 			                    END
+
 			            END * c.vnd
 			        ) AS weighted_vnd_sum,
-			
+
 			        SUM(
 			            CASE
-			                WHEN c.frTime < c.toTime THEN
+			                WHEN c.frTime < c.toTime
+			                THEN
 			                    (
-			                        CASE WHEN c.toTime < h.n + 1 THEN c.toTime ELSE h.n + 1 END
+			                        CASE
+			                            WHEN c.toTime < h.n + 1
+			                                THEN c.toTime
+			                            ELSE h.n + 1
+			                        END
 			                    )
 			                    -
 			                    (
-			                        CASE WHEN c.frTime > h.n THEN c.frTime ELSE h.n END
+			                        CASE
+			                            WHEN c.frTime > h.n
+			                                THEN c.frTime
+			                            ELSE h.n
+			                        END
 			                    )
+
 			                ELSE
 			                    CASE
-			                        WHEN h.n >= FLOOR(c.frTime) THEN
+			                        WHEN h.n >= FLOOR(c.frTime)
+			                        THEN
 			                            (
-			                                CASE WHEN 24.0 < h.n + 1 THEN 24.0 ELSE h.n + 1 END
+			                                CASE
+			                                    WHEN 24.0 < h.n + 1
+			                                        THEN 24.0
+			                                    ELSE h.n + 1
+			                                END
 			                            )
 			                            -
 			                            (
-			                                CASE WHEN c.frTime > h.n THEN c.frTime ELSE h.n END
+			                                CASE
+			                                    WHEN c.frTime > h.n
+			                                        THEN c.frTime
+			                                    ELSE h.n
+			                                END
 			                            )
+
 			                        ELSE
 			                            (
-			                                CASE WHEN c.toTime < h.n + 1 THEN c.toTime ELSE h.n + 1 END
+			                                CASE
+			                                    WHEN c.toTime < h.n + 1
+			                                        THEN c.toTime
+			                                    ELSE h.n + 1
+			                                END
 			                            )
 			                            -
 			                            (
-			                                CASE WHEN 0.0 > h.n THEN 0.0 ELSE h.n END
+			                                CASE
+			                                    WHEN 0.0 > h.n
+			                                        THEN 0.0
+			                                    ELSE h.n
+			                                END
 			                            )
 			                    END
 			            END
 			        ) AS total_hours
-			
+
 			    FROM dbo.F2_Utility_Cost_Master c
+
 			    CROSS JOIN Hours h
-			    WHERE (
-			        (c.frTime < c.toTime AND h.n < c.toTime AND h.n + 1 > c.frTime)
+
+			    WHERE
+			        (
+			            c.frTime < c.toTime
+
+			            AND h.n < c.toTime
+
+			            AND h.n + 1 > c.frTime
+			        )
+
 			        OR
-			        (c.frTime > c.toTime AND (h.n + 1 > c.frTime OR h.n < c.toTime))
-			    )
-			    GROUP BY c.WD, h.n
+
+			        (
+			            c.frTime > c.toTime
+
+			            AND (
+			                h.n + 1 > c.frTime
+
+			                OR h.n < c.toTime
+			            )
+			        )
+
+			    GROUP BY
+			        c.WD,
+			        h.n
 			),
-			
+
 			FinalRate AS (
 			    SELECT
 			        WD,
 			        HourNumber,
-			        weighted_vnd_sum / NULLIF(total_hours, 0) AS vnd_rate
+
+			        weighted_vnd_sum
+			        /
+			        NULLIF(
+			            total_hours,
+			            0
+			        ) AS vnd_rate
+
 			    FROM HourCost
 			),
-			
+
+			-- =====================================================
+			-- GROSS ELECTRICITY BY HOUR
+			-- =====================================================
+
 			EnergyHourly AS (
 			    SELECT
 			        period_type,
@@ -212,9 +602,15 @@ public interface UtilityMonthlyRepo extends JpaRepository<DummyEntity, Long> {
 			        unit,
 			        WD,
 			        HourNumber,
+
 			        SUM([value]) AS hour_value
+
 			    FROM Base
-			    WHERE name_en = 'Total Energy Consumption'
+
+			    WHERE
+			        name_en =
+			            'Total Energy Consumption'
+
 			    GROUP BY
 			        period_type,
 			        name_en,
@@ -223,340 +619,1023 @@ public interface UtilityMonthlyRepo extends JpaRepository<DummyEntity, Long> {
 			        WD,
 			        HourNumber
 			),
-			
+
+			-- =====================================================
+			-- MONTHLY GROSS ELECTRICITY
+			--
+			-- gross_value vẫn là meter chính.
+			-- Chưa trừ Solar ở đây.
+			-- =====================================================
+
 			EnergyMonthly AS (
 			    SELECT
 			        e.name_en AS name,
 			        e.cate,
 			        e.unit,
-			
-			        SUM(CASE WHEN e.period_type = 'CURRENT' THEN e.hour_value END) AS value,
-			        SUM(CASE WHEN e.period_type = 'PREV' THEN e.hour_value END) AS prevValue,
-			
-			        SUM(CASE WHEN e.period_type = 'CURRENT' THEN e.hour_value * r.vnd_rate END) AS vndCost,
-			        SUM(CASE WHEN e.period_type = 'PREV' THEN e.hour_value * r.vnd_rate END) AS prevVndCost,
-			
-			        SUM(CASE WHEN e.period_type = 'CURRENT' THEN e.hour_value * r.vnd_rate END)
-			            / NULLIF(:exchange, 0) * :sepzone AS usdCost,
-			
-			        SUM(CASE WHEN e.period_type = 'PREV' THEN e.hour_value * r.vnd_rate END)
-			            / NULLIF(:exchange, 0) * :sepzone AS prevUsdCost
-			
+
+			        SUM(
+			            CASE
+			                WHEN e.period_type =
+			                     'CURRENT'
+			                    THEN e.hour_value
+			            END
+			        ) AS gross_value,
+
+			        SUM(
+			            CASE
+			                WHEN e.period_type =
+			                     'PREV'
+			                    THEN e.hour_value
+			            END
+			        ) AS gross_prev_value,
+
+			        -- Gross cost
+			        SUM(
+			            CASE
+			                WHEN e.period_type =
+			                     'CURRENT'
+			                    THEN
+			                        e.hour_value
+			                        * r.vnd_rate
+			            END
+			        ) AS gross_vndCost,
+
+			        SUM(
+			            CASE
+			                WHEN e.period_type =
+			                     'PREV'
+			                    THEN
+			                        e.hour_value
+			                        * r.vnd_rate
+			            END
+			        ) AS gross_prevVndCost,
+
+			        -- Solar cost theo đúng từng tariff hour
+			        SUM(
+			            CASE
+			                WHEN e.period_type =
+			                     'CURRENT'
+			                    THEN
+			                        COALESCE(
+			                            sh.solar_hour_value,
+			                            0
+			                        )
+			                        * r.vnd_rate
+			                ELSE 0
+			            END
+			        ) AS solar_vndCost,
+
+			        SUM(
+			            CASE
+			                WHEN e.period_type =
+			                     'PREV'
+			                    THEN
+			                        COALESCE(
+			                            sh.solar_hour_value,
+			                            0
+			                        )
+			                        * r.vnd_rate
+			                ELSE 0
+			            END
+			        ) AS prev_solar_vndCost
+
 			    FROM EnergyHourly e
+
 			    INNER JOIN FinalRate r
-			        ON e.WD = r.WD
-			       AND e.HourNumber = r.HourNumber
+			        ON r.WD = e.WD
+
+			       AND r.HourNumber =
+			           e.HourNumber
+
+			    LEFT JOIN SolarHourly sh
+			        ON sh.period_type =
+			           e.period_type
+
+			       AND sh.WD =
+			           e.WD
+
+			       AND sh.HourNumber =
+			           e.HourNumber
+
 			    GROUP BY
 			        e.name_en,
 			        e.cate,
 			        e.unit
 			),
-			
+
+			-- =====================================================
+			-- NET / GRID ELECTRICITY
+			--
+			-- grid = gross - solar
+			-- =====================================================
+
+			EnergyNetMonthly AS (
+			    SELECT
+			        e.name,
+			        e.cate,
+			        e.unit,
+
+			        CAST(
+			            CASE
+			                WHEN
+			                    COALESCE(
+			                        e.gross_value,
+			                        0
+			                    )
+			                    >=
+			                    COALESCE(
+			                        s.solarValue,
+			                        0
+			                    )
+			                THEN
+			                    COALESCE(
+			                        e.gross_value,
+			                        0
+			                    )
+			                    -
+			                    COALESCE(
+			                        s.solarValue,
+			                        0
+			                    )
+
+			                ELSE 0
+			            END
+			            AS DECIMAL(18, 2)
+			        ) AS value,
+
+			        CAST(
+			            CASE
+			                WHEN
+			                    COALESCE(
+			                        e.gross_prev_value,
+			                        0
+			                    )
+			                    >=
+			                    COALESCE(
+			                        s.prevSolarValue,
+			                        0
+			                    )
+			                THEN
+			                    COALESCE(
+			                        e.gross_prev_value,
+			                        0
+			                    )
+			                    -
+			                    COALESCE(
+			                        s.prevSolarValue,
+			                        0
+			                    )
+
+			                ELSE 0
+			            END
+			            AS DECIMAL(18, 2)
+			        ) AS prevValue,
+
+			        CAST(
+			            e.gross_value
+			            AS DECIMAL(18, 2)
+			        ) AS totalEnergyValue,
+
+			        CAST(
+			            e.gross_prev_value
+			            AS DECIMAL(18, 2)
+			        ) AS prevTotalEnergyValue,
+
+			        s.solarValue,
+			        s.prevSolarValue,
+
+			        -- Net VND Cost
+			        CAST(
+			            CASE
+			                WHEN
+			                    COALESCE(
+			                        e.gross_vndCost,
+			                        0
+			                    )
+			                    >=
+			                    COALESCE(
+			                        e.solar_vndCost,
+			                        0
+			                    )
+			                THEN
+			                    COALESCE(
+			                        e.gross_vndCost,
+			                        0
+			                    )
+			                    -
+			                    COALESCE(
+			                        e.solar_vndCost,
+			                        0
+			                    )
+
+			                ELSE 0
+			            END
+			            AS DECIMAL(19, 4)
+			        ) AS vndCost,
+
+			        CAST(
+			            CASE
+			                WHEN
+			                    COALESCE(
+			                        e.gross_prevVndCost,
+			                        0
+			                    )
+			                    >=
+			                    COALESCE(
+			                        e.prev_solar_vndCost,
+			                        0
+			                    )
+			                THEN
+			                    COALESCE(
+			                        e.gross_prevVndCost,
+			                        0
+			                    )
+			                    -
+			                    COALESCE(
+			                        e.prev_solar_vndCost,
+			                        0
+			                    )
+
+			                ELSE 0
+			            END
+			            AS DECIMAL(19, 4)
+			        ) AS prevVndCost,
+
+			        -- USD
+			        CAST(
+			            (
+			                CASE
+			                    WHEN
+			                        COALESCE(
+			                            e.gross_vndCost,
+			                            0
+			                        )
+			                        >=
+			                        COALESCE(
+			                            e.solar_vndCost,
+			                            0
+			                        )
+			                    THEN
+			                        COALESCE(
+			                            e.gross_vndCost,
+			                            0
+			                        )
+			                        -
+			                        COALESCE(
+			                            e.solar_vndCost,
+			                            0
+			                        )
+			                    ELSE 0
+			                END
+			            )
+			            /
+			            NULLIF(
+			                :exchange,
+			                0
+			            )
+			            * :sepzone
+
+			            AS DECIMAL(19, 4)
+			        ) AS usdCost,
+
+			        CAST(
+			            (
+			                CASE
+			                    WHEN
+			                        COALESCE(
+			                            e.gross_prevVndCost,
+			                            0
+			                        )
+			                        >=
+			                        COALESCE(
+			                            e.prev_solar_vndCost,
+			                            0
+			                        )
+			                    THEN
+			                        COALESCE(
+			                            e.gross_prevVndCost,
+			                            0
+			                        )
+			                        -
+			                        COALESCE(
+			                            e.prev_solar_vndCost,
+			                            0
+			                        )
+			                    ELSE 0
+			                END
+			            )
+			            /
+			            NULLIF(
+			                :exchange,
+			                0
+			            )
+			            * :sepzone
+
+			            AS DECIMAL(19, 4)
+			        ) AS prevUsdCost
+
+			    FROM EnergyMonthly e
+
+			    CROSS JOIN SolarMonthly s
+			),
+
+			-- =====================================================
+			-- WATER TEMPERATURE
+			-- =====================================================
+
 			WaterMonthly AS (
 			    SELECT
 			        'Cooling Tank Temperature' AS name,
 			        'Water' AS cate,
+
 			        MAX(unit) AS unit,
-			
-			        CAST(ROUND(AVG(CASE WHEN period_type = 'CURRENT'
-			            THEN CAST([value] AS DECIMAL(18,4)) END), 1) AS DECIMAL(18,1)) AS avgValue,
-			
-			        CAST(ROUND(MIN(CASE WHEN period_type = 'CURRENT'
-			            THEN CAST([value] AS DECIMAL(18,4)) END), 1) AS DECIMAL(18,1)) AS minValue,
-			
-			        CAST(ROUND(MAX(CASE WHEN period_type = 'CURRENT'
-			            THEN CAST([value] AS DECIMAL(18,4)) END), 1) AS DECIMAL(18,1)) AS maxValue,
-			
-			        CAST(ROUND(AVG(CASE WHEN period_type = 'PREV'
-			            THEN CAST([value] AS DECIMAL(18,4)) END), 1) AS DECIMAL(18,1)) AS prevAvgValue,
-			
-			        CAST(ROUND(MIN(CASE WHEN period_type = 'PREV'
-			            THEN CAST([value] AS DECIMAL(18,4)) END), 1) AS DECIMAL(18,1)) AS prevMinValue,
-			
-			        CAST(ROUND(MAX(CASE WHEN period_type = 'PREV'
-			            THEN CAST([value] AS DECIMAL(18,4)) END), 1) AS DECIMAL(18,1)) AS prevMaxValue
-			
+
+			        CAST(
+			            ROUND(
+			                AVG(
+			                    CASE
+			                        WHEN period_type =
+			                             'CURRENT'
+			                        THEN CAST(
+			                            [value]
+			                            AS DECIMAL(18,4)
+			                        )
+			                    END
+			                ),
+			                1
+			            )
+			            AS DECIMAL(18,1)
+			        ) AS avgValue,
+
+			        CAST(
+			            ROUND(
+			                MIN(
+			                    CASE
+			                        WHEN period_type =
+			                             'CURRENT'
+			                        THEN CAST(
+			                            [value]
+			                            AS DECIMAL(18,4)
+			                        )
+			                    END
+			                ),
+			                1
+			            )
+			            AS DECIMAL(18,1)
+			        ) AS minValue,
+
+			        CAST(
+			            ROUND(
+			                MAX(
+			                    CASE
+			                        WHEN period_type =
+			                             'CURRENT'
+			                        THEN CAST(
+			                            [value]
+			                            AS DECIMAL(18,4)
+			                        )
+			                    END
+			                ),
+			                1
+			            )
+			            AS DECIMAL(18,1)
+			        ) AS maxValue,
+
+			        CAST(
+			            ROUND(
+			                AVG(
+			                    CASE
+			                        WHEN period_type =
+			                             'PREV'
+			                        THEN CAST(
+			                            [value]
+			                            AS DECIMAL(18,4)
+			                        )
+			                    END
+			                ),
+			                1
+			            )
+			            AS DECIMAL(18,1)
+			        ) AS prevAvgValue,
+
+			        CAST(
+			            ROUND(
+			                MIN(
+			                    CASE
+			                        WHEN period_type =
+			                             'PREV'
+			                        THEN CAST(
+			                            [value]
+			                            AS DECIMAL(18,4)
+			                        )
+			                    END
+			                ),
+			                1
+			            )
+			            AS DECIMAL(18,1)
+			        ) AS prevMinValue,
+
+			        CAST(
+			            ROUND(
+			                MAX(
+			                    CASE
+			                        WHEN period_type =
+			                             'PREV'
+			                        THEN CAST(
+			                            [value]
+			                            AS DECIMAL(18,4)
+			                        )
+			                    END
+			                ),
+			                1
+			            )
+			            AS DECIMAL(18,1)
+			        ) AS prevMaxValue
+
 			    FROM Base
-			    WHERE name_en LIKE '%Cooling tank%'
+
+			    WHERE
+			        name_en LIKE
+			            '%Cooling tank%'
 			),
-						        
+
+			-- =====================================================
+			-- WATER PIPELINE PRESSURE
+			-- =====================================================
+
 			PipelinePressureMonthly AS (
 			    SELECT
 			        'Data Pipeline pressure' AS name,
 			        'Water' AS cate,
+
 			        MAX(unit) AS unit,
-			
+
 			        CAST(
 			            ROUND(
 			                AVG(
 			                    CASE
-			                        WHEN period_type = 'CURRENT'
-			                        THEN CAST([value] AS DECIMAL(18,4))
+			                        WHEN period_type =
+			                             'CURRENT'
+			                        THEN CAST(
+			                            [value]
+			                            AS DECIMAL(18,4)
+			                        )
 			                    END
 			                ),
 			                1
-			            ) AS DECIMAL(18,1)
+			            )
+			            AS DECIMAL(18,1)
 			        ) AS avgValue,
-			
+
 			        CAST(
 			            ROUND(
 			                MIN(
 			                    CASE
-			                        WHEN period_type = 'CURRENT'
-			                        THEN CAST([value] AS DECIMAL(18,4))
+			                        WHEN period_type =
+			                             'CURRENT'
+			                        THEN CAST(
+			                            [value]
+			                            AS DECIMAL(18,4)
+			                        )
 			                    END
 			                ),
 			                1
-			            ) AS DECIMAL(18,1)
+			            )
+			            AS DECIMAL(18,1)
 			        ) AS minValue,
-			
+
 			        CAST(
 			            ROUND(
 			                MAX(
 			                    CASE
-			                        WHEN period_type = 'CURRENT'
-			                        THEN CAST([value] AS DECIMAL(18,4))
+			                        WHEN period_type =
+			                             'CURRENT'
+			                        THEN CAST(
+			                            [value]
+			                            AS DECIMAL(18,4)
+			                        )
 			                    END
 			                ),
 			                1
-			            ) AS DECIMAL(18,1)
+			            )
+			            AS DECIMAL(18,1)
 			        ) AS maxValue,
-			
+
 			        CAST(
 			            ROUND(
 			                AVG(
 			                    CASE
-			                        WHEN period_type = 'PREV'
-			                        THEN CAST([value] AS DECIMAL(18,4))
+			                        WHEN period_type =
+			                             'PREV'
+			                        THEN CAST(
+			                            [value]
+			                            AS DECIMAL(18,4)
+			                        )
 			                    END
 			                ),
 			                1
-			            ) AS DECIMAL(18,1)
+			            )
+			            AS DECIMAL(18,1)
 			        ) AS prevAvgValue,
-			
+
 			        CAST(
 			            ROUND(
 			                MIN(
 			                    CASE
-			                        WHEN period_type = 'PREV'
-			                        THEN CAST([value] AS DECIMAL(18,4))
+			                        WHEN period_type =
+			                             'PREV'
+			                        THEN CAST(
+			                            [value]
+			                            AS DECIMAL(18,4)
+			                        )
 			                    END
 			                ),
 			                1
-			            ) AS DECIMAL(18,1)
+			            )
+			            AS DECIMAL(18,1)
 			        ) AS prevMinValue,
-			
+
 			        CAST(
 			            ROUND(
 			                MAX(
 			                    CASE
-			                        WHEN period_type = 'PREV'
-			                        THEN CAST([value] AS DECIMAL(18,4))
+			                        WHEN period_type =
+			                             'PREV'
+			                        THEN CAST(
+			                            [value]
+			                            AS DECIMAL(18,4)
+			                        )
 			                    END
 			                ),
 			                1
-			            ) AS DECIMAL(18,1)
+			            )
+			            AS DECIMAL(18,1)
 			        ) AS prevMaxValue
-			
+
 			    FROM Base
-			    WHERE name_en = 'Data Pipeline pressure'
-			),			
+
+			    WHERE
+			        name_en =
+			            'Data Pipeline pressure'
+			),
+
+			-- =====================================================
+			-- COMPRESSED AIR
+			-- =====================================================
+
 			AirMonthly AS (
 			    SELECT
-			        'Sensor compressed air pressure Data' AS name,
+			        'Sensor compressed air pressure Data'
+			            AS name,
+
 			        'Compressed Air' AS cate,
+
 			        MAX(unit) AS unit,
-			
-			        CAST(ROUND(AVG(CASE WHEN period_type = 'CURRENT'
-			            THEN CAST([value] AS DECIMAL(18,4)) END), 1) AS DECIMAL(18,1)) AS avgValue,
-			
-			        CAST(ROUND(MIN(CASE WHEN period_type = 'CURRENT'
-			            THEN CAST([value] AS DECIMAL(18,4)) END), 1) AS DECIMAL(18,1)) AS minValue,
-			
-			        CAST(ROUND(MAX(CASE WHEN period_type = 'CURRENT'
-			            THEN CAST([value] AS DECIMAL(18,4)) END), 1) AS DECIMAL(18,1)) AS maxValue,
-			
-			        CAST(ROUND(AVG(CASE WHEN period_type = 'PREV'
-			            THEN CAST([value] AS DECIMAL(18,4)) END), 1) AS DECIMAL(18,1)) AS prevAvgValue,
-			
-			        CAST(ROUND(MIN(CASE WHEN period_type = 'PREV'
-			            THEN CAST([value] AS DECIMAL(18,4)) END), 1) AS DECIMAL(18,1)) AS prevMinValue,
-			
-			        CAST(ROUND(MAX(CASE WHEN period_type = 'PREV'
-			            THEN CAST([value] AS DECIMAL(18,4)) END), 1) AS DECIMAL(18,1)) AS prevMaxValue
-			
+
+			        CAST(
+			            ROUND(
+			                AVG(
+			                    CASE
+			                        WHEN period_type =
+			                             'CURRENT'
+			                        THEN CAST(
+			                            [value]
+			                            AS DECIMAL(18,4)
+			                        )
+			                    END
+			                ),
+			                1
+			            )
+			            AS DECIMAL(18,1)
+			        ) AS avgValue,
+
+			        CAST(
+			            ROUND(
+			                MIN(
+			                    CASE
+			                        WHEN period_type =
+			                             'CURRENT'
+			                        THEN CAST(
+			                            [value]
+			                            AS DECIMAL(18,4)
+			                        )
+			                    END
+			                ),
+			                1
+			            )
+			            AS DECIMAL(18,1)
+			        ) AS minValue,
+
+			        CAST(
+			            ROUND(
+			                MAX(
+			                    CASE
+			                        WHEN period_type =
+			                             'CURRENT'
+			                        THEN CAST(
+			                            [value]
+			                            AS DECIMAL(18,4)
+			                        )
+			                    END
+			                ),
+			                1
+			            )
+			            AS DECIMAL(18,1)
+			        ) AS maxValue,
+
+			        CAST(
+			            ROUND(
+			                AVG(
+			                    CASE
+			                        WHEN period_type =
+			                             'PREV'
+			                        THEN CAST(
+			                            [value]
+			                            AS DECIMAL(18,4)
+			                        )
+			                    END
+			                ),
+			                1
+			            )
+			            AS DECIMAL(18,1)
+			        ) AS prevAvgValue,
+
+			        CAST(
+			            ROUND(
+			                MIN(
+			                    CASE
+			                        WHEN period_type =
+			                             'PREV'
+			                        THEN CAST(
+			                            [value]
+			                            AS DECIMAL(18,4)
+			                        )
+			                    END
+			                ),
+			                1
+			            )
+			            AS DECIMAL(18,1)
+			        ) AS prevMinValue,
+
+			        CAST(
+			            ROUND(
+			                MAX(
+			                    CASE
+			                        WHEN period_type =
+			                             'PREV'
+			                        THEN CAST(
+			                            [value]
+			                            AS DECIMAL(18,4)
+			                        )
+			                    END
+			                ),
+			                1
+			            )
+			            AS DECIMAL(18,1)
+			        ) AS prevMaxValue
+
 			    FROM Base
-			    WHERE name_en = 'Sensor compressed air pressure Data'
+
+			    WHERE
+			        name_en =
+			            'Sensor compressed air pressure Data'
 			),
-			
+
+			-- =====================================================
+			-- LAST PICK
+			-- =====================================================
+
 			LastPick AS (
-			    SELECT MAX(pick_at) AS pickAt
+			    SELECT
+			        MAX(pick_at) AS pickAt
+
 			    FROM Base
-			    WHERE period_type = 'CURRENT'
+
+			    WHERE
+			        period_type = 'CURRENT'
 			),
-			
+
+			-- =====================================================
+			-- UNION RESULTS
+			-- =====================================================
+
 			FinalRows AS (
 			    SELECT
 			        e.name,
 			        e.cate,
 			        e.unit,
-			
-			        CAST(NULL AS DECIMAL(18,1)) AS minValue,
-			        CAST(NULL AS DECIMAL(18,1)) AS maxValue,
-			        CAST(NULL AS DECIMAL(18,1)) AS prevMinValue,
-			        CAST(NULL AS DECIMAL(18,1)) AS prevMaxValue,
-			
-			        CAST(e.value AS DECIMAL(18,2)) AS value,
-			        CAST(NULL AS DECIMAL(18,1)) AS avgValue,
-			
-			        CAST(e.vndCost AS DECIMAL(18,2)) AS vndCost,
-			        CAST(e.usdCost AS DECIMAL(18,2)) AS usdCost,
-			
-			        CAST(e.prevValue AS DECIMAL(18,2)) AS prevValue,
-			        CAST(NULL AS DECIMAL(18,1)) AS prevAvgValue,
-			
-			        CAST(e.prevVndCost AS DECIMAL(18,2)) AS prevVndCost,
-			        CAST(e.prevUsdCost AS DECIMAL(18,2)) AS prevUsdCost
-			    FROM EnergyMonthly e
-			
+
+			        CAST(NULL AS DECIMAL(18,1))
+			            AS minValue,
+
+			        CAST(NULL AS DECIMAL(18,1))
+			            AS maxValue,
+
+			        CAST(NULL AS DECIMAL(18,1))
+			            AS prevMinValue,
+
+			        CAST(NULL AS DECIMAL(18,1))
+			            AS prevMaxValue,
+
+			        CAST(
+			            e.value
+			            AS DECIMAL(18,2)
+			        ) AS value,
+
+			        CAST(NULL AS DECIMAL(18,1))
+			            AS avgValue,
+
+			        CAST(
+			            e.vndCost
+			            AS DECIMAL(18,2)
+			        ) AS vndCost,
+
+			        CAST(
+			            e.usdCost
+			            AS DECIMAL(18,2)
+			        ) AS usdCost,
+
+			        CAST(
+			            e.prevValue
+			            AS DECIMAL(18,2)
+			        ) AS prevValue,
+
+			        CAST(NULL AS DECIMAL(18,1))
+			            AS prevAvgValue,
+
+			        CAST(
+			            e.prevVndCost
+			            AS DECIMAL(18,2)
+			        ) AS prevVndCost,
+
+			        CAST(
+			            e.prevUsdCost
+			            AS DECIMAL(18,2)
+			        ) AS prevUsdCost
+
+			    FROM EnergyNetMonthly e
+
 			    UNION ALL
-			
+
 			    SELECT
 			        w.name,
 			        w.cate,
 			        w.unit,
-			
+
 			        w.minValue,
 			        w.maxValue,
+
 			        w.prevMinValue,
 			        w.prevMaxValue,
-			
-			        CAST(NULL AS DECIMAL(18,2)) AS value,
+
+			        CAST(NULL AS DECIMAL(18,2)),
 			        w.avgValue,
-			
-			        CAST(NULL AS DECIMAL(18,2)) AS vndCost,
-			        CAST(NULL AS DECIMAL(18,2)) AS usdCost,
-			
-			        CAST(NULL AS DECIMAL(18,2)) AS prevValue,
+
+			        CAST(NULL AS DECIMAL(18,2)),
+			        CAST(NULL AS DECIMAL(18,2)),
+
+			        CAST(NULL AS DECIMAL(18,2)),
 			        w.prevAvgValue,
-			
-			        CAST(NULL AS DECIMAL(18,2)) AS prevVndCost,
-			        CAST(NULL AS DECIMAL(18,2)) AS prevUsdCost
+
+			        CAST(NULL AS DECIMAL(18,2)),
+			        CAST(NULL AS DECIMAL(18,2))
+
 			    FROM WaterMonthly w
-			
+
 			    UNION ALL
-				SELECT
-			       p.name,
-			       p.cate,
-			       p.unit,
-			   
-			       p.minValue,
-			       p.maxValue,
-			       p.prevMinValue,
-			       p.prevMaxValue,
-			   
-			       CAST(NULL AS DECIMAL(18,2)) AS value,
-			       p.avgValue,
-			   
-			       CAST(NULL AS DECIMAL(18,2)) AS vndCost,
-			       CAST(NULL AS DECIMAL(18,2)) AS usdCost,
-			   
-			       CAST(NULL AS DECIMAL(18,2)) AS prevValue,
-			       p.prevAvgValue,
-			   
-			       CAST(NULL AS DECIMAL(18,2)) AS prevVndCost,
-			       CAST(NULL AS DECIMAL(18,2)) AS prevUsdCost
-				FROM PipelinePressureMonthly p
-				UNION ALL
-							
+
+			    SELECT
+			        p.name,
+			        p.cate,
+			        p.unit,
+
+			        p.minValue,
+			        p.maxValue,
+
+			        p.prevMinValue,
+			        p.prevMaxValue,
+
+			        CAST(NULL AS DECIMAL(18,2)),
+			        p.avgValue,
+
+			        CAST(NULL AS DECIMAL(18,2)),
+			        CAST(NULL AS DECIMAL(18,2)),
+
+			        CAST(NULL AS DECIMAL(18,2)),
+			        p.prevAvgValue,
+
+			        CAST(NULL AS DECIMAL(18,2)),
+			        CAST(NULL AS DECIMAL(18,2))
+
+			    FROM PipelinePressureMonthly p
+
+			    UNION ALL
+
 			    SELECT
 			        a.name,
 			        a.cate,
 			        a.unit,
-			
+
 			        a.minValue,
 			        a.maxValue,
+
 			        a.prevMinValue,
 			        a.prevMaxValue,
-			
-			        CAST(NULL AS DECIMAL(18,2)) AS value,
+
+			        CAST(NULL AS DECIMAL(18,2)),
 			        a.avgValue,
-			
-			        CAST(NULL AS DECIMAL(18,2)) AS vndCost,
-			        CAST(NULL AS DECIMAL(18,2)) AS usdCost,
-			
-			        CAST(NULL AS DECIMAL(18,2)) AS prevValue,
+
+			        CAST(NULL AS DECIMAL(18,2)),
+			        CAST(NULL AS DECIMAL(18,2)),
+
+			        CAST(NULL AS DECIMAL(18,2)),
 			        a.prevAvgValue,
-			
-			        CAST(NULL AS DECIMAL(18,2)) AS prevVndCost,
-			        CAST(NULL AS DECIMAL(18,2)) AS prevUsdCost
+
+			        CAST(NULL AS DECIMAL(18,2)),
+			        CAST(NULL AS DECIMAL(18,2))
+
 			    FROM AirMonthly a
 			)
-			
+
+			-- =====================================================
+			-- FINAL
+			-- =====================================================
+
 			SELECT
 			    f.name AS name,
 			    f.cate AS cate,
 			    f.unit AS unit,
+
 			    :month AS month,
-			
+
 			    f.minValue AS minValue,
 			    f.maxValue AS maxValue,
+
 			    f.prevMinValue AS prevMinValue,
 			    f.prevMaxValue AS prevMaxValue,
-			
+
 			    f.value AS value,
 			    f.avgValue AS avgValue,
-			
+
 			    f.vndCost AS vndCost,
 			    f.usdCost AS usdCost,
-			
+
 			    f.prevValue AS prevValue,
 			    f.prevAvgValue AS prevAvgValue,
-			
+
 			    f.prevVndCost AS prevVndCost,
 			    f.prevUsdCost AS prevUsdCost,
-			
+
 			    CAST(
-			        COALESCE(f.value, f.avgValue, 0)
+			        COALESCE(
+			            f.value,
+			            f.avgValue,
+			            0
+			        )
 			        -
-			        COALESCE(f.prevValue, f.prevAvgValue, 0)
+			        COALESCE(
+			            f.prevValue,
+			            f.prevAvgValue,
+			            0
+			        )
 			        AS DECIMAL(18,2)
 			    ) AS deltaValue,
-			
+
 			    CAST(
 			        CASE
-			            WHEN COALESCE(f.prevValue, f.prevAvgValue, 0) = 0 THEN NULL
-			            ELSE (
+			            WHEN
+			                COALESCE(
+			                    f.prevValue,
+			                    f.prevAvgValue,
+			                    0
+			                ) = 0
+			            THEN NULL
+
+			            ELSE
 			                (
-			                    COALESCE(f.value, f.avgValue, 0)
-			                    -
-			                    COALESCE(f.prevValue, f.prevAvgValue, 0)
-			                )
-			                / COALESCE(f.prevValue, f.prevAvgValue, 0)
-			            ) * 100
-			        END AS DECIMAL(10,2)
+			                    (
+			                        COALESCE(
+			                            f.value,
+			                            f.avgValue,
+			                            0
+			                        )
+			                        -
+			                        COALESCE(
+			                            f.prevValue,
+			                            f.prevAvgValue,
+			                            0
+			                        )
+			                    )
+			                    /
+			                    COALESCE(
+			                        f.prevValue,
+			                        f.prevAvgValue,
+			                        0
+			                    )
+			                ) * 100
+			        END
+
+			        AS DECIMAL(10,2)
 			    ) AS deltaPercent,
-			
-			    lp.pickAt AS pickAt
-			
+
+			    lp.pickAt AS pickAt,
+
+			    -- Solar
+			    CASE
+			        WHEN f.cate = 'Electricity'
+			            THEN sm.solarValue
+			    END AS solarValue,
+
+			    CASE
+			        WHEN f.cate = 'Electricity'
+			            THEN sm.prevSolarValue
+			    END AS prevSolarValue,
+
+			    -- grossValue trước khi trừ Solar
+			    CASE
+			        WHEN f.cate = 'Electricity'
+			        THEN CAST(
+			            COALESCE(f.value, 0)
+			            +
+			            COALESCE(sm.solarValue, 0)
+			            AS DECIMAL(18,2)
+			        )
+			    END AS totalEnergyValue,
+
+			    CASE
+			        WHEN f.cate = 'Electricity'
+			        THEN CAST(
+			            COALESCE(f.prevValue, 0)
+			            +
+			            COALESCE(
+			                sm.prevSolarValue,
+			                0
+			            )
+			            AS DECIMAL(18,2)
+			        )
+			    END AS prevTotalEnergyValue,
+
+			    CASE
+			        WHEN f.cate = 'Electricity'
+
+			             AND (
+			                COALESCE(f.value, 0)
+			                +
+			                COALESCE(
+			                    sm.solarValue,
+			                    0
+			                )
+			             ) > 0
+
+			        THEN CAST(
+			            COALESCE(
+			                sm.solarValue,
+			                0
+			            )
+			            /
+			            NULLIF(
+			                COALESCE(f.value, 0)
+			                +
+			                COALESCE(
+			                    sm.solarValue,
+			                    0
+			                ),
+			                0
+			            )
+			            * 100
+
+			            AS DECIMAL(10,2)
+			        )
+			    END AS solarSharePercent
+
 			FROM FinalRows f
+
 			CROSS JOIN LastPick lp
+
+			CROSS JOIN SolarMonthly sm
+
 			ORDER BY
 			    CASE
-			        WHEN f.cate = 'Electricity' THEN 1
-			
+			        WHEN f.cate = 'Electricity'
+			            THEN 1
+
 			        WHEN f.cate = 'Water'
-			             AND f.name = 'Cooling Tank Temperature'
+			             AND f.name =
+			                 'Cooling Tank Temperature'
 			            THEN 2
-			
+
 			        WHEN f.cate = 'Water'
-			             AND f.name = 'Data Pipeline pressure'
+			             AND f.name =
+			                 'Data Pipeline pressure'
 			            THEN 3
-			
-			        WHEN f.cate = 'Compressed Air' THEN 4
-			
+
+			        WHEN f.cate =
+			             'Compressed Air'
+			            THEN 4
+
 			        ELSE 9
-			END
+			    END
+
 			OPTION (RECOMPILE)
 			""", nativeQuery = true)
 	List<MonthlySummaryProjection> sumMonthlyByFacRaw(
@@ -570,185 +1649,516 @@ public interface UtilityMonthlyRepo extends JpaRepository<DummyEntity, Long> {
 			@Param("sepzone") BigDecimal sepzone
 	);
 
-	// =========================================================
-	// KVH
-	// - Không dùng điều kiện :fac = 'KVH' OR ...
-	// - Query riêng để SQL Server chọn plan nhẹ hơn.
-	// =========================================================
 	@Query(value = """
 			WITH TargetPara AS (
 			    SELECT DISTINCT
 			        sc.fac,
 			        pa.name_en,
+
 			        CASE
 			            WHEN pa.name_en = 'Total Energy Consumption'
 			                THEN 'Electricity'
+
 			            WHEN pa.name_en LIKE '%Cooling tank%'
 			                THEN 'Water'
-						WHEN pa.name_en = 'Data Pipeline pressure'
-		                     THEN 'Water'
+
+			            WHEN pa.name_en = 'Data Pipeline pressure'
+			                THEN 'Water'
+
 			            WHEN pa.name_en = 'Sensor compressed air pressure Data'
 			                THEN 'Compressed Air'
+
 			            ELSE ch.cate
 			        END AS cate,
+
 			        pa.unit,
 			        pa.box_device_id,
 			        pa.plc_address
+
 			    FROM dbo.F2_Utility_Para pa
+
 			    INNER JOIN dbo.F2_Utility_Scada_Channel ch
-			        ON pa.box_device_id = ch.box_device_id
+			        ON ch.box_device_id = pa.box_device_id
+
 			    INNER JOIN dbo.F2_Utility_Scada sc
-			        ON ch.scada_id = sc.scada_id
-			    WHERE (
-			           pa.name_en = 'Total Energy Consumption'
-			        OR pa.name_en LIKE '%Cooling tank%'
-					OR pa.name_en = 'Data Pipeline pressure'
-			        OR pa.name_en = 'Sensor compressed air pressure Data'
-			    )
+			        ON sc.scada_id = ch.scada_id
+
+			    WHERE
+			        -- Không đưa meter Solar vào meter điện chính
+			        UPPER(
+			            LTRIM(
+			                RTRIM(
+			                    ISNULL(ch.box_id, '')
+			                )
+			            )
+			        ) <> 'SOLAR'
+
+			        AND (
+			               pa.name_en = 'Total Energy Consumption'
+			            OR pa.name_en LIKE '%Cooling tank%'
+			            OR pa.name_en = 'Data Pipeline pressure'
+			            OR pa.name_en = 'Sensor compressed air pressure Data'
+			        )
 			),
-			
+
+			-- =====================================================
+			-- SOLAR PARAM
+			-- KVH = lấy toàn bộ Solar của các FAC
+			-- =====================================================
+
+			SolarTargetPara AS (
+			    SELECT DISTINCT
+			        pa.box_device_id,
+			        pa.plc_address
+
+			    FROM dbo.F2_Utility_Para pa
+
+			    INNER JOIN dbo.F2_Utility_Scada_Channel ch
+			        ON ch.box_device_id = pa.box_device_id
+
+			    INNER JOIN dbo.F2_Utility_Scada sc
+			        ON sc.scada_id = ch.scada_id
+
+			    WHERE
+			        pa.name_en = 'Total Energy Consumption'
+
+			        AND UPPER(
+			            LTRIM(
+			                RTRIM(
+			                    ISNULL(ch.box_id, '')
+			                )
+			            )
+			        ) = 'SOLAR'
+			),
+
+			-- =====================================================
+			-- SOLAR RAW
+			--
+			-- QUAN TRỌNG:
+			-- phải có WD + HourNumber để SolarHourly sử dụng.
+			-- =====================================================
+
+			SolarBase AS (
+			    SELECT
+			        'CURRENT' AS period_type,
+
+			        hm.pick_at,
+
+			        CAST(
+			            hm.[value]
+			            AS DECIMAL(19,6)
+			        ) AS solar_value,
+
+			        DATEPART(
+			            HOUR,
+			            hm.pick_at
+			        ) AS HourNumber,
+
+			        CASE
+			            WHEN DATEPART(
+			                WEEKDAY,
+			                CAST(hm.pick_at AS DATE)
+			            ) = 1
+			                THEN '1'
+
+			            ELSE '2-7'
+			        END AS WD
+
+			    FROM SolarTargetPara stp
+
+			    INNER JOIN dbo.F2_Utility_Para_History_Main hm
+			        ON hm.box_device_id = stp.box_device_id
+			       AND hm.plc_address = stp.plc_address
+
+			    WHERE
+			        hm.pick_at >= :from
+			        AND hm.pick_at < :currentTo
+			        AND hm.[value] > 0
+			        AND ISNULL(hm.MTD, '') = 'MTD'
+
+			    UNION ALL
+
+			    SELECT
+			        'PREV' AS period_type,
+
+			        hm.pick_at,
+
+			        CAST(
+			            hm.[value]
+			            AS DECIMAL(19,6)
+			        ) AS solar_value,
+
+			        DATEPART(
+			            HOUR,
+			            hm.pick_at
+			        ) AS HourNumber,
+
+			        CASE
+			            WHEN DATEPART(
+			                WEEKDAY,
+			                CAST(hm.pick_at AS DATE)
+			            ) = 1
+			                THEN '1'
+
+			            ELSE '2-7'
+			        END AS WD
+
+			    FROM SolarTargetPara stp
+
+			    INNER JOIN dbo.F2_Utility_Para_History_Main hm
+			        ON hm.box_device_id = stp.box_device_id
+			       AND hm.plc_address = stp.plc_address
+
+			    WHERE
+			        hm.pick_at >= :prevFrom
+			        AND hm.pick_at < :prevTo
+			        AND hm.[value] > 0
+			        AND ISNULL(hm.MTD, '') = 'MTD'
+			),
+
+			-- =====================================================
+			-- SOLAR THEO GIỜ
+			--
+			-- Dùng để tính đúng tiền Solar theo tariff.
+			-- =====================================================
+
+			SolarHourly AS (
+			    SELECT
+			        period_type,
+			        WD,
+			        HourNumber,
+
+			        SUM(solar_value)
+			            AS solar_hour_value
+
+			    FROM SolarBase
+
+			    GROUP BY
+			        period_type,
+			        WD,
+			        HourNumber
+			),
+
+			-- =====================================================
+			-- SOLAR MONTH TOTAL
+			-- =====================================================
+
+			SolarMonthly AS (
+			    SELECT
+			        CAST(
+			            COALESCE(
+			                SUM(
+			                    CASE
+			                        WHEN period_type = 'CURRENT'
+			                            THEN solar_value
+			                        ELSE 0
+			                    END
+			                ),
+			                0
+			            )
+			            AS DECIMAL(18,2)
+			        ) AS solarValue,
+
+			        CAST(
+			            COALESCE(
+			                SUM(
+			                    CASE
+			                        WHEN period_type = 'PREV'
+			                            THEN solar_value
+			                        ELSE 0
+			                    END
+			                ),
+			                0
+			            )
+			            AS DECIMAL(18,2)
+			        ) AS prevSolarValue
+
+			    FROM SolarBase
+			),
+
+			-- =====================================================
+			-- NORMAL UTILITY DATA
+			-- =====================================================
+
 			Base AS (
 			    SELECT
 			        'CURRENT' AS period_type,
+
 			        tp.fac,
 			        tp.name_en,
 			        tp.cate,
 			        tp.unit,
+
 			        hi.pick_at,
-			        hi.[value],
-			        DATEPART(HOUR, hi.pick_at) AS HourNumber,
+
+			        CAST(
+			            hi.[value]
+			            AS DECIMAL(19,6)
+			        ) AS [value],
+
+			        DATEPART(
+			            HOUR,
+			            hi.pick_at
+			        ) AS HourNumber,
+
 			        CASE
-			            WHEN DATEPART(WEEKDAY, CAST(hi.pick_at AS DATE)) = 1 THEN '1'
+			            WHEN DATEPART(
+			                WEEKDAY,
+			                CAST(hi.pick_at AS DATE)
+			            ) = 1
+			                THEN '1'
+
 			            ELSE '2-7'
 			        END AS WD
+
 			    FROM TargetPara tp
+
 			    INNER JOIN dbo.F2_Utility_Para_History_Main hi
 			        ON hi.box_device_id = tp.box_device_id
 			       AND hi.plc_address = tp.plc_address
-			       AND hi.pick_at >= :from
-			       AND hi.pick_at <  :currentTo
-			       AND hi.[value] > 0
-			
+
+			    WHERE
+			        hi.pick_at >= :from
+			        AND hi.pick_at < :currentTo
+			        AND hi.[value] > 0
+			        AND ( tp.cate <> 'Electricity' OR ISNULL(hi.MTD, '') = 'MTD')
+
 			    UNION ALL
-			
+
 			    SELECT
 			        'PREV' AS period_type,
+
 			        tp.fac,
 			        tp.name_en,
 			        tp.cate,
 			        tp.unit,
+
 			        hi.pick_at,
-			        hi.[value],
-			        DATEPART(HOUR, hi.pick_at) AS HourNumber,
+
+			        CAST(
+			            hi.[value]
+			            AS DECIMAL(19,6)
+			        ) AS [value],
+
+			        DATEPART(
+			            HOUR,
+			            hi.pick_at
+			        ) AS HourNumber,
+
 			        CASE
-			            WHEN DATEPART(WEEKDAY, CAST(hi.pick_at AS DATE)) = 1 THEN '1'
+			            WHEN DATEPART(
+			                WEEKDAY,
+			                CAST(hi.pick_at AS DATE)
+			            ) = 1
+			                THEN '1'
+
 			            ELSE '2-7'
 			        END AS WD
+
 			    FROM TargetPara tp
+
 			    INNER JOIN dbo.F2_Utility_Para_History_Main hi
 			        ON hi.box_device_id = tp.box_device_id
 			       AND hi.plc_address = tp.plc_address
-			       AND hi.pick_at >= :prevFrom
-			       AND hi.pick_at <  :prevTo
-			       AND hi.[value] > 0
+
+			    WHERE
+			        hi.pick_at >= :prevFrom
+			        AND hi.pick_at < :prevTo
+			        AND hi.[value] > 0
+			        AND ( tp.cate <> 'Electricity' OR ISNULL(hi.MTD, '') = 'MTD')
 			),
-			
+
+			-- =====================================================
+			-- HOURS
+			-- =====================================================
+
 			Hours AS (
 			    SELECT v.n
-			    FROM (VALUES
-			        (0),(1),(2),(3),(4),(5),(6),(7),
-			        (8),(9),(10),(11),(12),(13),(14),(15),
-			        (16),(17),(18),(19),(20),(21),(22),(23)
+
+			    FROM (
+			        VALUES
+			            (0),(1),(2),(3),(4),(5),
+			            (6),(7),(8),(9),(10),(11),
+			            (12),(13),(14),(15),(16),(17),
+			            (18),(19),(20),(21),(22),(23)
 			    ) v(n)
 			),
-			
+
+			-- =====================================================
+			-- PRICE BY HOUR
+			-- =====================================================
+
 			HourCost AS (
 			    SELECT
 			        c.WD,
 			        h.n AS HourNumber,
-			
+
 			        SUM(
 			            CASE
-			                WHEN c.frTime < c.toTime THEN
+			                WHEN c.frTime < c.toTime
+			                THEN
 			                    (
-			                        CASE WHEN c.toTime < h.n + 1 THEN c.toTime ELSE h.n + 1 END
+			                        CASE
+			                            WHEN c.toTime < h.n + 1
+			                                THEN c.toTime
+			                            ELSE h.n + 1
+			                        END
 			                    )
 			                    -
 			                    (
-			                        CASE WHEN c.frTime > h.n THEN c.frTime ELSE h.n END
+			                        CASE
+			                            WHEN c.frTime > h.n
+			                                THEN c.frTime
+			                            ELSE h.n
+			                        END
 			                    )
+
 			                ELSE
 			                    CASE
-			                        WHEN h.n >= FLOOR(c.frTime) THEN
+			                        WHEN h.n >= FLOOR(c.frTime)
+			                        THEN
 			                            (
-			                                CASE WHEN 24.0 < h.n + 1 THEN 24.0 ELSE h.n + 1 END
+			                                CASE
+			                                    WHEN 24.0 < h.n + 1
+			                                        THEN 24.0
+			                                    ELSE h.n + 1
+			                                END
 			                            )
 			                            -
 			                            (
-			                                CASE WHEN c.frTime > h.n THEN c.frTime ELSE h.n END
+			                                CASE
+			                                    WHEN c.frTime > h.n
+			                                        THEN c.frTime
+			                                    ELSE h.n
+			                                END
 			                            )
+
 			                        ELSE
 			                            (
-			                                CASE WHEN c.toTime < h.n + 1 THEN c.toTime ELSE h.n + 1 END
+			                                CASE
+			                                    WHEN c.toTime < h.n + 1
+			                                        THEN c.toTime
+			                                    ELSE h.n + 1
+			                                END
 			                            )
 			                            -
 			                            (
-			                                CASE WHEN 0.0 > h.n THEN 0.0 ELSE h.n END
+			                                CASE
+			                                    WHEN 0.0 > h.n
+			                                        THEN 0.0
+			                                    ELSE h.n
+			                                END
 			                            )
 			                    END
+
 			            END * c.vnd
 			        ) AS weighted_vnd_sum,
-			
+
 			        SUM(
 			            CASE
-			                WHEN c.frTime < c.toTime THEN
+			                WHEN c.frTime < c.toTime
+			                THEN
 			                    (
-			                        CASE WHEN c.toTime < h.n + 1 THEN c.toTime ELSE h.n + 1 END
+			                        CASE
+			                            WHEN c.toTime < h.n + 1
+			                                THEN c.toTime
+			                            ELSE h.n + 1
+			                        END
 			                    )
 			                    -
 			                    (
-			                        CASE WHEN c.frTime > h.n THEN c.frTime ELSE h.n END
+			                        CASE
+			                            WHEN c.frTime > h.n
+			                                THEN c.frTime
+			                            ELSE h.n
+			                        END
 			                    )
+
 			                ELSE
 			                    CASE
-			                        WHEN h.n >= FLOOR(c.frTime) THEN
+			                        WHEN h.n >= FLOOR(c.frTime)
+			                        THEN
 			                            (
-			                                CASE WHEN 24.0 < h.n + 1 THEN 24.0 ELSE h.n + 1 END
+			                                CASE
+			                                    WHEN 24.0 < h.n + 1
+			                                        THEN 24.0
+			                                    ELSE h.n + 1
+			                                END
 			                            )
 			                            -
 			                            (
-			                                CASE WHEN c.frTime > h.n THEN c.frTime ELSE h.n END
+			                                CASE
+			                                    WHEN c.frTime > h.n
+			                                        THEN c.frTime
+			                                    ELSE h.n
+			                                END
 			                            )
+
 			                        ELSE
 			                            (
-			                                CASE WHEN c.toTime < h.n + 1 THEN c.toTime ELSE h.n + 1 END
+			                                CASE
+			                                    WHEN c.toTime < h.n + 1
+			                                        THEN c.toTime
+			                                    ELSE h.n + 1
+			                                END
 			                            )
 			                            -
 			                            (
-			                                CASE WHEN 0.0 > h.n THEN 0.0 ELSE h.n END
+			                                CASE
+			                                    WHEN 0.0 > h.n
+			                                        THEN 0.0
+			                                    ELSE h.n
+			                                END
 			                            )
 			                    END
 			            END
 			        ) AS total_hours
-			
+
 			    FROM dbo.F2_Utility_Cost_Master c
+
 			    CROSS JOIN Hours h
-			    WHERE (
-			        (c.frTime < c.toTime AND h.n < c.toTime AND h.n + 1 > c.frTime)
+
+			    WHERE
+			        (
+			            c.frTime < c.toTime
+			            AND h.n < c.toTime
+			            AND h.n + 1 > c.frTime
+			        )
+
 			        OR
-			        (c.frTime > c.toTime AND (h.n + 1 > c.frTime OR h.n < c.toTime))
-			    )
-			    GROUP BY c.WD, h.n
+
+			        (
+			            c.frTime > c.toTime
+			            AND (
+			                h.n + 1 > c.frTime
+			                OR h.n < c.toTime
+			            )
+			        )
+
+			    GROUP BY
+			        c.WD,
+			        h.n
 			),
-			
+
 			FinalRate AS (
 			    SELECT
 			        WD,
 			        HourNumber,
-			        weighted_vnd_sum / NULLIF(total_hours, 0) AS vnd_rate
+
+			        weighted_vnd_sum
+			        /
+			        NULLIF(
+			            total_hours,
+			            0
+			        ) AS vnd_rate
+
 			    FROM HourCost
 			),
-			
+
+			-- =====================================================
+			-- GROSS ELECTRICITY HOURLY
+			-- =====================================================
+
 			EnergyHourly AS (
 			    SELECT
 			        period_type,
@@ -757,9 +2167,14 @@ public interface UtilityMonthlyRepo extends JpaRepository<DummyEntity, Long> {
 			        unit,
 			        WD,
 			        HourNumber,
+
 			        SUM([value]) AS hour_value
+
 			    FROM Base
-			    WHERE name_en = 'Total Energy Consumption'
+
+			    WHERE
+			        name_en = 'Total Energy Consumption'
+
 			    GROUP BY
 			        period_type,
 			        name_en,
@@ -768,68 +2183,373 @@ public interface UtilityMonthlyRepo extends JpaRepository<DummyEntity, Long> {
 			        WD,
 			        HourNumber
 			),
-			
+
+			-- =====================================================
+			-- GROSS MONTHLY ELECTRICITY
+			--
+			-- Đây vẫn là meter chính, chưa trừ Solar lần 2.
+			-- =====================================================
+
 			EnergyMonthly AS (
 			    SELECT
 			        e.name_en AS name,
 			        e.cate,
 			        e.unit,
-			
-			        SUM(CASE WHEN e.period_type = 'CURRENT' THEN e.hour_value END) AS value,
-			        SUM(CASE WHEN e.period_type = 'PREV' THEN e.hour_value END) AS prevValue,
-			
-			        SUM(CASE WHEN e.period_type = 'CURRENT' THEN e.hour_value * r.vnd_rate END) AS vndCost,
-			        SUM(CASE WHEN e.period_type = 'PREV' THEN e.hour_value * r.vnd_rate END) AS prevVndCost,
-			
-			        SUM(CASE WHEN e.period_type = 'CURRENT' THEN e.hour_value * r.vnd_rate END)
-			            / NULLIF(:exchange, 0) * :sepzone AS usdCost,
-			
-			        SUM(CASE WHEN e.period_type = 'PREV' THEN e.hour_value * r.vnd_rate END)
-			            / NULLIF(:exchange, 0) * :sepzone AS prevUsdCost
-			
+
+			        -- Gross energy current
+			        SUM(
+			            CASE
+			                WHEN e.period_type = 'CURRENT'
+			                    THEN e.hour_value
+			                ELSE 0
+			            END
+			        ) AS gross_value,
+
+			        -- Gross energy previous
+			        SUM(
+			            CASE
+			                WHEN e.period_type = 'PREV'
+			                    THEN e.hour_value
+			                ELSE 0
+			            END
+			        ) AS gross_prev_value,
+
+			        -- Gross electricity cost current
+			        SUM(
+			            CASE
+			                WHEN e.period_type = 'CURRENT'
+			                    THEN e.hour_value * r.vnd_rate
+			                ELSE 0
+			            END
+			        ) AS gross_vndCost,
+
+			        -- Gross electricity cost previous
+			        SUM(
+			            CASE
+			                WHEN e.period_type = 'PREV'
+			                    THEN e.hour_value * r.vnd_rate
+			                ELSE 0
+			            END
+			        ) AS gross_prevVndCost,
+
+			        -- Solar cost current
+			        SUM(
+			            CASE
+			                WHEN e.period_type = 'CURRENT'
+			                    THEN
+			                        COALESCE(
+			                            sh.solar_hour_value,
+			                            0
+			                        )
+			                        * r.vnd_rate
+			                ELSE 0
+			            END
+			        ) AS solar_vndCost,
+
+			        -- Solar cost previous
+			        SUM(
+			            CASE
+			                WHEN e.period_type = 'PREV'
+			                    THEN
+			                        COALESCE(
+			                            sh.solar_hour_value,
+			                            0
+			                        )
+			                        * r.vnd_rate
+			                ELSE 0
+			            END
+			        ) AS prev_solar_vndCost
+
 			    FROM EnergyHourly e
+
 			    INNER JOIN FinalRate r
-			        ON e.WD = r.WD
-			       AND e.HourNumber = r.HourNumber
+			        ON r.WD = e.WD
+			       AND r.HourNumber = e.HourNumber
+
+			    LEFT JOIN SolarHourly sh
+			        ON sh.period_type = e.period_type
+			       AND sh.WD = e.WD
+			       AND sh.HourNumber = e.HourNumber
+
 			    GROUP BY
 			        e.name_en,
 			        e.cate,
 			        e.unit
 			),
-			
+
+			-- =====================================================
+			-- NET / GRID MONTHLY
+			--
+			-- GRID = GROSS - SOLAR
+			-- =====================================================
+
+			EnergyNetMonthly AS (
+			    SELECT
+			        e.name,
+			        e.cate,
+			        e.unit,
+
+			        -- GRID CURRENT
+			        CAST(
+			            CASE
+			                WHEN COALESCE(e.gross_value, 0)
+			                     >
+			                     COALESCE(s.solarValue, 0)
+
+			                THEN
+			                    COALESCE(e.gross_value, 0)
+			                    -
+			                    COALESCE(s.solarValue, 0)
+
+			                ELSE 0
+			            END
+			            AS DECIMAL(18,2)
+			        ) AS value,
+
+			        -- GRID PREVIOUS
+			        CAST(
+			            CASE
+			                WHEN COALESCE(e.gross_prev_value, 0)
+			                     >
+			                     COALESCE(s.prevSolarValue, 0)
+
+			                THEN
+			                    COALESCE(e.gross_prev_value, 0)
+			                    -
+			                    COALESCE(s.prevSolarValue, 0)
+
+			                ELSE 0
+			            END
+			            AS DECIMAL(18,2)
+			        ) AS prevValue,
+
+			        -- Gross value trước khi trừ solar
+			        CAST(
+			            COALESCE(e.gross_value, 0)
+			            AS DECIMAL(18,2)
+			        ) AS totalEnergyValue,
+
+			        CAST(
+			            COALESCE(e.gross_prev_value, 0)
+			            AS DECIMAL(18,2)
+			        ) AS prevTotalEnergyValue,
+
+			        CAST(
+			            COALESCE(s.solarValue, 0)
+			            AS DECIMAL(18,2)
+			        ) AS solarValue,
+
+			        CAST(
+			            COALESCE(s.prevSolarValue, 0)
+			            AS DECIMAL(18,2)
+			        ) AS prevSolarValue,
+
+			        -- GRID VND CURRENT
+			        CAST(
+			            CASE
+			                WHEN COALESCE(e.gross_vndCost, 0)
+			                     >
+			                     COALESCE(e.solar_vndCost, 0)
+
+			                THEN
+			                    COALESCE(e.gross_vndCost, 0)
+			                    -
+			                    COALESCE(e.solar_vndCost, 0)
+
+			                ELSE 0
+			            END
+			            AS DECIMAL(18,2)
+			        ) AS vndCost,
+
+			        -- GRID VND PREVIOUS
+			        CAST(
+			            CASE
+			                WHEN COALESCE(e.gross_prevVndCost, 0)
+			                     >
+			                     COALESCE(e.prev_solar_vndCost, 0)
+
+			                THEN
+			                    COALESCE(e.gross_prevVndCost, 0)
+			                    -
+			                    COALESCE(e.prev_solar_vndCost, 0)
+
+			                ELSE 0
+			            END
+			            AS DECIMAL(18,2)
+			        ) AS prevVndCost,
+
+			        -- GRID USD CURRENT
+			        CAST(
+			            (
+			                CASE
+			                    WHEN COALESCE(e.gross_vndCost, 0)
+			                         >
+			                         COALESCE(e.solar_vndCost, 0)
+
+			                    THEN
+			                        COALESCE(e.gross_vndCost, 0)
+			                        -
+			                        COALESCE(e.solar_vndCost, 0)
+
+			                    ELSE 0
+			                END
+			            )
+			            /
+			            NULLIF(:exchange, 0)
+			            *
+			            :sepzone
+			            AS DECIMAL(18,2)
+			        ) AS usdCost,
+
+			        -- GRID USD PREVIOUS
+			        CAST(
+			            (
+			                CASE
+			                    WHEN COALESCE(e.gross_prevVndCost, 0)
+			                         >
+			                         COALESCE(e.prev_solar_vndCost, 0)
+
+			                    THEN
+			                        COALESCE(e.gross_prevVndCost, 0)
+			                        -
+			                        COALESCE(e.prev_solar_vndCost, 0)
+
+			                    ELSE 0
+			                END
+			            )
+			            /
+			            NULLIF(:exchange, 0)
+			            *
+			            :sepzone
+			            AS DECIMAL(18,2)
+			        ) AS prevUsdCost
+
+			    FROM EnergyMonthly e
+
+			    CROSS JOIN SolarMonthly s
+			),
+
+			-- =====================================================
+			-- WATER TEMPERATURE
+			-- =====================================================
+
 			WaterMonthly AS (
 			    SELECT
 			        'Cooling Tank Temperature' AS name,
 			        'Water' AS cate,
 			        MAX(unit) AS unit,
-			
-			        CAST(ROUND(AVG(CASE WHEN period_type = 'CURRENT'
-			            THEN CAST([value] AS DECIMAL(18,4)) END), 1) AS DECIMAL(18,1)) AS avgValue,
-			
-			        CAST(ROUND(MIN(CASE WHEN period_type = 'CURRENT'
-			            THEN CAST([value] AS DECIMAL(18,4)) END), 1) AS DECIMAL(18,1)) AS minValue,
-			
-			        CAST(ROUND(MAX(CASE WHEN period_type = 'CURRENT'
-			            THEN CAST([value] AS DECIMAL(18,4)) END), 1) AS DECIMAL(18,1)) AS maxValue,
-			
-			        CAST(ROUND(AVG(CASE WHEN period_type = 'PREV'
-			            THEN CAST([value] AS DECIMAL(18,4)) END), 1) AS DECIMAL(18,1)) AS prevAvgValue,
-			
-			        CAST(ROUND(MIN(CASE WHEN period_type = 'PREV'
-			            THEN CAST([value] AS DECIMAL(18,4)) END), 1) AS DECIMAL(18,1)) AS prevMinValue,
-			
-			        CAST(ROUND(MAX(CASE WHEN period_type = 'PREV'
-			            THEN CAST([value] AS DECIMAL(18,4)) END), 1) AS DECIMAL(18,1)) AS prevMaxValue
-			
+
+			        CAST(
+			            ROUND(
+			                AVG(
+			                    CASE
+			                        WHEN period_type = 'CURRENT'
+			                        THEN CAST(
+			                            [value]
+			                            AS DECIMAL(18,4)
+			                        )
+			                    END
+			                ),
+			                1
+			            )
+			            AS DECIMAL(18,1)
+			        ) AS avgValue,
+
+			        CAST(
+			            ROUND(
+			                MIN(
+			                    CASE
+			                        WHEN period_type = 'CURRENT'
+			                        THEN CAST(
+			                            [value]
+			                            AS DECIMAL(18,4)
+			                        )
+			                    END
+			                ),
+			                1
+			            )
+			            AS DECIMAL(18,1)
+			        ) AS minValue,
+
+			        CAST(
+			            ROUND(
+			                MAX(
+			                    CASE
+			                        WHEN period_type = 'CURRENT'
+			                        THEN CAST(
+			                            [value]
+			                            AS DECIMAL(18,4)
+			                        )
+			                    END
+			                ),
+			                1
+			            )
+			            AS DECIMAL(18,1)
+			        ) AS maxValue,
+
+			        CAST(
+			            ROUND(
+			                AVG(
+			                    CASE
+			                        WHEN period_type = 'PREV'
+			                        THEN CAST(
+			                            [value]
+			                            AS DECIMAL(18,4)
+			                        )
+			                    END
+			                ),
+			                1
+			            )
+			            AS DECIMAL(18,1)
+			        ) AS prevAvgValue,
+
+			        CAST(
+			            ROUND(
+			                MIN(
+			                    CASE
+			                        WHEN period_type = 'PREV'
+			                        THEN CAST(
+			                            [value]
+			                            AS DECIMAL(18,4)
+			                        )
+			                    END
+			                ),
+			                1
+			            )
+			            AS DECIMAL(18,1)
+			        ) AS prevMinValue,
+
+			        CAST(
+			            ROUND(
+			                MAX(
+			                    CASE
+			                        WHEN period_type = 'PREV'
+			                        THEN CAST(
+			                            [value]
+			                            AS DECIMAL(18,4)
+			                        )
+			                    END
+			                ),
+			                1
+			            )
+			            AS DECIMAL(18,1)
+			        ) AS prevMaxValue
+
 			    FROM Base
+
 			    WHERE name_en LIKE '%Cooling tank%'
 			),
+
+			-- =====================================================
+			-- WATER PIPELINE
+			-- =====================================================
+
 			PipelinePressureMonthly AS (
 			    SELECT
 			        'Data Pipeline pressure' AS name,
 			        'Water' AS cate,
 			        MAX(unit) AS unit,
-			
+
 			        CAST(
 			            ROUND(
 			                AVG(
@@ -839,9 +2559,10 @@ public interface UtilityMonthlyRepo extends JpaRepository<DummyEntity, Long> {
 			                    END
 			                ),
 			                1
-			            ) AS DECIMAL(18,1)
+			            )
+			            AS DECIMAL(18,1)
 			        ) AS avgValue,
-			
+
 			        CAST(
 			            ROUND(
 			                MIN(
@@ -851,9 +2572,10 @@ public interface UtilityMonthlyRepo extends JpaRepository<DummyEntity, Long> {
 			                    END
 			                ),
 			                1
-			            ) AS DECIMAL(18,1)
+			            )
+			            AS DECIMAL(18,1)
 			        ) AS minValue,
-			
+
 			        CAST(
 			            ROUND(
 			                MAX(
@@ -863,9 +2585,10 @@ public interface UtilityMonthlyRepo extends JpaRepository<DummyEntity, Long> {
 			                    END
 			                ),
 			                1
-			            ) AS DECIMAL(18,1)
+			            )
+			            AS DECIMAL(18,1)
 			        ) AS maxValue,
-			
+
 			        CAST(
 			            ROUND(
 			                AVG(
@@ -875,9 +2598,10 @@ public interface UtilityMonthlyRepo extends JpaRepository<DummyEntity, Long> {
 			                    END
 			                ),
 			                1
-			            ) AS DECIMAL(18,1)
+			            )
+			            AS DECIMAL(18,1)
 			        ) AS prevAvgValue,
-			
+
 			        CAST(
 			            ROUND(
 			                MIN(
@@ -887,9 +2611,10 @@ public interface UtilityMonthlyRepo extends JpaRepository<DummyEntity, Long> {
 			                    END
 			                ),
 			                1
-			            ) AS DECIMAL(18,1)
+			            )
+			            AS DECIMAL(18,1)
 			        ) AS prevMinValue,
-			
+
 			        CAST(
 			            ROUND(
 			                MAX(
@@ -899,208 +2624,418 @@ public interface UtilityMonthlyRepo extends JpaRepository<DummyEntity, Long> {
 			                    END
 			                ),
 			                1
-			            ) AS DECIMAL(18,1)
+			            )
+			            AS DECIMAL(18,1)
 			        ) AS prevMaxValue
-			
+
 			    FROM Base
+
 			    WHERE name_en = 'Data Pipeline pressure'
 			),
+
+			-- =====================================================
+			-- COMPRESSED AIR
+			-- =====================================================
+
 			AirMonthly AS (
 			    SELECT
-			        'Sensor compressed air pressure Data' AS name,
+			        'Sensor compressed air pressure Data'
+			            AS name,
+
 			        'Compressed Air' AS cate,
+
 			        MAX(unit) AS unit,
-			
-			        CAST(ROUND(AVG(CASE WHEN period_type = 'CURRENT'
-			            THEN CAST([value] AS DECIMAL(18,4)) END), 1) AS DECIMAL(18,1)) AS avgValue,
-			
-			        CAST(ROUND(MIN(CASE WHEN period_type = 'CURRENT'
-			            THEN CAST([value] AS DECIMAL(18,4)) END), 1) AS DECIMAL(18,1)) AS minValue,
-			
-			        CAST(ROUND(MAX(CASE WHEN period_type = 'CURRENT'
-			            THEN CAST([value] AS DECIMAL(18,4)) END), 1) AS DECIMAL(18,1)) AS maxValue,
-			
-			        CAST(ROUND(AVG(CASE WHEN period_type = 'PREV'
-			            THEN CAST([value] AS DECIMAL(18,4)) END), 1) AS DECIMAL(18,1)) AS prevAvgValue,
-			
-			        CAST(ROUND(MIN(CASE WHEN period_type = 'PREV'
-			            THEN CAST([value] AS DECIMAL(18,4)) END), 1) AS DECIMAL(18,1)) AS prevMinValue,
-			
-			        CAST(ROUND(MAX(CASE WHEN period_type = 'PREV'
-			            THEN CAST([value] AS DECIMAL(18,4)) END), 1) AS DECIMAL(18,1)) AS prevMaxValue
-			
+
+			        CAST(
+			            ROUND(
+			                AVG(
+			                    CASE
+			                        WHEN period_type = 'CURRENT'
+			                        THEN CAST([value] AS DECIMAL(18,4))
+			                    END
+			                ),
+			                1
+			            )
+			            AS DECIMAL(18,1)
+			        ) AS avgValue,
+
+			        CAST(
+			            ROUND(
+			                MIN(
+			                    CASE
+			                        WHEN period_type = 'CURRENT'
+			                        THEN CAST([value] AS DECIMAL(18,4))
+			                    END
+			                ),
+			                1
+			            )
+			            AS DECIMAL(18,1)
+			        ) AS minValue,
+
+			        CAST(
+			            ROUND(
+			                MAX(
+			                    CASE
+			                        WHEN period_type = 'CURRENT'
+			                        THEN CAST([value] AS DECIMAL(18,4))
+			                    END
+			                ),
+			                1
+			            )
+			            AS DECIMAL(18,1)
+			        ) AS maxValue,
+
+			        CAST(
+			            ROUND(
+			                AVG(
+			                    CASE
+			                        WHEN period_type = 'PREV'
+			                        THEN CAST([value] AS DECIMAL(18,4))
+			                    END
+			                ),
+			                1
+			            )
+			            AS DECIMAL(18,1)
+			        ) AS prevAvgValue,
+
+			        CAST(
+			            ROUND(
+			                MIN(
+			                    CASE
+			                        WHEN period_type = 'PREV'
+			                        THEN CAST([value] AS DECIMAL(18,4))
+			                    END
+			                ),
+			                1
+			            )
+			            AS DECIMAL(18,1)
+			        ) AS prevMinValue,
+
+			        CAST(
+			            ROUND(
+			                MAX(
+			                    CASE
+			                        WHEN period_type = 'PREV'
+			                        THEN CAST([value] AS DECIMAL(18,4))
+			                    END
+			                ),
+			                1
+			            )
+			            AS DECIMAL(18,1)
+			        ) AS prevMaxValue
+
 			    FROM Base
-			    WHERE name_en = 'Sensor compressed air pressure Data'
+
+			    WHERE
+			        name_en =
+			        'Sensor compressed air pressure Data'
 			),
-			
+
 			LastPick AS (
-			    SELECT MAX(pick_at) AS pickAt
+			    SELECT
+			        MAX(pick_at) AS pickAt
+
 			    FROM Base
+
 			    WHERE period_type = 'CURRENT'
 			),
-			
+
+			-- =====================================================
+			-- FINAL ROWS
+			-- =====================================================
+
 			FinalRows AS (
 			    SELECT
 			        e.name,
 			        e.cate,
 			        e.unit,
-			
+
 			        CAST(NULL AS DECIMAL(18,1)) AS minValue,
 			        CAST(NULL AS DECIMAL(18,1)) AS maxValue,
 			        CAST(NULL AS DECIMAL(18,1)) AS prevMinValue,
 			        CAST(NULL AS DECIMAL(18,1)) AS prevMaxValue,
-			
-			        CAST(e.value AS DECIMAL(18,2)) AS value,
-			        CAST(NULL AS DECIMAL(18,1)) AS avgValue,
-			
-			        CAST(e.vndCost AS DECIMAL(18,2)) AS vndCost,
-			        CAST(e.usdCost AS DECIMAL(18,2)) AS usdCost,
-			
-			        CAST(e.prevValue AS DECIMAL(18,2)) AS prevValue,
-			        CAST(NULL AS DECIMAL(18,1)) AS prevAvgValue,
-			
-			        CAST(e.prevVndCost AS DECIMAL(18,2)) AS prevVndCost,
-			        CAST(e.prevUsdCost AS DECIMAL(18,2)) AS prevUsdCost
-			    FROM EnergyMonthly e
-			
+
+			        CAST(e.value AS DECIMAL(18,2))
+			            AS value,
+
+			        CAST(NULL AS DECIMAL(18,1))
+			            AS avgValue,
+
+			        CAST(e.vndCost AS DECIMAL(18,2))
+			            AS vndCost,
+
+			        CAST(e.usdCost AS DECIMAL(18,2))
+			            AS usdCost,
+
+			        CAST(e.prevValue AS DECIMAL(18,2))
+			            AS prevValue,
+
+			        CAST(NULL AS DECIMAL(18,1))
+			            AS prevAvgValue,
+
+			        CAST(e.prevVndCost AS DECIMAL(18,2))
+			            AS prevVndCost,
+
+			        CAST(e.prevUsdCost AS DECIMAL(18,2))
+			            AS prevUsdCost
+
+			    FROM EnergyNetMonthly e
+
 			    UNION ALL
-			
+
 			    SELECT
 			        w.name,
 			        w.cate,
 			        w.unit,
-			
+
 			        w.minValue,
 			        w.maxValue,
 			        w.prevMinValue,
 			        w.prevMaxValue,
-			
-			        CAST(NULL AS DECIMAL(18,2)) AS value,
+
+			        CAST(NULL AS DECIMAL(18,2)),
 			        w.avgValue,
-			
-			        CAST(NULL AS DECIMAL(18,2)) AS vndCost,
-			        CAST(NULL AS DECIMAL(18,2)) AS usdCost,
-			
-			        CAST(NULL AS DECIMAL(18,2)) AS prevValue,
+
+			        CAST(NULL AS DECIMAL(18,2)),
+			        CAST(NULL AS DECIMAL(18,2)),
+
+			        CAST(NULL AS DECIMAL(18,2)),
 			        w.prevAvgValue,
-			
-			        CAST(NULL AS DECIMAL(18,2)) AS prevVndCost,
-			        CAST(NULL AS DECIMAL(18,2)) AS prevUsdCost
+
+			        CAST(NULL AS DECIMAL(18,2)),
+			        CAST(NULL AS DECIMAL(18,2))
+
 			    FROM WaterMonthly w
-			
+
 			    UNION ALL
-				SELECT
-			       p.name,
-			       p.cate,
-			       p.unit,
-			       p.minValue,
-			       p.maxValue,
-			       p.prevMinValue,
-			       p.prevMaxValue,
-			   
-			       CAST(NULL AS DECIMAL(18,2)) AS value,
-			       p.avgValue,
-			   
-			       CAST(NULL AS DECIMAL(18,2)) AS vndCost,
-			       CAST(NULL AS DECIMAL(18,2)) AS usdCost,
-			   
-			       CAST(NULL AS DECIMAL(18,2)) AS prevValue,
-			       p.prevAvgValue,
-			   
-			       CAST(NULL AS DECIMAL(18,2)) AS prevVndCost,
-			       CAST(NULL AS DECIMAL(18,2)) AS prevUsdCost
-				FROM PipelinePressureMonthly p
-				
-				UNION ALL
-							
+
+			    SELECT
+			        p.name,
+			        p.cate,
+			        p.unit,
+
+			        p.minValue,
+			        p.maxValue,
+			        p.prevMinValue,
+			        p.prevMaxValue,
+
+			        CAST(NULL AS DECIMAL(18,2)),
+			        p.avgValue,
+
+			        CAST(NULL AS DECIMAL(18,2)),
+			        CAST(NULL AS DECIMAL(18,2)),
+
+			        CAST(NULL AS DECIMAL(18,2)),
+			        p.prevAvgValue,
+
+			        CAST(NULL AS DECIMAL(18,2)),
+			        CAST(NULL AS DECIMAL(18,2))
+
+			    FROM PipelinePressureMonthly p
+
+			    UNION ALL
+
 			    SELECT
 			        a.name,
 			        a.cate,
 			        a.unit,
-			
+
 			        a.minValue,
 			        a.maxValue,
 			        a.prevMinValue,
 			        a.prevMaxValue,
-			
-			        CAST(NULL AS DECIMAL(18,2)) AS value,
+
+			        CAST(NULL AS DECIMAL(18,2)),
 			        a.avgValue,
-			
-			        CAST(NULL AS DECIMAL(18,2)) AS vndCost,
-			        CAST(NULL AS DECIMAL(18,2)) AS usdCost,
-			
-			        CAST(NULL AS DECIMAL(18,2)) AS prevValue,
+
+			        CAST(NULL AS DECIMAL(18,2)),
+			        CAST(NULL AS DECIMAL(18,2)),
+
+			        CAST(NULL AS DECIMAL(18,2)),
 			        a.prevAvgValue,
-			
-			        CAST(NULL AS DECIMAL(18,2)) AS prevVndCost,
-			        CAST(NULL AS DECIMAL(18,2)) AS prevUsdCost
+
+			        CAST(NULL AS DECIMAL(18,2)),
+			        CAST(NULL AS DECIMAL(18,2))
+
 			    FROM AirMonthly a
 			)
-			
+
+			-- =====================================================
+			-- FINAL SELECT
+			-- =====================================================
+
 			SELECT
 			    f.name AS name,
 			    f.cate AS cate,
 			    f.unit AS unit,
+
 			    :month AS month,
-			
+
 			    f.minValue AS minValue,
 			    f.maxValue AS maxValue,
 			    f.prevMinValue AS prevMinValue,
 			    f.prevMaxValue AS prevMaxValue,
-			
+
 			    f.value AS value,
 			    f.avgValue AS avgValue,
-			
+
 			    f.vndCost AS vndCost,
 			    f.usdCost AS usdCost,
-			
+
 			    f.prevValue AS prevValue,
 			    f.prevAvgValue AS prevAvgValue,
-			
+
 			    f.prevVndCost AS prevVndCost,
 			    f.prevUsdCost AS prevUsdCost,
-			
-		    CAST(
-		        COALESCE(f.value, f.avgValue, 0)
-		        -
-		        COALESCE(f.prevValue, f.prevAvgValue, 0)
-		        AS DECIMAL(18,2)
-		    ) AS deltaValue,
-		
-		    CAST(
-		        CASE
-		            WHEN COALESCE(f.prevValue, f.prevAvgValue, 0) = 0 THEN NULL
-		            ELSE (
-		                (
-		                    COALESCE(f.value, f.avgValue, 0)
-		                    -
-		                    COALESCE(f.prevValue, f.prevAvgValue, 0)
-		                )
-		                / COALESCE(f.prevValue, f.prevAvgValue, 0)
-		            ) * 100
-		        END AS DECIMAL(10,2)
-		    ) AS deltaPercent,
-		
-		    lp.pickAt AS pickAt
-			
+
+			    CAST(
+			        COALESCE(
+			            f.value,
+			            f.avgValue,
+			            0
+			        )
+			        -
+			        COALESCE(
+			            f.prevValue,
+			            f.prevAvgValue,
+			            0
+			        )
+			        AS DECIMAL(18,2)
+			    ) AS deltaValue,
+
+			    CAST(
+			        CASE
+			            WHEN COALESCE(
+			                f.prevValue,
+			                f.prevAvgValue,
+			                0
+			            ) = 0
+			                THEN NULL
+
+			            ELSE
+			                (
+			                    (
+			                        COALESCE(
+			                            f.value,
+			                            f.avgValue,
+			                            0
+			                        )
+			                        -
+			                        COALESCE(
+			                            f.prevValue,
+			                            f.prevAvgValue,
+			                            0
+			                        )
+			                    )
+			                    /
+			                    COALESCE(
+			                        f.prevValue,
+			                        f.prevAvgValue,
+			                        0
+			                    )
+			                ) * 100
+			        END
+			        AS DECIMAL(10,2)
+			    ) AS deltaPercent,
+
+			    lp.pickAt AS pickAt,
+
+			    -- ================================================
+			    -- SOLAR INFORMATION
+			    -- ================================================
+
+			    CASE
+			        WHEN f.cate = 'Electricity'
+			            THEN sm.solarValue
+			    END AS solarValue,
+
+			    CASE
+			        WHEN f.cate = 'Electricity'
+			            THEN sm.prevSolarValue
+			    END AS prevSolarValue,
+
+			    -- value hiện tại đã là GRID
+			    -- GRID + SOLAR = GROSS
+			    CASE
+			        WHEN f.cate = 'Electricity'
+			        THEN CAST(
+			            COALESCE(f.value, 0)
+			            +
+			            COALESCE(sm.solarValue, 0)
+			            AS DECIMAL(18,2)
+			        )
+			    END AS totalEnergyValue,
+
+			    CASE
+			        WHEN f.cate = 'Electricity'
+			        THEN CAST(
+			            COALESCE(f.prevValue, 0)
+			            +
+			            COALESCE(sm.prevSolarValue, 0)
+			            AS DECIMAL(18,2)
+			        )
+			    END AS prevTotalEnergyValue,
+
+			    CASE
+			        WHEN f.cate = 'Electricity'
+
+			             AND (
+			                 COALESCE(f.value, 0)
+			                 +
+			                 COALESCE(
+			                     sm.solarValue,
+			                     0
+			                 )
+			             ) > 0
+
+			        THEN CAST(
+			            COALESCE(
+			                sm.solarValue,
+			                0
+			            )
+			            /
+			            NULLIF(
+			                COALESCE(f.value, 0)
+			                +
+			                COALESCE(
+			                    sm.solarValue,
+			                    0
+			                ),
+			                0
+			            )
+			            * 100
+
+			            AS DECIMAL(10,2)
+			        )
+			    END AS solarSharePercent
+
 			FROM FinalRows f
+
 			CROSS JOIN LastPick lp
+
+			CROSS JOIN SolarMonthly sm
+
 			ORDER BY
 			    CASE
-			        WHEN f.cate = 'Electricity' THEN 1
-			
+			        WHEN f.cate = 'Electricity'
+			            THEN 1
+
 			        WHEN f.cate = 'Water'
-			             AND f.name = 'Cooling Tank Temperature'
+			             AND f.name =
+			                 'Cooling Tank Temperature'
 			            THEN 2
-			
+
 			        WHEN f.cate = 'Water'
-			             AND f.name = 'Data Pipeline pressure'
+			             AND f.name =
+			                 'Data Pipeline pressure'
 			            THEN 3
-			
-			        WHEN f.cate = 'Compressed Air' THEN 4
-			
+
+			        WHEN f.cate = 'Compressed Air'
+			            THEN 4
+
 			        ELSE 9
-			END
+			    END
+
 			OPTION (RECOMPILE)
 			""", nativeQuery = true)
 	List<MonthlySummaryProjection> sumMonthlyKvhRaw(

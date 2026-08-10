@@ -1,24 +1,23 @@
 package com.example.factory_utility_visualization_be.service.overview.daily;
 
 import com.example.factory_utility_visualization_be.dto.overview.daily.DailyDto;
+import com.example.factory_utility_visualization_be.dto.overview.daily.DailyElectricityStackDto;
 import com.example.factory_utility_visualization_be.dto.overview.daily.UtilityDailyDashboardDto;
 import com.example.factory_utility_visualization_be.dto.overview.daily.UtilityDailyDashboardProjection;
-import com.example.factory_utility_visualization_be.dto.overview.daily.UtilityDailyEnergyCostProjection;
+import com.example.factory_utility_visualization_be.dto.overview.daily.UtilityDailyElectricityStackProjection;
 import com.example.factory_utility_visualization_be.repository.overview.daily.UtilityDailyRepo;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.DateTimeException;
-import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 
 @Service
 @RequiredArgsConstructor
@@ -34,173 +33,292 @@ public class UtilityEnergyDailyService {
 			String facId,
 			String monthYyyyMm
 	) {
-		final String normalizedFac = normalizeRequired(
-				facId,
-				"facId"
-		);
 
-		final YearMonth yearMonth = parseMonth(monthYyyyMm);
+		// =====================================================
+		// 1. NORMALIZE INPUT
+		// =====================================================
+
+		final String fac =
+				normalizeRequired(
+						facId,
+						"facId"
+				);
+
+		final YearMonth yearMonth =
+				parseMonth(monthYyyyMm);
+
+		// =====================================================
+		// 2. DATE RANGE
+		// =====================================================
 
 		final LocalDateTime from =
-				yearMonth.atDay(1).atStartOfDay();
-
-		final LocalDateTime to =
-				yearMonth.plusMonths(1)
+				yearMonth
 						.atDay(1)
 						.atStartOfDay();
 
-		/*
-		 * Dữ liệu điện, nước, khí hiện tại.
-		 */
-		List<UtilityDailyDashboardProjection> rows =
+		final LocalDateTime to =
+				yearMonth
+						.plusMonths(1)
+						.atDay(1)
+						.atStartOfDay();
+
+		// =====================================================
+		// 3. ELECTRICITY
+		//
+		// API trả:
+		// gridKwh
+		// solarKwh
+		// totalKwh
+		//
+		// Dùng cho stacked column chart.
+		// =====================================================
+
+		final List<UtilityDailyElectricityStackProjection> energyRows =
+				repo.getDailyElectricityStack(
+						fac,
+						from,
+						to
+				);
+
+		final List<DailyElectricityStackDto> electricity =
+				new ArrayList<>();
+
+		if (energyRows != null) {
+
+			for (UtilityDailyElectricityStackProjection row : energyRows) {
+
+				if (
+						row == null
+								|| row.getRecordDate() == null
+				) {
+					continue;
+				}
+
+				electricity.add(
+						new DailyElectricityStackDto(
+								row.getRecordDate(),
+
+								// Grid electricity
+								oneDecimal(
+										row.getGridKwh()
+								),
+
+								// Solar
+								oneDecimal(
+										row.getSolarKwh()
+								),
+
+								// Total = Grid + Solar
+								oneDecimal(
+										row.getTotalKwh()
+								)
+						)
+				);
+			}
+		}
+
+		// =====================================================
+		// 4. WATER + AIR
+		// =====================================================
+
+		final List<UtilityDailyDashboardProjection> utilityRows =
 				repo.getDailyDashboardByMonth(
-						normalizedFac,
+						fac,
 						from,
 						to
 				);
 
-		/*
-		 * Dữ liệu điện năng và chi phí từ bảng hourly.
-		 */
-		List<UtilityDailyEnergyCostProjection> energyCostRows =
-				repo.getDailyEnergyAndCost(
-						normalizedFac,
-						from,
-						to
-				);
+		final List<DailyDto> water =
+				new ArrayList<>();
 
-		/*
-		 * Map chi phí theo ngày.
-		 */
-		Map<LocalDate, BigDecimal> costUsdByDate =
-				new LinkedHashMap<>();
+		final List<DailyDto> air =
+				new ArrayList<>();
 
-		/*
-		 * Map kWh theo ngày từ bảng hourly.
-		 * Nên dùng nguồn này cho biểu đồ điện để kWh và tiền
-		 * cùng lấy từ một bảng, tránh lệch dữ liệu.
-		 */
-		Map<LocalDate, BigDecimal> energyKwhByDate =
-				new LinkedHashMap<>();
+		if (utilityRows != null) {
 
-		for (UtilityDailyEnergyCostProjection row : energyCostRows) {
-			if (row.getRecordDate() == null) {
-				continue;
-			}
+			for (UtilityDailyDashboardProjection row : utilityRows) {
 
-			energyKwhByDate.put(
-					row.getRecordDate(),
-					defaultZero(row.getEnergyKwh())
-			);
-
-			costUsdByDate.put(
-					row.getRecordDate(),
-					defaultZero(row.getCostUsd())
-			);
-		}
-
-		List<DailyDto> electricity = new ArrayList<>();
-		List<DailyDto> water = new ArrayList<>();
-		List<DailyDto> air = new ArrayList<>();
-
-		/*
-		 * Điện lấy trực tiếp từ bảng F2_Utility_Energy_Hourly.
-		 * Như vậy mỗi ngày có cả kWh và CostUsd.
-		 */
-		for (UtilityDailyEnergyCostProjection row : energyCostRows) {
-			if (row.getRecordDate() == null) {
-				continue;
-			}
-
-			electricity.add(
-					new DailyDto(
-							row.getRecordDate(),
-							defaultZero(row.getEnergyKwh()),
-							defaultZero(row.getCostUsd())
-					)
-			);
-		}
-
-		/*
-		 * Query dashboard cũ tiếp tục dùng cho Water và Air.
-		 * Không lấy ENERGY ở đây nữa để tránh dữ liệu điện bị trùng.
-		 */
-		for (UtilityDailyDashboardProjection row : rows) {
-			if (row.getRecordDate() == null) {
-				continue;
-			}
-
-			final LocalDate date =
-					row.getRecordDate().toLocalDate();
-
-			final BigDecimal value =
-					defaultZero(row.getValue());
-
-			final String type =
-					row.getUtilityType() == null
-							? ""
-							: row.getUtilityType()
-							.trim()
-							.toUpperCase();
-
-			switch (type) {
-				case "WATER" -> water.add(
-						new DailyDto(
-								date,
-								value,
-								null
-						)
-				);
-
-				case "AIR" -> air.add(
-						new DailyDto(
-								date,
-								value,
-								null
-						)
-				);
-
-				case "ENERGY" -> {
-					/*
-					 * Bỏ qua vì electricity đã lấy từ
-					 * F2_Utility_Energy_Hourly.
-					 */
+				if (
+						row == null
+								|| row.getRecordDate() == null
+				) {
+					continue;
 				}
 
-				default -> {
-					// Ignore unknown utility type.
+				final String type =
+						normalizeUtilityType(
+								row.getUtilityType()
+						);
+
+				// Tất cả Water/Air đều làm tròn 1 chữ số.
+				final BigDecimal value =
+						oneDecimal(
+								row.getValue()
+						);
+
+				switch (type) {
+
+					// =================================================
+					// WATER
+					// =================================================
+
+					case "WATER" -> water.add(
+							new DailyDto(
+									row.getRecordDate()
+											.toLocalDate(),
+
+									value,
+
+									// Tạm thời không dùng cost
+									null
+							)
+					);
+
+					// =================================================
+					// AIR
+					// =================================================
+
+					case "AIR" -> air.add(
+							new DailyDto(
+									row.getRecordDate()
+											.toLocalDate(),
+
+									value,
+
+									// Tạm thời không dùng cost
+									null
+							)
+					);
+
+					// =================================================
+					// ENERGY
+					//
+					// Không lấy tại đây.
+					// Electricity đã có query riêng:
+					// getDailyElectricityStack()
+					// =================================================
+
+					case "ENERGY" -> {
+						// Ignore.
+					}
+
+					default -> {
+						// Ignore unknown utility type.
+					}
 				}
 			}
 		}
 
-		return UtilityDailyDashboardDto.builder()
-				.facId(normalizedFac)
-				.month(yearMonth.format(MONTH_FORMATTER))
-				.electricity(List.copyOf(electricity))
-				.water(List.copyOf(water))
-				.air(List.copyOf(air))
+		// =====================================================
+		// 5. RESPONSE
+		// =====================================================
+
+		return UtilityDailyDashboardDto
+				.builder()
+
+				.facId(
+						fac
+				)
+
+				.month(
+						yearMonth.format(
+								MONTH_FORMATTER
+						)
+				)
+
+				.electricity(
+						List.copyOf(
+								electricity
+						)
+				)
+
+				.water(
+						List.copyOf(
+								water
+						)
+				)
+
+				.air(
+						List.copyOf(
+								air
+						)
+				)
+
 				.build();
 	}
 
-	private BigDecimal defaultZero(BigDecimal value) {
+	// =========================================================
+	// ROUND 1 DECIMAL
+	//
+	// 123.456 -> 123.5
+	// 123.44  -> 123.4
+	// null    -> 0.0
+	// =========================================================
+
+	private BigDecimal oneDecimal(
+			BigDecimal value
+	) {
 		return value == null
-				? BigDecimal.ZERO
-				: value;
+				? BigDecimal.ZERO.setScale(
+				1,
+				RoundingMode.HALF_UP
+		)
+				: value.setScale(
+				1,
+				RoundingMode.HALF_UP
+		);
 	}
 
-	private YearMonth parseMonth(String value) {
-		if (value == null || !value.matches("\\d{6}")) {
+	// =========================================================
+	// NORMALIZE UTILITY TYPE
+	// =========================================================
+
+	private String normalizeUtilityType(
+			String value
+	) {
+		if (
+				value == null
+						|| value.isBlank()
+		) {
+			return "";
+		}
+
+		return value
+				.trim()
+				.toUpperCase();
+	}
+
+	// =========================================================
+	// PARSE MONTH
+	//
+	// yyyyMM
+	//
+	// Example:
+	// 202608
+	// =========================================================
+
+	private YearMonth parseMonth(
+			String value
+	) {
+
+		if (
+				value == null
+						|| !value.matches("\\d{6}")
+		) {
 			throw new IllegalArgumentException(
-					"month must be yyyyMM, for example 202607"
+					"month must be yyyyMM, for example 202608"
 			);
 		}
 
 		try {
+
 			return YearMonth.parse(
 					value,
 					MONTH_FORMATTER
 			);
+
 		} catch (DateTimeException e) {
+
 			throw new IllegalArgumentException(
 					"Invalid month: " + value,
 					e
@@ -208,35 +326,69 @@ public class UtilityEnergyDailyService {
 		}
 	}
 
+	// =========================================================
+	// REQUIRED STRING
+	// =========================================================
+
 	private String normalizeRequired(
 			String value,
 			String fieldName
 	) {
-		if (value == null || value.isBlank()) {
+
+		if (
+				value == null
+						|| value.isBlank()
+		) {
 			throw new IllegalArgumentException(
 					fieldName + " is required"
 			);
 		}
 
-		return normalizeFac(value);
+		return normalizeFac(
+				value
+		);
 	}
 
-	private String normalizeFac(String value) {
-		String fac = value.trim();
+	// =========================================================
+	// NORMALIZE FAC
+	// =========================================================
 
-		if (fac.equalsIgnoreCase("KVH")) {
+	private String normalizeFac(
+			String value
+	) {
+
+		final String fac =
+				value.trim();
+
+		if (
+				fac.equalsIgnoreCase(
+						"KVH"
+				)
+		) {
 			return "KVH";
 		}
 
-		if (fac.equalsIgnoreCase("FAC_A")) {
+		if (
+				fac.equalsIgnoreCase(
+						"FAC_A"
+				)
+		) {
 			return "Fac_A";
 		}
 
-		if (fac.equalsIgnoreCase("FAC_B")) {
+		if (
+				fac.equalsIgnoreCase(
+						"FAC_B"
+				)
+		) {
 			return "Fac_B";
 		}
 
-		if (fac.equalsIgnoreCase("FAC_C")) {
+		if (
+				fac.equalsIgnoreCase(
+						"FAC_C"
+				)
+		) {
 			return "Fac_C";
 		}
 

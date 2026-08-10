@@ -143,28 +143,7 @@ public class UtilityHourlyService {
 		);
 	}
 
-	// ============================================================
-	// OPTIONAL OLD ENDPOINT SUPPORT
-	// ============================================================
 
-	@Transactional(readOnly = true)
-	public List<HourlyCompareDto> getHourly(
-			String facId,
-			int hours,
-			String nameEn,
-			BigDecimal exchange,
-			BigDecimal sepzone
-	) {
-		final UtilityHourlyDashboardDto dashboard =
-				getHourlyDashboard(
-						facId,
-						nameEn,
-						exchange,
-						sepzone
-				);
-
-		return dashboard.electricity();
-	}
 
 	@Transactional(readOnly = true)
 	public List<HourlyTempCompareDto>
