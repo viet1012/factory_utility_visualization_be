@@ -18,7 +18,8 @@ import java.util.Set;
 @RequiredArgsConstructor
 public class UtilityHourlyService {
 
-	private static final String DEFAULT_FAC = "KVH";
+	private static final String DEFAULT_FAC =
+			"KVH";
 
 	private static final String DEFAULT_METRIC =
 			"Total Energy Consumption";
@@ -39,6 +40,7 @@ public class UtilityHourlyService {
 
 	private final UtilityHourlyRepo repo;
 
+
 	// ============================================================
 	// DASHBOARD BATCH
 	// ============================================================
@@ -50,8 +52,16 @@ public class UtilityHourlyService {
 			BigDecimal exchange,
 			BigDecimal sepzone
 	) {
-		final String fac = normalizeFac(facId);
-		final String metric = normalizeMetric(nameEn);
+
+		// ========================================================
+		// NORMALIZE INPUT
+		// ========================================================
+
+		final String fac =
+				normalizeFac(facId);
+
+		final String metric =
+				normalizeMetric(nameEn);
 
 		final BigDecimal safeExchange =
 				normalizeExchange(exchange);
@@ -59,14 +69,28 @@ public class UtilityHourlyService {
 		final BigDecimal safeSepzone =
 				normalizeSepzone(sepzone);
 
-		final LocalDate today = LocalDate.now();
-		final LocalDate yesterday = today.minusDays(1);
+
+		// ========================================================
+		// DATE RANGE
+		//
+		// yesterday 00:00
+		// ->
+		// tomorrow 00:00
+		// ========================================================
+
+		final LocalDate today =
+				LocalDate.now();
+
+		final LocalDate yesterday =
+				today.minusDays(1);
 
 		final LocalDateTime fromTime =
 				yesterday.atStartOfDay();
 
 		final LocalDateTime toTime =
-				today.plusDays(1).atStartOfDay();
+				today
+						.plusDays(1)
+						.atStartOfDay();
 
 		final LocalDateTime todayDate =
 				today.atStartOfDay();
@@ -74,8 +98,15 @@ public class UtilityHourlyService {
 		final LocalDateTime yesterdayDate =
 				yesterday.atStartOfDay();
 
+
+		// ========================================================
+		// 1. ELECTRICITY
+		//
+		// Không bao gồm Solar
+		// ========================================================
+
 		final List<HourlyEnergyCompareProjection>
-				energyRows =
+				electricityRows =
 				repo.findHourlyElectricityCompare(
 						fac,
 						fromTime,
@@ -87,6 +118,35 @@ public class UtilityHourlyService {
 						safeSepzone
 				);
 
+
+		// ========================================================
+		// 2. SOLAR
+		//
+		// Solar money:
+		//
+		// electricity rate * 83%
+		//
+		// Query repository đã xử lý phần -17%.
+		// ========================================================
+
+		final List<HourlyEnergyCompareProjection>
+				solarRows =
+				repo.findHourlySolarCompare(
+						fac,
+						fromTime,
+						toTime,
+						todayDate,
+						yesterdayDate,
+						metric,
+						safeExchange,
+						safeSepzone
+				);
+
+
+		// ========================================================
+		// 3. SENSOR
+		// ========================================================
+
 		final List<HourlySensorCompareProjection>
 				sensorRows =
 				repo.findHourlySensorCompare(
@@ -97,8 +157,26 @@ public class UtilityHourlyService {
 						yesterdayDate
 				);
 
+
+		// ========================================================
+		// MAPPING ELECTRICITY
+		// ========================================================
+
 		final List<HourlyCompareDto> electricity =
-				mapElectricity(energyRows);
+				mapEnergy(electricityRows);
+
+
+		// ========================================================
+		// MAPPING SOLAR
+		// ========================================================
+
+		final List<HourlyCompareDto> solar =
+				mapEnergy(solarRows);
+
+
+		// ========================================================
+		// MAPPING WATER / AIR
+		// ========================================================
 
 		final List<HourlyTempCompareDto> water =
 				new ArrayList<>();
@@ -106,44 +184,66 @@ public class UtilityHourlyService {
 		final List<HourlyTempCompareDto> air =
 				new ArrayList<>();
 
-		for (HourlySensorCompareProjection row : sensorRows) {
-			if (row.getScaleHour() == null) {
-				continue;
-			}
+		if (sensorRows != null) {
 
-			final HourlyTempCompareDto dto =
-					new HourlyTempCompareDto(
-							row.getScaleHour(),
-							row.getYesterday(),
-							row.getToday()
-					);
+			for (HourlySensorCompareProjection row : sensorRows) {
 
-			final String utilityType =
-					row.getUtilityType() == null
-							? ""
-							: row.getUtilityType()
-							.trim()
-							.toUpperCase(Locale.ROOT);
+				if (row == null
+						|| row.getScaleHour() == null) {
+					continue;
+				}
 
-			switch (utilityType) {
-				case "WATER" -> water.add(dto);
-				case "AIR" -> air.add(dto);
-				default -> {
-					// Ignore unknown utility type.
+				final HourlyTempCompareDto dto =
+						new HourlyTempCompareDto(
+								row.getScaleHour(),
+								row.getYesterday(),
+								row.getToday()
+						);
+
+				final String utilityType =
+						row.getUtilityType() == null
+								? ""
+								: row
+								.getUtilityType()
+								.trim()
+								.toUpperCase(Locale.ROOT);
+
+				switch (utilityType) {
+
+					case "WATER" ->
+							water.add(dto);
+
+					case "AIR" ->
+							air.add(dto);
+
+					default -> {
+						// Ignore unknown utility type.
+					}
 				}
 			}
 		}
 
+
+		// ========================================================
+		// RESPONSE
+		// ========================================================
+
 		return new UtilityHourlyDashboardDto(
 				fac,
 				LocalDateTime.now(),
+
 				List.copyOf(electricity),
+				List.copyOf(solar),
+
 				List.copyOf(water),
 				List.copyOf(air)
 		);
 	}
 
 
+	// ============================================================
+	// SENSOR ONLY
+	// ============================================================
 
 	@Transactional(readOnly = true)
 	public List<HourlyTempCompareDto>
@@ -151,6 +251,7 @@ public class UtilityHourlyService {
 			String facId,
 			String type
 	) {
+
 		final String normalizedType =
 				normalizeSensorType(type);
 
@@ -163,72 +264,149 @@ public class UtilityHourlyService {
 				);
 
 		return switch (normalizedType) {
-			case "AIR" -> dashboard.air();
-			default -> dashboard.water();
+
+			case "AIR" ->
+					dashboard.air();
+
+			default ->
+					dashboard.water();
 		};
 	}
 
+
 	// ============================================================
-	// MAPPING
+	// MAPPING ENERGY
+	//
+	// Dùng chung cho:
+	// - electricity
+	// - solar
 	// ============================================================
 
-	private List<HourlyCompareDto> mapElectricity(
+	private List<HourlyCompareDto> mapEnergy(
 			List<HourlyEnergyCompareProjection> rows
 	) {
+
 		if (rows == null || rows.isEmpty()) {
 			return List.of();
 		}
 
 		return rows.stream()
-				.filter(row -> row.getScaleHour() != null)
-				.map(row -> new HourlyCompareDto(
-						row.getScaleHour(),
-						row.getYesterday(),
-						row.getToday(),
-						row.getYesterdayUsd(),
-						row.getTodayUsd()
-				))
+
+				.filter(row ->
+						row != null
+								&& row.getScaleHour() != null
+				)
+
+				.map(row ->
+						new HourlyCompareDto(
+
+								row.getScaleHour(),
+
+								zeroIfNull(
+										row.getYesterday()
+								),
+
+								zeroIfNull(
+										row.getToday()
+								),
+
+								zeroIfNull(
+										row.getYesterdayUsd()
+								),
+
+								zeroIfNull(
+										row.getTodayUsd()
+								)
+						)
+				)
+
 				.toList();
 	}
 
+
 	// ============================================================
-	// NORMALIZATION
+	// NULL -> ZERO
 	// ============================================================
 
-	private String normalizeFac(String facId) {
-		if (facId == null || facId.isBlank()) {
+	private BigDecimal zeroIfNull(
+			BigDecimal value
+	) {
+		return value == null
+				? BigDecimal.ZERO
+				: value;
+	}
+
+
+	// ============================================================
+	// FAC NORMALIZATION
+	// ============================================================
+
+	private String normalizeFac(
+			String facId
+	) {
+
+		if (facId == null
+				|| facId.isBlank()) {
 			return DEFAULT_FAC;
 		}
 
-		final String normalized = facId.trim();
+		final String input =
+				facId.trim();
 
-		if (!ALLOWED_FACS.contains(normalized)) {
-			throw new IllegalArgumentException(
-					"Invalid facId: " + normalized
-			);
-		}
+		return ALLOWED_FACS.stream()
 
-		return normalized;
+				.filter(fac ->
+						fac.equalsIgnoreCase(input)
+				)
+
+				.findFirst()
+
+				.orElseThrow(() ->
+						new IllegalArgumentException(
+								"Invalid facId: " + input
+						)
+				);
 	}
 
-	private String normalizeMetric(String nameEn) {
-		if (nameEn == null || nameEn.isBlank()) {
+
+	// ============================================================
+	// METRIC NORMALIZATION
+	// ============================================================
+
+	private String normalizeMetric(
+			String nameEn
+	) {
+
+		if (nameEn == null
+				|| nameEn.isBlank()) {
 			return DEFAULT_METRIC;
 		}
 
 		return nameEn.trim();
 	}
 
-	private String normalizeSensorType(String type) {
-		if (type == null || type.isBlank()) {
+
+	// ============================================================
+	// SENSOR TYPE
+	// ============================================================
+
+	private String normalizeSensorType(
+			String type
+	) {
+
+		if (type == null
+				|| type.isBlank()) {
 			return "WATER";
 		}
 
 		final String normalized =
-				type.trim().toUpperCase(Locale.ROOT);
+				type
+						.trim()
+						.toUpperCase(Locale.ROOT);
 
 		if (!normalized.equals("WATER")
 				&& !normalized.equals("AIR")) {
+
 			throw new IllegalArgumentException(
 					"type must be WATER or AIR"
 			);
@@ -237,22 +415,40 @@ public class UtilityHourlyService {
 		return normalized;
 	}
 
+
+	// ============================================================
+	// EXCHANGE
+	// ============================================================
+
 	private BigDecimal normalizeExchange(
 			BigDecimal exchange
 	) {
+
 		if (exchange == null
-				|| exchange.compareTo(BigDecimal.ZERO) <= 0) {
+				|| exchange.compareTo(
+				BigDecimal.ZERO
+		) <= 0) {
+
 			return DEFAULT_EXCHANGE;
 		}
 
 		return exchange;
 	}
 
+
+	// ============================================================
+	// SEPZONE
+	// ============================================================
+
 	private BigDecimal normalizeSepzone(
 			BigDecimal sepzone
 	) {
+
 		if (sepzone == null
-				|| sepzone.compareTo(BigDecimal.ZERO) <= 0) {
+				|| sepzone.compareTo(
+				BigDecimal.ZERO
+		) <= 0) {
+
 			return DEFAULT_SEPZONE;
 		}
 
