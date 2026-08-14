@@ -18,37 +18,47 @@ public interface UtilityDailyRepo extends JpaRepository<DummyEntity, Long> {
 
 	@Query(value = """
         WITH DeviceMap AS (
-            SELECT DISTINCT
+            SELECT
                 ch.box_device_id,
-                sc.fac,
 
-                CASE
-                    WHEN UPPER(
-                        LTRIM(
-                            RTRIM(
-                                ISNULL(ch.box_id, '')
+                MAX(sc.fac) AS fac,
+
+                MAX(
+                    CASE
+                        WHEN UPPER(
+                            LTRIM(
+                                RTRIM(
+                                    ISNULL(ch.box_id, '')
+                                )
                             )
-                        )
-                    ) = 'SOLAR'
-                    THEN 1
-                    ELSE 0
-                END AS is_solar
+                        ) = 'SOLAR'
+                        THEN 1
+                        ELSE 0
+                    END
+                ) AS is_solar
 
             FROM dbo.F2_Utility_Scada_Channel ch
 
             INNER JOIN dbo.F2_Utility_Scada sc
                 ON sc.scada_id = ch.scada_id
+
+            GROUP BY
+                ch.box_device_id
         ),
 
         EnergyRaw AS (
             SELECT
-                CAST(hi.pick_at AS DATE) AS record_date,
+                CAST(
+                    hi.pick_at AS DATE
+                ) AS record_date,
+
+                hi.box_device_id,
 
                 dm.is_solar,
 
                 CAST(
                     hi.[value]
-                    AS DECIMAL(19, 6)
+                    AS DECIMAL(19,6)
                 ) AS energy_value
 
             FROM dbo.F2_Utility_Para_History_Main hi
@@ -60,35 +70,44 @@ public interface UtilityDailyRepo extends JpaRepository<DummyEntity, Long> {
             INNER JOIN DeviceMap dm
                 ON dm.box_device_id = hi.box_device_id
 
-            WHERE pa.name_en = 'Total Energy Consumption'
+            WHERE
+                pa.name_en = 'Total Energy Consumption'
 
-              AND hi.pick_at >= :fromTime
-              AND hi.pick_at < :toTime
+                AND hi.pick_at >= :fromTime
+                AND hi.pick_at < :toTime
 
-              AND hi.[value] > 0
+                AND hi.[value] > 0
 
-              AND (
+                AND (
                     UPPER(:fac) = 'KVH'
                     OR UPPER(dm.fac) = UPPER(:fac)
-              )
+                )
         ),
 
         DailyEnergy AS (
             SELECT
                 record_date,
 
+                -- =========================================
+                -- TOTAL
+                -- Meter thường đã bao gồm phần Solar
+                -- =========================================
                 SUM(
                     CASE
                         WHEN is_solar = 0
-                            THEN energy_value
+                        THEN energy_value
                         ELSE 0
                     END
-                ) AS gross_value,
+                ) AS total_value,
 
+                -- =========================================
+                -- SOLAR hiện tại
+                -- SUM tất cả meter có box_id = SOLAR
+                -- =========================================
                 SUM(
                     CASE
                         WHEN is_solar = 1
-                            THEN energy_value
+                        THEN energy_value
                         ELSE 0
                     END
                 ) AS solar_value
@@ -102,35 +121,45 @@ public interface UtilityDailyRepo extends JpaRepository<DummyEntity, Long> {
         SELECT
             record_date AS recordDate,
 
+            -- =========================================
+            -- GRID = TOTAL - SOLAR
+            -- =========================================
             CAST(
                 CASE
-                    WHEN COALESCE(gross_value, 0)
+                    WHEN COALESCE(total_value, 0)
                          >= COALESCE(solar_value, 0)
 
                     THEN
-                        COALESCE(gross_value, 0)
+                        COALESCE(total_value, 0)
                         -
                         COALESCE(solar_value, 0)
 
                     ELSE 0
                 END
-                AS DECIMAL(19, 4)
+                AS DECIMAL(19,4)
             ) AS gridKwh,
 
+            -- =========================================
+            -- SOLAR
+            -- =========================================
             CAST(
                 COALESCE(
                     solar_value,
                     0
                 )
-                AS DECIMAL(19, 4)
+                AS DECIMAL(19,4)
             ) AS solarKwh,
 
+            -- =========================================
+            -- TOTAL
+            -- Đã bao gồm Solar
+            -- =========================================
             CAST(
                 COALESCE(
-                    gross_value,
+                    total_value,
                     0
                 )
-                AS DECIMAL(19, 4)
+                AS DECIMAL(19,4)
             ) AS totalKwh
 
         FROM DailyEnergy
@@ -140,225 +169,207 @@ public interface UtilityDailyRepo extends JpaRepository<DummyEntity, Long> {
         """, nativeQuery = true)
 	List<UtilityDailyElectricityStackProjection>
 	getDailyElectricityStack(
-			@Param("fac") String fac,
-			@Param("fromTime") LocalDateTime fromTime,
-			@Param("toTime") LocalDateTime toTime
+
+			@Param("fac")
+			String fac,
+
+			@Param("fromTime")
+			LocalDateTime fromTime,
+
+			@Param("toTime")
+			LocalDateTime toTime
 	);
 
 
-
 	@Query(value = """
-        /* =====================================================
-         * ELECTRICITY
-         * KHÔNG LẤY SOLAR
-         * ===================================================== */
-        SELECT
-            'ENERGY' AS utilityType,
-            CAST(hi.pick_at AS DATE) AS recordDate,
+    WITH ParaDedup AS (
+        SELECT DISTINCT
+            pa.box_device_id,
+            pa.plc_address,
+            pa.name_en
 
-            CAST(
-                SUM(
-                    CAST(hi.[value] AS DECIMAL(19, 4))
-                )
-                AS DECIMAL(19, 4)
-            ) AS [value]
+        FROM dbo.F2_Utility_Para pa
 
-        FROM dbo.F2_Utility_Para_History_Main hi
-
-        INNER JOIN dbo.F2_Utility_Para pa
-            ON pa.box_device_id = hi.box_device_id
-           AND pa.plc_address = hi.plc_address
-           AND pa.name_en = 'Total Energy Consumption'
-
-        WHERE hi.pick_at >= :fromTime
-          AND hi.pick_at < :toTime
-          AND hi.[value] > 0
-
-          AND EXISTS (
-              SELECT 1
-
-              FROM dbo.F2_Utility_Scada_Channel ch
-
-              INNER JOIN dbo.F2_Utility_Scada sc
-                  ON sc.scada_id = ch.scada_id
-
-              WHERE ch.box_device_id = hi.box_device_id
-
-                -- ==============================
-                -- KHÔNG LẤY SOLAR
-                -- ==============================
-                AND UPPER(
-                    LTRIM(
-                        RTRIM(
-                            ISNULL(ch.box_id, '')
-                        )
-                    )
-                ) <> 'SOLAR'
-
-                AND (
-                    :fac = 'KVH'
-                    OR sc.fac = :fac
-                )
-          )
-
-        GROUP BY
-            CAST(hi.pick_at AS DATE)
-
-        UNION ALL
-
-        /* =====================================================
-         * WATER
-         * ===================================================== */
-        SELECT
-            'WATER' AS utilityType,
-            CAST(hi.pick_at AS DATE) AS recordDate,
-
-            CAST(
-                AVG(
-                    CAST(hi.[value] AS DECIMAL(19, 4))
-                )
-                AS DECIMAL(19, 4)
-            ) AS [value]
-
-        FROM dbo.F2_Utility_Para_History_Main hi
-
-        INNER JOIN dbo.F2_Utility_Para pa
-            ON pa.box_device_id = hi.box_device_id
-           AND pa.plc_address = hi.plc_address
-           AND pa.name_en LIKE 'Cooling tank%'
-
-        WHERE hi.pick_at >= :fromTime
-          AND hi.pick_at < :toTime
-          AND hi.[value] > 0
-
-          AND EXISTS (
-              SELECT 1
-
-              FROM dbo.F2_Utility_Scada_Channel ch
-
-              INNER JOIN dbo.F2_Utility_Scada sc
-                  ON sc.scada_id = ch.scada_id
-
-              WHERE ch.box_device_id = hi.box_device_id
-
-                AND (
-                    :fac = 'KVH'
-                    OR sc.fac = :fac
-                )
-          )
-
-        GROUP BY
-            CAST(hi.pick_at AS DATE)
-
-        UNION ALL
-
-        /* =====================================================
-         * AIR
-         * Fac_A dùng AIR của Fac_B
-         * ===================================================== */
-        SELECT
-            'AIR' AS utilityType,
-            CAST(hi.pick_at AS DATE) AS recordDate,
-
-            CAST(
-                AVG(
-                    CAST(hi.[value] AS DECIMAL(19, 4))
-                )
-                AS DECIMAL(19, 4)
-            ) AS [value]
-
-        FROM dbo.F2_Utility_Para_History_Main hi
-
-        INNER JOIN dbo.F2_Utility_Para pa
-            ON pa.box_device_id = hi.box_device_id
-           AND pa.plc_address = hi.plc_address
-           AND pa.name_en =
+        WHERE
+               pa.name_en LIKE 'Cooling tank%'
+            OR pa.name_en =
                'Sensor compressed air pressure Data'
+    ),
 
-        WHERE hi.pick_at >= :fromTime
-          AND hi.pick_at < :toTime
-          AND hi.[value] > 0
+    DeviceMap AS (
+        SELECT
+            ch.box_device_id,
 
-          AND EXISTS (
-              SELECT 1
+            MAX(
+                CASE
+                    WHEN UPPER(sc.fac) = UPPER(:fac)
+                    THEN 1
+                    ELSE 0
+                END
+            ) AS same_fac,
 
-              FROM dbo.F2_Utility_Scada_Channel ch
+            MAX(
+                CASE
+                    WHEN UPPER(:fac) = 'FAC_A'
+                     AND UPPER(sc.fac) = 'FAC_B'
+                    THEN 1
+                    ELSE 0
+                END
+            ) AS air_fac_match
 
-              INNER JOIN dbo.F2_Utility_Scada sc
-                  ON sc.scada_id = ch.scada_id
+        FROM dbo.F2_Utility_Scada_Channel ch
 
-              WHERE ch.box_device_id = hi.box_device_id
-
-                AND (
-                    :fac = 'KVH'
-
-                    OR (
-                        :fac = 'Fac_A'
-                        AND sc.fac = 'Fac_B'
-                    )
-
-                    OR (
-                        :fac <> 'Fac_A'
-                        AND sc.fac = :fac
-                    )
-                )
-          )
+        INNER JOIN dbo.F2_Utility_Scada sc
+            ON sc.scada_id = ch.scada_id
 
         GROUP BY
-            CAST(hi.pick_at AS DATE)
+            ch.box_device_id
+    ),
 
-        ORDER BY
-            recordDate,
-            utilityType
-        """, nativeQuery = true)
-	List<UtilityDailyDashboardProjection>
-	getDailyDashboardByMonth(
+    RawData AS (
+        SELECT
+            CAST(
+                hi.pick_at
+                AS DATE
+            ) AS record_date,
+
+            pa.name_en,
+
+            CAST(
+                hi.[value]
+                AS DECIMAL(19,4)
+            ) AS value,
+
+            dm.same_fac,
+            dm.air_fac_match
+
+        FROM dbo.F2_Utility_Para_History_Main hi
+
+        INNER JOIN ParaDedup pa
+            ON pa.box_device_id = hi.box_device_id
+           AND pa.plc_address = hi.plc_address
+
+        INNER JOIN DeviceMap dm
+            ON dm.box_device_id = hi.box_device_id
+
+        WHERE
+            hi.pick_at >= :fromTime
+            AND hi.pick_at < :toTime
+
+            AND hi.[value] > 0
+    )
+
+    SELECT
+        'WATER' AS utilityType,
+
+        record_date AS recordDate,
+
+        CAST(
+            AVG(value)
+            AS DECIMAL(19,4)
+        ) AS [value]
+
+    FROM RawData
+
+    WHERE
+        name_en LIKE 'Cooling tank%'
+
+        AND (
+            UPPER(:fac) = 'KVH'
+            OR same_fac = 1
+        )
+
+    GROUP BY
+        record_date
+
+
+    UNION ALL
+
+
+    SELECT
+        'AIR' AS utilityType,
+
+        record_date AS recordDate,
+
+        CAST(
+            AVG(value)
+            AS DECIMAL(19,4)
+        ) AS [value]
+
+    FROM RawData
+
+    WHERE
+        name_en =
+            'Sensor compressed air pressure Data'
+
+        AND (
+            UPPER(:fac) = 'KVH'
+
+            OR (
+                UPPER(:fac) = 'FAC_A'
+                AND air_fac_match = 1
+            )
+
+            OR (
+                UPPER(:fac) <> 'FAC_A'
+                AND same_fac = 1
+            )
+        )
+
+    GROUP BY
+        record_date
+
+    ORDER BY
+        recordDate,
+        utilityType
+    """, nativeQuery = true)
+	List<UtilityDailyDashboardProjection> getDailyDashboardByMonth(
 			@Param("fac") String fac,
 			@Param("fromTime") LocalDateTime fromTime,
 			@Param("toTime") LocalDateTime toTime
 	);
 
 	@Query(value = """
-        SELECT
-            eh.RecordDate AS recordDate,
-
-            CAST(
-                SUM(
-                    CAST(eh.EnergyValue AS DECIMAL(19, 6))
-                )
-                AS DECIMAL(19, 4)
-            ) AS energyKwh,
-
-            CAST(
-                SUM(
-                    CAST(eh.CostUsd AS DECIMAL(19, 6))
-                )
-                AS DECIMAL(19, 4)
-            ) AS costUsd
-
-        FROM [F2Database].[dbo].[F2_Utility_Energy_Hourly] eh
-
-        WHERE eh.RecordDate >= CAST(:fromTime AS DATE)
-          AND eh.RecordDate < CAST(:toTime AS DATE)
-
-          AND UPPER(LTRIM(RTRIM(eh.Fac))) =
-              UPPER(LTRIM(RTRIM(:fac)))
-
-          AND UPPER(LTRIM(RTRIM(eh.NameEn))) =
-              'TOTAL ENERGY CONSUMPTION'
-
-          AND eh.EnergyValue IS NOT NULL
-          AND eh.EnergyValue >= 0
-
-          AND eh.CostUsd IS NOT NULL
-          AND eh.CostUsd >= 0
-
-        GROUP BY
-            eh.RecordDate
-
-        ORDER BY
-            eh.RecordDate
-        """, nativeQuery = true)
+			SELECT
+			    eh.RecordDate AS recordDate,
+			
+			    CAST(
+			        SUM(
+			            CAST(eh.EnergyValue AS DECIMAL(19, 6))
+			        )
+			        AS DECIMAL(19, 4)
+			    ) AS energyKwh,
+			
+			    CAST(
+			        SUM(
+			            CAST(eh.CostUsd AS DECIMAL(19, 6))
+			        )
+			        AS DECIMAL(19, 4)
+			    ) AS costUsd
+			
+			FROM [F2Database].[dbo].[F2_Utility_Energy_Hourly] eh
+			
+			WHERE eh.RecordDate >= CAST(:fromTime AS DATE)
+			  AND eh.RecordDate < CAST(:toTime AS DATE)
+			
+			  AND UPPER(LTRIM(RTRIM(eh.Fac))) =
+			      UPPER(LTRIM(RTRIM(:fac)))
+			
+			  AND UPPER(LTRIM(RTRIM(eh.NameEn))) =
+			      'TOTAL ENERGY CONSUMPTION'
+			
+			  AND eh.EnergyValue IS NOT NULL
+			  AND eh.EnergyValue >= 0
+			
+			  AND eh.CostUsd IS NOT NULL
+			  AND eh.CostUsd >= 0
+			
+			GROUP BY
+			    eh.RecordDate
+			
+			ORDER BY
+			    eh.RecordDate
+			""", nativeQuery = true)
 	List<UtilityDailyEnergyCostProjection> getDailyEnergyAndCost(
 			@Param("fac") String fac,
 			@Param("fromTime") LocalDateTime fromTime,
