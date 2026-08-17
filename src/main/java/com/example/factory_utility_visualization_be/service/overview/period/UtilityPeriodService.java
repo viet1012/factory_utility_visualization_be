@@ -14,7 +14,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.time.*;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.*;
 
 @Service
@@ -120,14 +122,20 @@ public class UtilityPeriodService {
 		// Không query tương lai.
 		// ============================================================
 
+//		final UtilityData current =
+//				loadCurrentData(
+//						utilityType,
+//						fac,
+//						comparisonRange.currentFrom(),
+//						comparisonRange.currentTo()
+//				);
 		final UtilityData current =
-				loadCurrentData(
+				loadCurrentDataOptimized(
 						utilityType,
 						fac,
 						comparisonRange.currentFrom(),
 						comparisonRange.currentTo()
 				);
-
 		// ============================================================
 		// 6. PREVIOUS SAME PROGRESS
 		// ============================================================
@@ -256,6 +264,7 @@ public class UtilityPeriodService {
 				heatmap.grandTotal()
 		);
 	}
+
 	private PeriodComparisonRange resolvePeriodComparisonRange(
 			DateRange displayRange,
 			String period
@@ -308,17 +317,13 @@ public class UtilityPeriodService {
 		if ("WEEK".equals(period)) {
 
 			return new PeriodComparisonRange(
-
 					displayFrom,
-
 					currentTo,
 
-					displayFrom.minusWeeks(1),
-
-					currentTo.minusWeeks(1)
+					displayFrom.minusDays(7),
+					currentTo.minusDays(7)
 			);
 		}
-
 		// ============================================================
 		// MONTH
 		// ============================================================
@@ -450,11 +455,251 @@ public class UtilityPeriodService {
 		};
 	}
 
-	// ============================================================
-	// LOAD TREND
-	//
-	// Previous period chỉ cần Trend.
-	// ============================================================
+
+	private UtilityData loadCurrentDataOptimized(
+			String utilityType,
+			String fac,
+			LocalDateTime fromTime,
+			LocalDateTime toTime
+	) {
+
+		// ============================================================
+		// ELECTRICITY
+		//
+		// BoxDaily đã đủ dữ liệu để dựng:
+		//
+		// - Trend
+		// - ByBox
+		// - Heatmap
+		//
+		// => chỉ scan History 1 lần cho current period.
+		// ============================================================
+
+		if ("ELECTRICITY".equals(utilityType)) {
+
+			final List<UtilityPeriodBoxDailyProjection> boxDailyRows =
+					repo.getElectricityBoxDaily(
+							fac,
+							fromTime,
+							toTime
+					);
+
+			return buildElectricityUtilityData(
+					boxDailyRows
+			);
+		}
+
+		// ============================================================
+		// WATER / AIR
+		//
+		// Không derive từ BoxDaily vì AVG(AVG(...)) có thể sai.
+		// Giữ query chuyên biệt.
+		// ============================================================
+
+		return switch (utilityType) {
+
+			case "WATER" -> new UtilityData(
+
+					repo.getWaterTrend(
+							fac,
+							fromTime,
+							toTime
+					),
+
+					repo.getWaterByBox(
+							fac,
+							fromTime,
+							toTime
+					),
+
+					repo.getWaterBoxDaily(
+							fac,
+							fromTime,
+							toTime
+					)
+			);
+
+			case "AIR" -> new UtilityData(
+
+					repo.getAirTrend(
+							fac,
+							fromTime,
+							toTime
+					),
+
+					repo.getAirByBox(
+							fac,
+							fromTime,
+							toTime
+					),
+
+					repo.getAirBoxDaily(
+							fac,
+							fromTime,
+							toTime
+					)
+			);
+
+			default -> throw new IllegalArgumentException(
+					"Unsupported utility type: "
+							+ utilityType
+			);
+		};
+	}
+
+	private UtilityData buildElectricityUtilityData(
+			List<UtilityPeriodBoxDailyProjection> source
+	) {
+
+		if (source == null ||
+				source.isEmpty()) {
+
+			return new UtilityData(
+					List.of(),
+					List.of(),
+					List.of()
+			);
+		}
+
+		// ============================================================
+		// 1. TREND
+		//
+		// date -> SUM tất cả device
+		// ============================================================
+
+		final Map<LocalDate, BigDecimal> dailyTotals =
+				new HashMap<>();
+
+		// ============================================================
+		// 2. BY BOX
+		//
+		// boxId -> SUM toàn period
+		// ============================================================
+
+		final Map<String, BigDecimal> boxTotals =
+				new HashMap<>();
+
+		final Map<String, String> boxDeviceIds =
+				new HashMap<>();
+
+		for (UtilityPeriodBoxDailyProjection row : source) {
+
+			if (row == null) {
+				continue;
+			}
+
+			final LocalDate recordDate =
+					row.getRecordDate();
+
+			final String boxId =
+					normalizeBoxId(
+							row.getBoxId()
+					);
+
+			final BigDecimal value =
+					zero(
+							row.getValue()
+					);
+
+			// ==========================================================
+			// TREND
+			// ==========================================================
+
+			if (recordDate != null) {
+
+				dailyTotals.merge(
+						recordDate,
+						value,
+						BigDecimal::add
+				);
+			}
+
+			// ==========================================================
+			// BY BOX
+			// ==========================================================
+
+			if (boxId != null) {
+
+				boxTotals.merge(
+						boxId,
+						value,
+						BigDecimal::add
+				);
+
+				if (row.getBoxDeviceId() != null) {
+					boxDeviceIds.putIfAbsent(
+							boxId,
+							row.getBoxDeviceId()
+					);
+				}
+			}
+		}
+
+		// ============================================================
+		// TREND PROJECTION
+		// ============================================================
+
+		final List<UtilityPeriodTrendProjection> trendRows =
+				dailyTotals
+						.entrySet()
+						.stream()
+
+						.sorted(
+								Map.Entry.comparingByKey()
+						)
+
+						.map(entry ->
+								new SimpleTrendProjection(
+										entry.getKey(),
+										entry.getValue(),
+										"kWh"
+								)
+						)
+
+						.map(
+								UtilityPeriodTrendProjection.class::cast
+						)
+
+						.toList();
+
+		// ============================================================
+		// BY BOX PROJECTION
+		// ============================================================
+
+		final List<UtilityPeriodBoxProjection> boxRows =
+				boxTotals
+						.entrySet()
+						.stream()
+
+						.sorted(
+								Map.Entry
+										.<String, BigDecimal>
+												comparingByValue()
+										.reversed()
+						)
+
+						.map(entry ->
+								new SimpleBoxProjection(
+										boxDeviceIds.get(
+												entry.getKey()
+										),
+										entry.getKey(),
+										entry.getValue()
+								)
+						)
+
+						.map(
+								UtilityPeriodBoxProjection.class::cast
+						)
+
+						.toList();
+
+		return new UtilityData(
+				trendRows,
+				boxRows,
+				List.copyOf(source)
+		);
+	}
 
 	private List<UtilityPeriodTrendProjection> loadTrend(
 			String utilityType,
@@ -489,10 +734,6 @@ public class UtilityPeriodService {
 			);
 		};
 	}
-
-	// ============================================================
-	// BUILD TREND
-	// ============================================================
 
 	private List<UtilityPeriodTrendDto> buildTrend(
 			List<UtilityPeriodTrendProjection> source
@@ -534,13 +775,10 @@ public class UtilityPeriodService {
 
 				.toList();
 	}
-
 	// ============================================================
-	// AGGREGATE TREND
+	// LOAD TREND
 	//
-	// Electricity -> SUM
-	//
-	// Water/Air -> AVG
+	// Previous period chỉ cần Trend.
 	// ============================================================
 
 	private BigDecimal aggregateTrend(
@@ -580,7 +818,7 @@ public class UtilityPeriodService {
 	}
 
 	// ============================================================
-	// BY BOX
+	// BUILD TREND
 	// ============================================================
 
 	private List<UtilityPeriodBoxDto> buildByBox(
@@ -677,7 +915,11 @@ public class UtilityPeriodService {
 	}
 
 	// ============================================================
-	// HEATMAP
+	// AGGREGATE TREND
+	//
+	// Electricity -> SUM
+	//
+	// Water/Air -> AVG
 	// ============================================================
 
 	private HeatmapResult buildHeatmap(
@@ -704,15 +946,7 @@ public class UtilityPeriodService {
 	}
 
 	// ============================================================
-	// WEEK HEATMAP
-	//
-	// Repository đã aggregate:
-	//
-	// Electricity:
-	// box/day -> SUM
-	//
-	// Water/Air:
-	// box/day -> AVG
+	// BY BOX
 	// ============================================================
 
 	private HeatmapResult buildWeeklyHeatmap(
@@ -915,16 +1149,7 @@ public class UtilityPeriodService {
 	}
 
 	// ============================================================
-	// MONTH HEATMAP
-	//
-	// W1 = 01 - 07
-	// W2 = 08 - 14
-	// W3 = 15 - 21
-	// W4 = 22 - 28
-	// W5 = 29 - END
-	//
-	// Electricity -> SUM
-	// Water/Air   -> AVG
+	// HEATMAP
 	// ============================================================
 
 	private HeatmapResult buildMonthlyHeatmap(
@@ -1184,10 +1409,15 @@ public class UtilityPeriodService {
 	}
 
 	// ============================================================
-	// CALCULATE HEATMAP COLUMNS
+	// WEEK HEATMAP
 	//
-	// Electricity -> SUM box
-	// Water/Air   -> AVG box
+	// Repository đã aggregate:
+	//
+	// Electricity:
+	// box/day -> SUM
+	//
+	// Water/Air:
+	// box/day -> AVG
 	// ============================================================
 
 	private List<BigDecimal> calculateColumns(
@@ -1259,7 +1489,16 @@ public class UtilityPeriodService {
 	}
 
 	// ============================================================
-	// AGGREGATE
+	// MONTH HEATMAP
+	//
+	// W1 = 01 - 07
+	// W2 = 08 - 14
+	// W3 = 15 - 21
+	// W4 = 22 - 28
+	// W5 = 29 - END
+	//
+	// Electricity -> SUM
+	// Water/Air   -> AVG
 	// ============================================================
 
 	private BigDecimal aggregateValues(
@@ -1307,10 +1546,10 @@ public class UtilityPeriodService {
 	}
 
 	// ============================================================
-	// AGGREGATE IGNORE ZERO
+	// CALCULATE HEATMAP COLUMNS
 	//
-	// Zero trong Heatmap có thể là "không có dữ liệu".
-	// Không nên kéo AVG Water/Air xuống.
+	// Electricity -> SUM box
+	// Water/Air   -> AVG box
 	// ============================================================
 
 	private BigDecimal aggregateNonZeroValues(
@@ -1348,7 +1587,7 @@ public class UtilityPeriodService {
 	}
 
 	// ============================================================
-	// SORT BOX DESC
+	// AGGREGATE
 	// ============================================================
 
 	private List<String> sortBoxesByTotal(
@@ -1389,7 +1628,10 @@ public class UtilityPeriodService {
 	}
 
 	// ============================================================
-	// CHANGE %
+	// AGGREGATE IGNORE ZERO
+	//
+	// Zero trong Heatmap có thể là "không có dữ liệu".
+	// Không nên kéo AVG Water/Air xuống.
 	// ============================================================
 
 	private BigDecimal calculateChangePercent(
@@ -1425,8 +1667,9 @@ public class UtilityPeriodService {
 						RoundingMode.HALF_UP
 				);
 	}
+
 	// ============================================================
-	// RANGE
+	// SORT BOX DESC
 	// ============================================================
 
 	private DateRange resolveRange(
@@ -1434,36 +1677,49 @@ public class UtilityPeriodService {
 			String period
 	) {
 
+		// ============================================================
+		// MONTH
+		// ============================================================
+
 		if ("MONTH".equals(period)) {
 
 			final LocalDate from =
-					date.withDayOfMonth(
-							1
-					);
+					date.withDayOfMonth(1);
 
 			return new DateRange(
 					from,
-					from.plusMonths(
-							1
-					)
+					from.plusMonths(1)
 			);
 		}
 
-		final LocalDate monday =
-				date.with(
-						DayOfWeek.MONDAY
-				);
+		// ============================================================
+		// WEEK = 7 DAYS
+		//
+		// date là ngày cuối.
+		//
+		// Ví dụ:
+		// date = 2026-08-17
+		//
+		// from        = 2026-08-11
+		// toExclusive = 2026-08-18
+		//
+		// => 11 -> 17 = đúng 7 ngày
+		// ============================================================
+
+		final LocalDate from =
+				date.minusDays(6);
+
+		final LocalDate toExclusive =
+				date.plusDays(1);
 
 		return new DateRange(
-				monday,
-				monday.plusDays(
-						7
-				)
+				from,
+				toExclusive
 		);
 	}
 
 	// ============================================================
-	// PREVIOUS RANGE
+	// CHANGE %
 	// ============================================================
 
 	private DateRange resolvePreviousRange(
@@ -1496,9 +1752,8 @@ public class UtilityPeriodService {
 				current.from()
 		);
 	}
-
 	// ============================================================
-	// PARSE DATE
+	// RANGE
 	// ============================================================
 
 	private LocalDate parseDate(
@@ -1564,7 +1819,7 @@ public class UtilityPeriodService {
 	}
 
 	// ============================================================
-	// NORMALIZE FAC
+	// PREVIOUS RANGE
 	// ============================================================
 
 	private String normalizeFac(
@@ -1608,7 +1863,7 @@ public class UtilityPeriodService {
 	}
 
 	// ============================================================
-	// NORMALIZE TYPE
+	// PARSE DATE
 	// ============================================================
 
 	private String normalizeType(
@@ -1645,7 +1900,7 @@ public class UtilityPeriodService {
 	}
 
 	// ============================================================
-	// NORMALIZE PERIOD
+	// NORMALIZE FAC
 	// ============================================================
 
 	private String normalizePeriod(
@@ -1677,7 +1932,7 @@ public class UtilityPeriodService {
 	}
 
 	// ============================================================
-	// BOX ID
+	// NORMALIZE TYPE
 	// ============================================================
 
 	private String normalizeBoxId(
@@ -1697,7 +1952,7 @@ public class UtilityPeriodService {
 	}
 
 	// ============================================================
-	// DD/MM
+	// NORMALIZE PERIOD
 	// ============================================================
 
 	private String formatDayMonth(
@@ -1716,24 +1971,8 @@ public class UtilityPeriodService {
 	}
 
 	// ============================================================
-	// UNIT FALLBACK
-	//
-	// Tạm thời thôi.
-	// Phần dưới mình chỉ cách lấy từ DB.
+	// BOX ID
 	// ============================================================
-
-// ============================================================
-// RESOLVE UNIT FROM DATABASE
-//
-// Unit lấy trực tiếp từ UtilityPeriodTrendProjection.
-//
-// Ví dụ:
-// Electricity -> kWh
-// Water       -> °C
-// Air         -> bar
-//
-// Không hard-code trong service.
-// ============================================================
 
 	private String resolveUnit(
 			List<UtilityPeriodTrendProjection> rows
@@ -1768,7 +2007,7 @@ public class UtilityPeriodService {
 	}
 
 	// ============================================================
-	// NULL -> ZERO
+	// DD/MM
 	// ============================================================
 
 	private BigDecimal zero(
@@ -1778,6 +2017,74 @@ public class UtilityPeriodService {
 		return value == null
 				? BigDecimal.ZERO
 				: value;
+	}
+
+	// ============================================================
+	// UNIT FALLBACK
+	//
+	// Tạm thời thôi.
+	// Phần dưới mình chỉ cách lấy từ DB.
+	// ============================================================
+
+// ============================================================
+// RESOLVE UNIT FROM DATABASE
+//
+// Unit lấy trực tiếp từ UtilityPeriodTrendProjection.
+//
+// Ví dụ:
+// Electricity -> kWh
+// Water       -> °C
+// Air         -> bar
+//
+// Không hard-code trong service.
+// ============================================================
+
+	private record SimpleTrendProjection(
+			LocalDate recordDate,
+			BigDecimal value,
+			String unit
+	) implements UtilityPeriodTrendProjection {
+
+		@Override
+		public LocalDate getRecordDate() {
+			return recordDate;
+		}
+
+		@Override
+		public BigDecimal getValue() {
+			return value;
+		}
+
+		@Override
+		public String getUnit() {
+			return unit;
+		}
+	}
+
+	// ============================================================
+	// NULL -> ZERO
+	// ============================================================
+
+	private record SimpleBoxProjection(
+			String boxDeviceId,
+			String boxId,
+			BigDecimal value
+	) implements UtilityPeriodBoxProjection {
+
+		@Override
+		public String getBoxDeviceId() {
+			return boxDeviceId;
+		}
+
+		@Override
+		public String getBoxId() {
+			return boxId;
+		}
+
+		@Override
+		public BigDecimal getValue() {
+			return value;
+		}
 	}
 
 	// ============================================================
