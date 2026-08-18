@@ -9,6 +9,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -19,8 +20,18 @@ import java.util.Set;
 public class UtilityMinutesService {
 
 	private static final String DEFAULT_FAC = "KVH";
+
 	private static final int DEFAULT_MINUTES = 60;
-	private static final int MAX_MINUTES = 24 * 60;
+
+	private static final int MAX_MINUTES =
+			24 * 60;
+
+	// =========================================================
+	// TIMEZONE
+	// =========================================================
+
+	private static final ZoneId VIETNAM_ZONE =
+			ZoneId.of("Asia/Ho_Chi_Minh");
 
 	private static final Set<String> ALLOWED_FACS =
 			Set.of(
@@ -32,26 +43,67 @@ public class UtilityMinutesService {
 
 	private final UtilityMinuteRepo repo;
 
+	// =========================================================
+	// MINUTE DASHBOARD
+	// =========================================================
+
 	@Transactional(readOnly = true)
 	public UtilityMinuteDashboardDto getMinuteDashboard(
 			String facId,
 			Integer minutes
 	) {
-		final String fac = normalizeFac(facId);
-		final int safeMinutes = normalizeMinutes(minutes);
+
+		final String fac =
+				normalizeFac(facId);
+
+		final int safeMinutes =
+				normalizeMinutes(minutes);
+
+		// =====================================================
+		// VIETNAM CURRENT TIME
+		// =====================================================
 
 		final LocalDateTime toTime =
-				LocalDateTime.now();
+				LocalDateTime.now(
+						VIETNAM_ZONE
+				);
 
 		final LocalDateTime fromTime =
-				toTime.minusMinutes(safeMinutes);
+				toTime.minusMinutes(
+						safeMinutes
+				);
 
-		/*
-		 * Lấy thêm dữ liệu trước fromTime để LAG có previous value.
-		 * Nếu dữ liệu ghi mỗi vài phút thì buffer 10 phút an toàn hơn 1 phút.
-		 */
+		// L?y thêm d? li?u tru?c fromTime
+		// d? LAG() có previous value
 		final LocalDateTime lagFromTime =
 				fromTime.minusMinutes(10);
+
+		// =====================================================
+		// DEBUG
+		// =====================================================
+
+		System.out.println(
+				"[MINUTE] FAC = " + fac
+		);
+
+		System.out.println(
+				"[MINUTE] FROM = "
+						+ fromTime
+		);
+
+		System.out.println(
+				"[MINUTE] TO = "
+						+ toTime
+		);
+
+		System.out.println(
+				"[MINUTE] LAG FROM = "
+						+ lagFromTime
+		);
+
+		// =====================================================
+		// QUERY
+		// =====================================================
 
 		final List<UtilityMinuteProjection> rows =
 				repo.findMinuteDashboard(
@@ -71,6 +123,7 @@ public class UtilityMinutesService {
 				new ArrayList<>();
 
 		for (UtilityMinuteProjection row : rows) {
+
 			if (row.getTs() == null ||
 					row.getUtilityType() == null) {
 				continue;
@@ -79,7 +132,8 @@ public class UtilityMinutesService {
 			final Double value =
 					row.getValue() == null
 							? null
-							: row.getValue().doubleValue();
+							: row.getValue()
+							.doubleValue();
 
 			final OverviewMinutePointDto point =
 					new OverviewMinutePointDto(
@@ -91,9 +145,12 @@ public class UtilityMinutesService {
 			final String utilityType =
 					row.getUtilityType()
 							.trim()
-							.toUpperCase(Locale.ROOT);
+							.toUpperCase(
+									Locale.ROOT
+							);
 
 			switch (utilityType) {
+
 				case "ELECTRICITY" ->
 						electricity.add(point);
 
@@ -104,7 +161,6 @@ public class UtilityMinutesService {
 						air.add(point);
 
 				default -> {
-					// Ignore unknown utility type.
 				}
 			}
 		}
@@ -112,23 +168,35 @@ public class UtilityMinutesService {
 		return new UtilityMinuteDashboardDto(
 				fac,
 				safeMinutes,
+
+				// gi? Vi?t Nam
 				toTime,
-				List.copyOf(electricity),
-				List.copyOf(water),
-				List.copyOf(air)
+
+				List.copyOf(
+						electricity
+				),
+
+				List.copyOf(
+						water
+				),
+
+				List.copyOf(
+						air
+				)
 		);
 	}
 
-	/*
-	 * Giữ method cũ tạm thời để tránh làm hỏng client cũ.
-	 * Tuy nhiên method này gọi batch query rồi chọn một list.
-	 */
+	// =========================================================
+	// OLD API
+	// =========================================================
+
 	@Transactional(readOnly = true)
 	public List<OverviewMinutePointDto> getUtilityPerMinute(
 			String facId,
 			Integer minutes,
 			String type
 	) {
+
 		final String normalizedType =
 				normalizeType(type);
 
@@ -143,6 +211,7 @@ public class UtilityMinutesService {
 				);
 
 		return switch (normalizedType) {
+
 			case "ELECTRICITY" ->
 					dashboard.electricity();
 
@@ -157,25 +226,47 @@ public class UtilityMinutesService {
 		};
 	}
 
-	private String normalizeFac(String facId) {
-		if (facId == null || facId.isBlank()) {
+	// =========================================================
+	// NORMALIZE FAC
+	// =========================================================
+
+	private String normalizeFac(
+			String facId
+	) {
+
+		if (facId == null ||
+				facId.isBlank()) {
+
 			return DEFAULT_FAC;
 		}
 
 		final String normalized =
 				facId.trim();
 
-		if (!ALLOWED_FACS.contains(normalized)) {
+		if (!ALLOWED_FACS.contains(
+				normalized
+		)) {
+
 			throw new IllegalArgumentException(
-					"Invalid facId: " + normalized
+					"Invalid facId: "
+							+ normalized
 			);
 		}
 
 		return normalized;
 	}
 
-	private int normalizeMinutes(Integer minutes) {
-		if (minutes == null || minutes <= 0) {
+	// =========================================================
+	// NORMALIZE MINUTES
+	// =========================================================
+
+	private int normalizeMinutes(
+			Integer minutes
+	) {
+
+		if (minutes == null ||
+				minutes <= 0) {
+
 			return DEFAULT_MINUTES;
 		}
 
@@ -185,16 +276,31 @@ public class UtilityMinutesService {
 		);
 	}
 
-	private String normalizeType(String type) {
-		if (type == null || type.isBlank()) {
+	// =========================================================
+	// NORMALIZE TYPE
+	// =========================================================
+
+	private String normalizeType(
+			String type
+	) {
+
+		if (type == null ||
+				type.isBlank()) {
+
 			return null;
 		}
 
 		final String normalized =
-				type.trim().toUpperCase(Locale.ROOT);
+				type.trim()
+						.toUpperCase(
+								Locale.ROOT
+						);
 
 		return switch (normalized) {
-			case "ELECTRICITY", "WATER", "AIR" ->
+
+			case "ELECTRICITY",
+			     "WATER",
+			     "AIR" ->
 					normalized;
 
 			default ->
