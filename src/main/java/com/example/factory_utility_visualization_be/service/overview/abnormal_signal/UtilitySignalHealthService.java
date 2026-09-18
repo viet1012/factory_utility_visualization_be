@@ -2,6 +2,8 @@ package com.example.factory_utility_visualization_be.service.overview.abnormal_s
 
 
 import com.example.factory_utility_visualization_be.dto.overview.abnormal_signal.*;
+import com.example.factory_utility_visualization_be.repository.overview.abnormal_signal.projection.UtilityAbnormalSignalProjection;
+import com.example.factory_utility_visualization_be.repository.overview.abnormal_signal.projection.UtilitySignalHealthMatrixProjection;
 import com.example.factory_utility_visualization_be.repository.overview.abnormal_signal.UtilitySignalHealthRepo;
 import lombok.RequiredArgsConstructor;
 import org.apache.poi.ss.usermodel.*;

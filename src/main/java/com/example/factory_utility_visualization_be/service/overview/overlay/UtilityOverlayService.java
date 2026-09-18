@@ -1,0 +1,61 @@
+package com.example.factory_utility_visualization_be.service.overview.overlay;
+
+import com.example.factory_utility_visualization_be.dto.overview.overlay.OverlayPosDto;
+import com.example.factory_utility_visualization_be.model.UtilityOverlayPos;
+import com.example.factory_utility_visualization_be.repository.overview.overlay.UtilityOverlayRepository;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Service;
+
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.stream.Collectors;
+
+@Service
+@RequiredArgsConstructor
+public class UtilityOverlayService {
+
+	private final UtilityOverlayRepository repo;
+
+	public List<OverlayPosDto> getByFac(String facId) {
+		return repo.findByFacId(facId)
+				.stream()
+				.map(this::toDto)
+				.collect(Collectors.toList());
+	}
+
+	public OverlayPosDto upsert(OverlayPosDto dto) {
+		var list = repo.findByFacIdAndBoxDeviceId(
+				dto.getFacId(),
+				dto.getBoxDeviceId()
+		);
+
+		UtilityOverlayPos entity;
+
+		if (!list.isEmpty()) {
+			entity = list.get(0);
+		} else {
+			entity = new UtilityOverlayPos();
+			entity.setFacId(dto.getFacId());
+			entity.setBoxDeviceId(dto.getBoxDeviceId());
+		}
+
+		entity.setX(dto.getX());
+		entity.setY(dto.getY());
+		entity.setDirection(dto.getDirection());
+		entity.setColor(dto.getColor()); // thêm
+		entity.setUpdatedAt(LocalDateTime.now());
+
+		return toDto(repo.save(entity));
+	}
+
+	private OverlayPosDto toDto(UtilityOverlayPos e) {
+		OverlayPosDto d = new OverlayPosDto();
+		d.setFacId(e.getFacId());
+		d.setBoxDeviceId(e.getBoxDeviceId());
+		d.setX(e.getX());
+		d.setY(e.getY());
+		d.setDirection(e.getDirection());
+		d.setColor(e.getColor()); // thêm
+		return d;
+	}
+}

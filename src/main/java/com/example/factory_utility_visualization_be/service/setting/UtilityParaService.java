@@ -6,6 +6,7 @@ import com.example.factory_utility_visualization_be.repository.F2UtilityParaRepo
 import com.example.factory_utility_visualization_be.request.setting.UtilityParaRequest;
 import com.example.factory_utility_visualization_be.response.setting.*;
 import com.example.factory_utility_visualization_be.response.setting.para.*;
+import com.example.factory_utility_visualization_be.repository.projection.FacBoxDeviceParaProjection;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;

@@ -1,6 +1,6 @@
 package com.example.factory_utility_visualization_be.repository.overview.minutes;
 
-import com.example.factory_utility_visualization_be.dto.overview.minutes.UtilityMinuteProjection;
+import com.example.factory_utility_visualization_be.repository.overview.minutes.projection.UtilityMinuteProjection;
 import com.example.factory_utility_visualization_be.model.DummyEntity;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;

@@ -1,9 +1,9 @@
 package com.example.factory_utility_visualization_be.repository;
 
 
-import com.example.factory_utility_visualization_be.dto.mapper.HourPointView;
-import com.example.factory_utility_visualization_be.dto.mapper.LatestRecordView;
-import com.example.factory_utility_visualization_be.dto.mapper.MinutePointView;
+import com.example.factory_utility_visualization_be.repository.projection.HourPointView;
+import com.example.factory_utility_visualization_be.repository.projection.LatestRecordView;
+import com.example.factory_utility_visualization_be.repository.projection.MinutePointView;
 import com.example.factory_utility_visualization_be.model.F2UtilityParaHistory;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -11,7 +11,6 @@ import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.Optional;
 
 public interface F2UtilityParaHistoryRepo extends JpaRepository<F2UtilityParaHistory, Long> {
 
@@ -31,10 +30,6 @@ public interface F2UtilityParaHistoryRepo extends JpaRepository<F2UtilityParaHis
 			@Param("to") LocalDateTime to,
 			@Param("hours") List<Integer> hours,
 			@Param("minuteWindow") int minuteWindow
-	);
-
-	Optional<F2UtilityParaHistory> findTopByBoxDeviceIdAndPlcAddressOrderByRecordedAtDesc(
-			String boxDeviceId, String plcAddress
 	);
 
 

@@ -1,6 +1,8 @@
 package com.example.factory_utility_visualization_be.repository.overview.period;
 
-import com.example.factory_utility_visualization_be.dto.overview.period.projection.*;
+import com.example.factory_utility_visualization_be.repository.overview.period.projection.UtilityPeriodBoxDailyProjection;
+import com.example.factory_utility_visualization_be.repository.overview.period.projection.UtilityPeriodBoxProjection;
+import com.example.factory_utility_visualization_be.repository.overview.period.projection.UtilityPeriodTrendProjection;
 import com.example.factory_utility_visualization_be.model.DummyEntity;
 
 import org.springframework.data.jpa.repository.JpaRepository;

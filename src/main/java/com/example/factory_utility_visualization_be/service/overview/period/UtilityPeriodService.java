@@ -4,9 +4,9 @@ import com.example.factory_utility_visualization_be.dto.overview.period.UtilityP
 import com.example.factory_utility_visualization_be.dto.overview.period.UtilityPeriodBoxTrendDto;
 import com.example.factory_utility_visualization_be.dto.overview.period.UtilityPeriodDashboardDto;
 import com.example.factory_utility_visualization_be.dto.overview.period.UtilityPeriodTrendDto;
-import com.example.factory_utility_visualization_be.dto.overview.period.projection.UtilityPeriodBoxDailyProjection;
-import com.example.factory_utility_visualization_be.dto.overview.period.projection.UtilityPeriodBoxProjection;
-import com.example.factory_utility_visualization_be.dto.overview.period.projection.UtilityPeriodTrendProjection;
+import com.example.factory_utility_visualization_be.repository.overview.period.projection.UtilityPeriodBoxDailyProjection;
+import com.example.factory_utility_visualization_be.repository.overview.period.projection.UtilityPeriodBoxProjection;
+import com.example.factory_utility_visualization_be.repository.overview.period.projection.UtilityPeriodTrendProjection;
 import com.example.factory_utility_visualization_be.repository.overview.period.UtilityPeriodRepo;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -122,13 +122,6 @@ public class UtilityPeriodService {
 		// Không query tương lai.
 		// ============================================================
 
-//		final UtilityData current =
-//				loadCurrentData(
-//						utilityType,
-//						fac,
-//						comparisonRange.currentFrom(),
-//						comparisonRange.currentTo()
-//				);
 		final UtilityData current =
 				loadCurrentDataOptimized(
 						utilityType,
@@ -363,97 +356,6 @@ public class UtilityPeriodService {
 // WATER/AIR   -> AVG
 // ============================================================
 
-
-	private UtilityData loadCurrentData(
-			String utilityType,
-			String fac,
-			LocalDateTime fromTime,
-			LocalDateTime toTime
-	) {
-
-		return switch (utilityType) {
-
-			// ====================================================
-			// ELECTRICITY
-			// ====================================================
-
-			case "ELECTRICITY" -> new UtilityData(
-
-					repo.getElectricityTrend(
-							fac,
-							fromTime,
-							toTime
-					),
-
-					repo.getElectricityByBox(
-							fac,
-							fromTime,
-							toTime
-					),
-
-					repo.getElectricityBoxDaily(
-							fac,
-							fromTime,
-							toTime
-					)
-			);
-
-			// ====================================================
-			// WATER
-			// ====================================================
-
-			case "WATER" -> new UtilityData(
-
-					repo.getWaterTrend(
-							fac,
-							fromTime,
-							toTime
-					),
-
-					repo.getWaterByBox(
-							fac,
-							fromTime,
-							toTime
-					),
-
-					repo.getWaterBoxDaily(
-							fac,
-							fromTime,
-							toTime
-					)
-			);
-
-			// ====================================================
-			// AIR
-			// ====================================================
-
-			case "AIR" -> new UtilityData(
-
-					repo.getAirTrend(
-							fac,
-							fromTime,
-							toTime
-					),
-
-					repo.getAirByBox(
-							fac,
-							fromTime,
-							toTime
-					),
-
-					repo.getAirBoxDaily(
-							fac,
-							fromTime,
-							toTime
-					)
-			);
-
-			default -> throw new IllegalArgumentException(
-					"Unsupported utility type: "
-							+ utilityType
-			);
-		};
-	}
 
 
 	private UtilityData loadCurrentDataOptimized(
@@ -1722,39 +1624,7 @@ public class UtilityPeriodService {
 	// CHANGE %
 	// ============================================================
 
-	private DateRange resolvePreviousRange(
-			DateRange current,
-			String period
-	) {
 
-		if ("MONTH".equals(period)) {
-
-			final LocalDate previousStart =
-					current
-							.from()
-							.minusMonths(
-									1
-							);
-
-			return new DateRange(
-					previousStart,
-					current.from()
-			);
-		}
-
-		return new DateRange(
-				current
-						.from()
-						.minusDays(
-								7
-						),
-
-				current.from()
-		);
-	}
-	// ============================================================
-	// RANGE
-	// ============================================================
 
 	private LocalDate parseDate(
 			String value

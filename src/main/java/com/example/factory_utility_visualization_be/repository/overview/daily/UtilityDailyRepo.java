@@ -1,9 +1,8 @@
 package com.example.factory_utility_visualization_be.repository.overview.daily;
 
-import com.example.factory_utility_visualization_be.dto.overview.daily.UtilityDailyDashboardProjection;
-import com.example.factory_utility_visualization_be.dto.overview.daily.UtilityDailyElectricityStackProjection;
-import com.example.factory_utility_visualization_be.dto.overview.daily.UtilityDailyEnergyCostProjection;
-import com.example.factory_utility_visualization_be.dto.overview.daily.UtilityDailySignalProjection;
+import com.example.factory_utility_visualization_be.repository.overview.daily.projection.UtilityDailyDashboardProjection;
+import com.example.factory_utility_visualization_be.repository.overview.daily.projection.UtilityDailyElectricityStackProjection;
+import com.example.factory_utility_visualization_be.repository.overview.daily.projection.UtilityDailySignalProjection;
 import com.example.factory_utility_visualization_be.model.DummyEntity;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -329,52 +328,7 @@ public interface UtilityDailyRepo extends JpaRepository<DummyEntity, Long> {
 			@Param("toTime") LocalDateTime toTime
 	);
 
-	@Query(value = """
-			SELECT
-			    eh.RecordDate AS recordDate,
-			
-			    CAST(
-			        SUM(
-			            CAST(eh.EnergyValue AS DECIMAL(19, 6))
-			        )
-			        AS DECIMAL(19, 4)
-			    ) AS energyKwh,
-			
-			    CAST(
-			        SUM(
-			            CAST(eh.CostUsd AS DECIMAL(19, 6))
-			        )
-			        AS DECIMAL(19, 4)
-			    ) AS costUsd
-			
-			FROM [F2Database].[dbo].[F2_Utility_Energy_Hourly] eh
-			
-			WHERE eh.RecordDate >= CAST(:fromTime AS DATE)
-			  AND eh.RecordDate < CAST(:toTime AS DATE)
-			
-			  AND UPPER(LTRIM(RTRIM(eh.Fac))) =
-			      UPPER(LTRIM(RTRIM(:fac)))
-			
-			  AND UPPER(LTRIM(RTRIM(eh.NameEn))) =
-			      'TOTAL ENERGY CONSUMPTION'
-			
-			  AND eh.EnergyValue IS NOT NULL
-			  AND eh.EnergyValue >= 0
-			
-			  AND eh.CostUsd IS NOT NULL
-			  AND eh.CostUsd >= 0
-			
-			GROUP BY
-			    eh.RecordDate
-			
-			ORDER BY
-			    eh.RecordDate
-			""", nativeQuery = true)
-	List<UtilityDailyEnergyCostProjection> getDailyEnergyAndCost(
-			@Param("fac") String fac,
-			@Param("fromTime") LocalDateTime fromTime,
-			@Param("toTime") LocalDateTime toTime
-	);
+
 
 	@Query(value = """
 			WITH RawData AS (

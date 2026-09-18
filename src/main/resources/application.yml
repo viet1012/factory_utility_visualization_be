@@ -5,8 +5,8 @@ spring:
 
   datasource:
     url: jdbc:sqlserver://192.168.122.2:1433;databaseName=F2Database;encrypt=false;trustServerCertificate=true
-    username: admin
-    password: Buitanphat0201@
+    username: kproduct
+    password: Tanphat@02032013
     driver-class-name: com.microsoft.sqlserver.jdbc.SQLServerDriver
     hikari:
       maximum-pool-size: 40

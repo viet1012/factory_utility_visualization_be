@@ -36,27 +36,5 @@ public class UtilityMinuteController {
 		);
 	}
 
-	/*
-	 * Endpoint cũ, giữ tạm trong thời gian chuyển FE.
-	 */
-	@GetMapping("/energy-minute")
-	public ResponseEntity<List<OverviewMinutePointDto>>
-	getUtilityPerMinute(
-			@RequestParam(required = false)
-			String facId,
 
-			@RequestParam(defaultValue = "60")
-			Integer minutes,
-
-			@RequestParam
-			String type
-	) {
-		return ResponseEntity.ok(
-				service.getUtilityPerMinute(
-						facId,
-						minutes,
-						type
-				)
-		);
-	}
 }

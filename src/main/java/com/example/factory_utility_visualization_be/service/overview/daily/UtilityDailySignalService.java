@@ -3,7 +3,7 @@ package com.example.factory_utility_visualization_be.service.overview.daily;
 import com.example.factory_utility_visualization_be.dto.overview.daily.DailySignalPointDto;
 import com.example.factory_utility_visualization_be.dto.overview.daily.DailySignalSeriesDto;
 import com.example.factory_utility_visualization_be.dto.overview.daily.UtilityDailyDashboardResponse;
-import com.example.factory_utility_visualization_be.dto.overview.daily.UtilityDailySignalProjection;
+import com.example.factory_utility_visualization_be.repository.overview.daily.projection.UtilityDailySignalProjection;
 import com.example.factory_utility_visualization_be.repository.overview.daily.UtilityDailyRepo;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;

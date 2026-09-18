@@ -1,8 +1,9 @@
 package com.example.factory_utility_visualization_be.repository;
 
-import com.example.factory_utility_visualization_be.dto.ChannelDto;
-import com.example.factory_utility_visualization_be.dto.ParamDto;
-import com.example.factory_utility_visualization_be.dto.*;
+import com.example.factory_utility_visualization_be.dto.runtime.ChannelDto;
+import com.example.factory_utility_visualization_be.dto.runtime.LatestRecordDto;
+import com.example.factory_utility_visualization_be.dto.runtime.ParamDto;
+import com.example.factory_utility_visualization_be.dto.runtime.ScadaDto;
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.*;
 import org.springframework.stereotype.*;

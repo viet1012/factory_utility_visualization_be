@@ -1,7 +1,7 @@
 package com.example.factory_utility_visualization_be.service.overview.solar;
 
 import com.example.factory_utility_visualization_be.dto.overview.solar.SolarDashboardDto;
-import com.example.factory_utility_visualization_be.dto.overview.solar.SolarDashboardProjection;
+import com.example.factory_utility_visualization_be.repository.overview.solar.projection.SolarDashboardProjection;
 import com.example.factory_utility_visualization_be.repository.overview.solar.SolarDashboardRepo;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;

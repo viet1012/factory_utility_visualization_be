@@ -2,7 +2,7 @@ package com.example.factory_utility_visualization_be.service.overview.minutes;
 
 import com.example.factory_utility_visualization_be.dto.overview.minutes.OverviewMinutePointDto;
 import com.example.factory_utility_visualization_be.dto.overview.minutes.UtilityMinuteDashboardDto;
-import com.example.factory_utility_visualization_be.dto.overview.minutes.UtilityMinuteProjection;
+import com.example.factory_utility_visualization_be.repository.overview.minutes.projection.UtilityMinuteProjection;
 import com.example.factory_utility_visualization_be.repository.overview.minutes.UtilityMinuteRepo;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -190,41 +190,6 @@ public class UtilityMinutesService {
 	// OLD API
 	// =========================================================
 
-	@Transactional(readOnly = true)
-	public List<OverviewMinutePointDto> getUtilityPerMinute(
-			String facId,
-			Integer minutes,
-			String type
-	) {
-
-		final String normalizedType =
-				normalizeType(type);
-
-		if (normalizedType == null) {
-			return List.of();
-		}
-
-		final UtilityMinuteDashboardDto dashboard =
-				getMinuteDashboard(
-						facId,
-						minutes
-				);
-
-		return switch (normalizedType) {
-
-			case "ELECTRICITY" ->
-					dashboard.electricity();
-
-			case "WATER" ->
-					dashboard.water();
-
-			case "AIR" ->
-					dashboard.air();
-
-			default ->
-					List.of();
-		};
-	}
 
 	// =========================================================
 	// NORMALIZE FAC
@@ -280,31 +245,5 @@ public class UtilityMinutesService {
 	// NORMALIZE TYPE
 	// =========================================================
 
-	private String normalizeType(
-			String type
-	) {
 
-		if (type == null ||
-				type.isBlank()) {
-
-			return null;
-		}
-
-		final String normalized =
-				type.trim()
-						.toUpperCase(
-								Locale.ROOT
-						);
-
-		return switch (normalized) {
-
-			case "ELECTRICITY",
-			     "WATER",
-			     "AIR" ->
-					normalized;
-
-			default ->
-					null;
-		};
-	}
 }

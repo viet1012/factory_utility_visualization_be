@@ -1,7 +1,7 @@
 package com.example.factory_utility_visualization_be.repository.overview.hourly;
 
-import com.example.factory_utility_visualization_be.dto.overview.hourly.HourlyEnergyCompareProjection;
-import com.example.factory_utility_visualization_be.dto.overview.hourly.HourlySensorCompareProjection;
+import com.example.factory_utility_visualization_be.repository.overview.hourly.projection.HourlyEnergyCompareProjection;
+import com.example.factory_utility_visualization_be.repository.overview.hourly.projection.HourlySensorCompareProjection;
 import com.example.factory_utility_visualization_be.model.DummyEntity;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;

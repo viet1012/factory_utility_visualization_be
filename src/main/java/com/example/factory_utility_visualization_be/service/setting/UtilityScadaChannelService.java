@@ -4,7 +4,7 @@ import com.example.factory_utility_visualization_be.model.F2UtilityScadaChannel;
 import com.example.factory_utility_visualization_be.repository.F2UtilityScadaChannelRepo;
 import com.example.factory_utility_visualization_be.response.setting.BoxDto;
 import com.example.factory_utility_visualization_be.response.setting.DeviceDto;
-import com.example.factory_utility_visualization_be.response.setting.FacBoxDeviceProjection;
+import com.example.factory_utility_visualization_be.repository.projection.FacBoxDeviceProjection;
 import com.example.factory_utility_visualization_be.response.setting.FacScadaBoxDto;
 import org.springframework.stereotype.Service;
 

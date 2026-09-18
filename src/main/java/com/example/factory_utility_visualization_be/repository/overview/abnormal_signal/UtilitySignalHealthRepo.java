@@ -1,8 +1,8 @@
 package com.example.factory_utility_visualization_be.repository.overview.abnormal_signal;
 
 
-import com.example.factory_utility_visualization_be.dto.overview.abnormal_signal.UtilityAbnormalSignalProjection;
-import com.example.factory_utility_visualization_be.dto.overview.abnormal_signal.UtilitySignalHealthMatrixProjection;
+import com.example.factory_utility_visualization_be.repository.overview.abnormal_signal.projection.UtilityAbnormalSignalProjection;
+import com.example.factory_utility_visualization_be.repository.overview.abnormal_signal.projection.UtilitySignalHealthMatrixProjection;
 import com.example.factory_utility_visualization_be.model.DummyEntity;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;

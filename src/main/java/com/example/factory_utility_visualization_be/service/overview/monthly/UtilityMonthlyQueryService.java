@@ -2,7 +2,8 @@ package com.example.factory_utility_visualization_be.service.overview.monthly;
 
 import com.example.factory_utility_visualization_be.dto.overview.monthly.MonthlyQueryRange;
 import com.example.factory_utility_visualization_be.dto.overview.monthly.MonthlySummaryDto;
-import com.example.factory_utility_visualization_be.dto.overview.monthly.MonthlySummaryProjection;
+import com.example.factory_utility_visualization_be.repository.overview.monthly.projection.MonthlySummaryProjection;
+import com.example.factory_utility_visualization_be.repository.overview.monthly.UtilityMonthlyKvhJdbcRepository;
 import com.example.factory_utility_visualization_be.repository.overview.monthly.UtilityMonthlyRepo;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -32,6 +33,7 @@ public class UtilityMonthlyQueryService {
 	private static final String KVH = "KVH";
 
 	private final UtilityMonthlyRepo repo;
+	private final UtilityMonthlyKvhJdbcRepository kvhJdbcRepository;
 
 	@Transactional(readOnly = true)
 	public List<MonthlySummaryDto> query(
@@ -90,7 +92,7 @@ public class UtilityMonthlyQueryService {
 			MonthlyQueryRange range
 	) {
 		if (KVH.equalsIgnoreCase(fac)) {
-			return repo.sumMonthlyKvhRaw(
+			return kvhJdbcRepository.sumMonthlyKvhRaw(
 					monthYyyyMm,
 					range.from(),
 					range.currentTo(),

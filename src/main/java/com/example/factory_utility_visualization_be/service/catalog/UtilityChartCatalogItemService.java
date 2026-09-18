@@ -1,7 +1,7 @@
 package com.example.factory_utility_visualization_be.service.catalog;
 
 import com.example.factory_utility_visualization_be.dto.overview.catalog.UtilityChartCatalogItemDto;
-import com.example.factory_utility_visualization_be.dto.overview.catalog.UtilityChartCatalogProjection;
+import com.example.factory_utility_visualization_be.repository.overview.catalog.projection.UtilityChartCatalogProjection;
 import com.example.factory_utility_visualization_be.dto.overview.catalog.UtilityChartCatalogResponse;
 import com.example.factory_utility_visualization_be.repository.F2UtilityParaRepo;
 import jakarta.transaction.Transactional;
@@ -11,7 +11,7 @@ import org.springframework.stereotype.Service;
 import java.util.List;
 import java.util.Objects;
 
-import static com.example.factory_utility_visualization_be.service.UtilityQueryService.blankToNull;
+import static com.example.factory_utility_visualization_be.service.runtime.UtilityQueryService.blankToNull;
 
 @Service
 @RequiredArgsConstructor

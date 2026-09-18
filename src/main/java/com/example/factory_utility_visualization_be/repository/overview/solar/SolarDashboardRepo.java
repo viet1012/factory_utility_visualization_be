@@ -1,9 +1,9 @@
 package com.example.factory_utility_visualization_be.repository.overview.solar;
 
-import com.example.factory_utility_visualization_be.dto.overview.solar.detail.SolarCostProjection;
-import com.example.factory_utility_visualization_be.dto.overview.solar.detail.SolarDailyTrendProjection;
-import com.example.factory_utility_visualization_be.dto.overview.solar.SolarDashboardProjection;
-import com.example.factory_utility_visualization_be.dto.overview.solar.detail.SolarHourlyProfileProjection;
+import com.example.factory_utility_visualization_be.repository.overview.solar.projection.SolarCostProjection;
+import com.example.factory_utility_visualization_be.repository.overview.solar.projection.SolarDailyTrendProjection;
+import com.example.factory_utility_visualization_be.repository.overview.solar.projection.SolarDashboardProjection;
+import com.example.factory_utility_visualization_be.repository.overview.solar.projection.SolarHourlyProfileProjection;
 import com.example.factory_utility_visualization_be.model.DummyEntity;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
