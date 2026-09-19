@@ -5,6 +5,7 @@ import com.example.factory_utility_visualization_be.model.F2UtilityScada;
 import com.example.factory_utility_visualization_be.repository.F2UtilityScadaRepo;
 import com.example.factory_utility_visualization_be.request.setting.UtilityScadaRequest;
 import com.example.factory_utility_visualization_be.response.setting.UtilityScadaResponse;
+import com.example.factory_utility_visualization_be.service.runtime.UtilityMasterDataCacheService;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -14,9 +15,11 @@ import java.util.List;
 public class UtilityScadaService {
 
 	private final F2UtilityScadaRepo repository;
+	private final UtilityMasterDataCacheService masterDataCache;
 
-	public UtilityScadaService(F2UtilityScadaRepo repository) {
+	public UtilityScadaService(F2UtilityScadaRepo repository, UtilityMasterDataCacheService masterDataCache) {
 		this.repository = repository;
+		this.masterDataCache = masterDataCache;
 	}
 
 	public List<UtilityScadaResponse> getAll() {
@@ -39,7 +42,9 @@ public class UtilityScadaService {
 			entity.setTimeUpdate(LocalDateTime.now());
 		}
 
-		return toResponse(repository.save(entity));
+		UtilityScadaResponse response = toResponse(repository.save(entity));
+		masterDataCache.evictScadas();
+		return response;
 	}
 
 	public UtilityScadaResponse update(Long id, UtilityScadaRequest request) {
@@ -52,13 +57,16 @@ public class UtilityScadaService {
 			entity.setTimeUpdate(LocalDateTime.now());
 		}
 
-		return toResponse(repository.save(entity));
+		UtilityScadaResponse response = toResponse(repository.save(entity));
+		masterDataCache.evictScadas();
+		return response;
 	}
 
 	public void delete(Long id) {
 		F2UtilityScada entity = repository.findById(id)
 				.orElseThrow(() -> new RuntimeException("UtilityScada not found with id: " + id));
 		repository.delete(entity);
+		masterDataCache.evictScadas();
 	}
 
 	public UtilityScadaResponse getByScadaId(String scadaId) {

@@ -6,13 +6,14 @@ import com.example.factory_utility_visualization_be.dto.overview.daily.UtilityDa
 import com.example.factory_utility_visualization_be.repository.overview.daily.projection.UtilityDailyDashboardProjection;
 import com.example.factory_utility_visualization_be.repository.overview.daily.projection.UtilityDailyElectricityStackProjection;
 import com.example.factory_utility_visualization_be.repository.overview.daily.UtilityDailyRepo;
+import com.example.factory_utility_visualization_be.service.util.FacilityValidator;
+import com.example.factory_utility_visualization_be.service.util.YearMonthParser;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.time.DateTimeException;
 import java.time.LocalDateTime;
 import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
@@ -74,7 +75,7 @@ public class UtilityEnergyDailyService {
 		// =====================================================
 
 		final List<UtilityDailyElectricityStackProjection> energyRows =
-				repo.getDailyElectricityStack(
+				repo.getDailyElectricityByDateRange(
 						fac,
 						from,
 						to
@@ -122,7 +123,7 @@ public class UtilityEnergyDailyService {
 		// =====================================================
 
 		final List<UtilityDailyDashboardProjection> utilityRows =
-				repo.getDailyDashboardByMonth(
+				repo.getDailyWaterAndAirByDateRange(
 						fac,
 						from,
 						to
@@ -300,30 +301,11 @@ public class UtilityEnergyDailyService {
 	private YearMonth parseMonth(
 			String value
 	) {
-
-		if (
-				value == null
-						|| !value.matches("\\d{6}")
-		) {
-			throw new IllegalArgumentException(
-					"month must be yyyyMM, for example 202608"
-			);
-		}
-
-		try {
-
-			return YearMonth.parse(
-					value,
-					MONTH_FORMATTER
-			);
-
-		} catch (DateTimeException e) {
-
-			throw new IllegalArgumentException(
-					"Invalid month: " + value,
-					e
-			);
-		}
+		return YearMonthParser.parse(
+				value,
+				"month must be yyyyMM, for example 202608",
+				"Invalid month: "
+		);
 	}
 
 	// =========================================================
@@ -334,64 +316,6 @@ public class UtilityEnergyDailyService {
 			String value,
 			String fieldName
 	) {
-
-		if (
-				value == null
-						|| value.isBlank()
-		) {
-			throw new IllegalArgumentException(
-					fieldName + " is required"
-			);
-		}
-
-		return normalizeFac(
-				value
-		);
-	}
-
-	// =========================================================
-	// NORMALIZE FAC
-	// =========================================================
-
-	private String normalizeFac(
-			String value
-	) {
-
-		final String fac =
-				value.trim();
-
-		if (
-				fac.equalsIgnoreCase(
-						"KVH"
-				)
-		) {
-			return "KVH";
-		}
-
-		if (
-				fac.equalsIgnoreCase(
-						"FAC_A"
-				)
-		) {
-			return "Fac_A";
-		}
-
-		if (
-				fac.equalsIgnoreCase(
-						"FAC_B"
-				)
-		) {
-			return "Fac_B";
-		}
-
-		if (
-				fac.equalsIgnoreCase(
-						"FAC_C"
-				)
-		) {
-			return "Fac_C";
-		}
-
-		return fac;
+		return FacilityValidator.normalizeRequired(value, fieldName);
 	}
 }

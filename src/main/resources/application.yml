@@ -25,3 +25,15 @@ spring:
 server:
   address: 0.0.0.0
   port: ${SERVER_PORT:9999}
+
+utility:
+  finance:
+    hourly:
+      exchange-rate: 26005
+      sepzone: 1.075
+    solar:
+      exchange-rate: 26005
+      sepzone: 1.075
+    monthly:
+      exchange-rate: 25585
+      sepzone: 1.0

@@ -43,13 +43,55 @@ public class UtilityCacheConfig {
 								.build()
 				);
 
+		final CaffeineCache scadaMasterCache =
+				new CaffeineCache(
+						UtilityCacheNames.SCADA_MASTER,
+						Caffeine.newBuilder()
+								.maximumSize(10)
+								.expireAfterWrite(
+										Duration.ofSeconds(60)
+								)
+								.recordStats()
+								.build()
+				);
+
+		final CaffeineCache channelMasterCache =
+				new CaffeineCache(
+						UtilityCacheNames.CHANNEL_MASTER,
+						Caffeine.newBuilder()
+								.maximumSize(10)
+								.expireAfterWrite(
+										Duration.ofSeconds(60)
+								)
+								.recordStats()
+								.build()
+				);
+
+		// Historical months only (current month always bypasses this cache
+		// — see SolarDashboardService/SolarDetailService), so a completed
+		// month's result cannot change; long TTL matches MONTHLY_HISTORY.
+		final CaffeineCache solarMonthlySummaryCache =
+				new CaffeineCache(
+						UtilityCacheNames.SOLAR_MONTHLY_SUMMARY,
+						Caffeine.newBuilder()
+								.maximumSize(300)
+								.expireAfterWrite(
+										Duration.ofHours(12)
+								)
+								.recordStats()
+								.build()
+				);
+
 		final SimpleCacheManager cacheManager =
 				new SimpleCacheManager();
 
 		cacheManager.setCaches(
 				List.of(
 						currentMonthCache,
-						historyMonthCache
+						historyMonthCache,
+						scadaMasterCache,
+						channelMasterCache,
+						solarMonthlySummaryCache
 				)
 		);
 

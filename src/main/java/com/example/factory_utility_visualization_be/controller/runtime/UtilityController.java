@@ -2,13 +2,10 @@ package com.example.factory_utility_visualization_be.controller.runtime;
 
 import com.example.factory_utility_visualization_be.dto.runtime.ChannelDto;
 import com.example.factory_utility_visualization_be.dto.runtime.HourPointDto;
-import com.example.factory_utility_visualization_be.dto.runtime.LatestRecordDto;
 import com.example.factory_utility_visualization_be.dto.runtime.MinutePointDto;
 import com.example.factory_utility_visualization_be.dto.runtime.ParamDto;
 import com.example.factory_utility_visualization_be.dto.runtime.ScadaDto;
 import com.example.factory_utility_visualization_be.dto.latest.LatestFacilityDto;
-import com.example.factory_utility_visualization_be.request.UtilitySeriesRequest;
-import com.example.factory_utility_visualization_be.response.UtilitySeriesResponse;
 import com.example.factory_utility_visualization_be.service.runtime.UtilityQueryService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -55,25 +52,6 @@ public class UtilityController {
 	}
 
 	// Latest theo device/param (nhiều param một lần)
-	@GetMapping("/lates1t")
-	public ResponseEntity<List<LatestRecordDto>> getLatest1(
-			@RequestParam(required = false) String facId,
-			@RequestParam(required = false) String scadaId,
-			@RequestParam(required = false) String cate,
-			@RequestParam(required = false) String boxDeviceId,
-			@RequestParam(required = false, name = "cateIds") String cateIdsCsv
-	) {
-		List<String> cateIds = null;
-		if (cateIdsCsv != null && !cateIdsCsv.isBlank()) {
-			cateIds = java.util.Arrays.stream(cateIdsCsv.split(","))
-					.map(String::trim)
-					.filter(s -> !s.isBlank())
-					.toList();
-		}
-
-		var result = service.getLatest1(facId, scadaId, cate, boxDeviceId, cateIds);
-		return ResponseEntity.ok(result);
-	}
 
 	@GetMapping("/latest")
 	public ResponseEntity<List<LatestFacilityDto>> getLatest(

@@ -3,6 +3,8 @@ package com.example.factory_utility_visualization_be.service.overview.solar;
 import com.example.factory_utility_visualization_be.dto.overview.solar.SolarDashboardDto;
 import com.example.factory_utility_visualization_be.repository.overview.solar.projection.SolarDashboardProjection;
 import com.example.factory_utility_visualization_be.repository.overview.solar.SolarDashboardRepo;
+import com.example.factory_utility_visualization_be.service.util.FacilityValidator;
+import com.example.factory_utility_visualization_be.service.util.SolarEnvironmentCalculator;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -11,13 +13,12 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.YearMonth;
+import java.time.ZoneId;
 
 @Service
 @RequiredArgsConstructor
 public class SolarDashboardService {
-
-	private static final String DEFAULT_FAC =
-			"KVH";
 
 	private static final String POWER_NAME =
 			"Total Power";
@@ -25,13 +26,11 @@ public class SolarDashboardService {
 	private static final String ENERGY_NAME =
 			"Total Energy Consumption";
 
-	private static final BigDecimal CO2_FACTOR =
-			new BigDecimal("0.6766");
-
-	private static final BigDecimal KG_PER_TREE =
-			new BigDecimal("21");
+	private static final ZoneId APP_ZONE =
+			ZoneId.of("Asia/Ho_Chi_Minh");
 
 	private final SolarDashboardRepo repo;
+	private final SolarMonthlySummaryCacheService summaryCache;
 
 	@Transactional(readOnly = true)
 	public SolarDashboardDto getDashboard(
@@ -99,30 +98,13 @@ public class SolarDashboardService {
 
 		// CO2 chỉ tính từ điện Solar TODAY
 		final BigDecimal co2Kg =
-				solarKwh
-						.multiply(
-								CO2_FACTOR
-						)
-						.setScale(
-								1,
-								RoundingMode.HALF_UP
-						);
+				SolarEnvironmentCalculator.co2Kg(solarKwh);
 
 		final BigDecimal co2Ton =
-				co2Kg
-						.divide(
-								new BigDecimal("1000"),
-								3,
-								RoundingMode.HALF_UP
-						);
+				SolarEnvironmentCalculator.co2Ton(co2Kg);
 
 		final BigDecimal trees =
-				co2Kg
-						.divide(
-								KG_PER_TREE,
-								0,
-								RoundingMode.HALF_UP
-						);
+				SolarEnvironmentCalculator.equivalentTrees(co2Kg);
 
 		return new SolarDashboardDto(
 				fac,
@@ -173,16 +155,33 @@ public class SolarDashboardService {
 
 		// ============================================================
 		// QUERY
+		//
+		// Current month: always fresh, never cached (accumulating MTD
+		// totals + live current power). Completed months: cached, since
+		// the query window is closed and the result cannot change.
 		// ============================================================
+		final YearMonth requestedMonth =
+				YearMonth.from(selectedMonth);
+
 		final SolarDashboardProjection p =
-				repo.getSolarDashboardByMonth(
-						fac,
-						monthStart,
-						nextMonthStart,
-						now.plusSeconds(1),
-						POWER_NAME,
-						ENERGY_NAME
-				);
+				requestedMonth.equals(YearMonth.now(APP_ZONE))
+						? repo.getSolarDashboardByMonth(
+								fac,
+								monthStart,
+								nextMonthStart,
+								now.plusSeconds(1),
+								POWER_NAME,
+								ENERGY_NAME
+						)
+						: summaryCache.getHistoricalSummary(
+								fac,
+								requestedMonth.toString(),
+								monthStart,
+								nextMonthStart,
+								now.plusSeconds(1),
+								POWER_NAME,
+								ENERGY_NAME
+						);
 
 		// ============================================================
 		// MAPPING
@@ -228,34 +227,19 @@ public class SolarDashboardService {
 		// CO2 kg = Solar kWh * 0.6766
 		// ============================================================
 		final BigDecimal co2Kg =
-				solarKwh
-						.multiply(CO2_FACTOR)
-						.setScale(
-								1,
-								RoundingMode.HALF_UP
-						);
+				SolarEnvironmentCalculator.co2Kg(solarKwh);
 
 		// ============================================================
 		// CO2 TON
 		// ============================================================
 		final BigDecimal co2Ton =
-				co2Kg
-						.divide(
-								new BigDecimal("1000"),
-								3,
-								RoundingMode.HALF_UP
-						);
+				SolarEnvironmentCalculator.co2Ton(co2Kg);
 
 		// ============================================================
 		// EQUIVALENT TREES
 		// ============================================================
 		final BigDecimal trees =
-				co2Kg
-						.divide(
-								KG_PER_TREE,
-								0,
-								RoundingMode.HALF_UP
-						);
+				SolarEnvironmentCalculator.equivalentTrees(co2Kg);
 
 		// ============================================================
 		// RESPONSE
@@ -336,48 +320,6 @@ public class SolarDashboardService {
 	private String normalizeFac(
 			String facId
 	) {
-		if (
-				facId == null
-						|| facId.isBlank()
-		) {
-			return DEFAULT_FAC;
-		}
-
-		final String fac =
-				facId.trim();
-
-		if (
-				fac.equalsIgnoreCase(
-						"KVH"
-				)
-		) {
-			return "KVH";
-		}
-
-		if (
-				fac.equalsIgnoreCase(
-						"FAC_A"
-				)
-		) {
-			return "Fac_A";
-		}
-
-		if (
-				fac.equalsIgnoreCase(
-						"FAC_B"
-				)
-		) {
-			return "Fac_B";
-		}
-
-		if (
-				fac.equalsIgnoreCase(
-						"FAC_C"
-				)
-		) {
-			return "Fac_C";
-		}
-
-		return fac;
+		return FacilityValidator.normalizeOptionalWithDefault(facId);
 	}
 }

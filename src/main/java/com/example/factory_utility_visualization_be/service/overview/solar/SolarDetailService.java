@@ -5,7 +5,10 @@ import com.example.factory_utility_visualization_be.dto.overview.solar.detail.*;
 import com.example.factory_utility_visualization_be.repository.overview.solar.projection.SolarCostProjection;
 import com.example.factory_utility_visualization_be.repository.overview.solar.projection.SolarDailyTrendProjection;
 import com.example.factory_utility_visualization_be.repository.overview.solar.projection.SolarHourlyProfileProjection;
+import com.example.factory_utility_visualization_be.config.UtilityFinanceProperties;
 import com.example.factory_utility_visualization_be.repository.overview.solar.SolarDashboardRepo;
+import com.example.factory_utility_visualization_be.service.util.FacilityValidator;
+import com.example.factory_utility_visualization_be.service.util.SolarEnvironmentCalculator;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -15,6 +18,7 @@ import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.YearMonth;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.Comparator;
 import java.util.List;
@@ -29,19 +33,12 @@ public class SolarDetailService {
 	private static final String POWER_NAME =
 			"Total Power";
 
-	private static final BigDecimal EXCHANGE =
-			new BigDecimal("26005");
-
-	private static final BigDecimal SEPZONE =
-			new BigDecimal("1.075");
-
-	private static final BigDecimal CO2_FACTOR =
-			new BigDecimal("0.6766");
-
-	private static final BigDecimal KG_PER_TREE =
-			new BigDecimal("21");
+	private static final ZoneId APP_ZONE =
+			ZoneId.of("Asia/Ho_Chi_Minh");
 
 	private final SolarDashboardRepo repo;
+	private final SolarMonthlySummaryCacheService summaryCache;
+	private final UtilityFinanceProperties financeProperties;
 
 	@Transactional(readOnly = true)
 	public SolarDetailDto getDetail(
@@ -72,17 +69,31 @@ public class SolarDetailService {
 
 		// =========================================================
 		// SUMMARY
+		//
+		// Current month: always fresh, never cached (accumulating MTD
+		// totals + live current power). Completed months: cached, since
+		// the query window is closed and the result cannot change.
 		// =========================================================
 
 		final SolarDashboardProjection summaryRow =
-				repo.getSolarDashboardByMonth(
-						fac,
-						monthStart,
-						nextMonthStart,
-						now.plusSeconds(1),
-						POWER_NAME,
-						ENERGY_NAME
-				);
+				ym.equals(YearMonth.now(APP_ZONE))
+						? repo.getSolarDashboardByMonth(
+								fac,
+								monthStart,
+								nextMonthStart,
+								now.plusSeconds(1),
+								POWER_NAME,
+								ENERGY_NAME
+						)
+						: summaryCache.getHistoricalSummary(
+								fac,
+								ym.toString(),
+								monthStart,
+								nextMonthStart,
+								now.plusSeconds(1),
+								POWER_NAME,
+								ENERGY_NAME
+						);
 
 		final BigDecimal solarKwh =
 				value(
@@ -205,31 +216,18 @@ public class SolarDetailService {
 		// =========================================================
 
 		final BigDecimal co2Kg =
-				solarKwh
-						.multiply(CO2_FACTOR)
-						.setScale(
-								1,
-								RoundingMode.HALF_UP
-						);
+				SolarEnvironmentCalculator.co2Kg(solarKwh);
 
 		final SolarEnvironmentalDto environment =
 				new SolarEnvironmentalDto(
 
 						co2Kg,
 
-						co2Kg.divide(
-								new BigDecimal("1000"),
-								3,
-								RoundingMode.HALF_UP
-						),
+						SolarEnvironmentCalculator.co2Ton(co2Kg),
 
-						co2Kg.divide(
-								KG_PER_TREE,
-								0,
-								RoundingMode.HALF_UP
-						),
+						SolarEnvironmentCalculator.equivalentTrees(co2Kg),
 
-						CO2_FACTOR
+						SolarEnvironmentCalculator.CO2_FACTOR
 				);
 
 
@@ -340,11 +338,11 @@ public class SolarDetailService {
 
 		return vnd
 				.divide(
-						EXCHANGE,
+						financeProperties.getSolar().getExchangeRate(),
 						6,
 						RoundingMode.HALF_UP
 				)
-				.multiply(SEPZONE)
+				.multiply(financeProperties.getSolar().getSepzone())
 				.setScale(
 						2,
 						RoundingMode.HALF_UP
@@ -365,28 +363,6 @@ public class SolarDetailService {
 	private String normalizeFac(
 			String facId
 	) {
-
-		if (facId == null ||
-				facId.isBlank()) {
-			return "KVH";
-		}
-
-		if (facId.equalsIgnoreCase("FAC_A")) {
-			return "Fac_A";
-		}
-
-		if (facId.equalsIgnoreCase("FAC_B")) {
-			return "Fac_B";
-		}
-
-		if (facId.equalsIgnoreCase("FAC_C")) {
-			return "Fac_C";
-		}
-
-		if (facId.equalsIgnoreCase("KVH")) {
-			return "KVH";
-		}
-
-		return facId.trim();
+		return FacilityValidator.normalizeOptionalWithDefault(facId);
 	}
 }

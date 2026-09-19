@@ -4,6 +4,7 @@ import com.example.factory_utility_visualization_be.dto.overview.minutes.Overvie
 import com.example.factory_utility_visualization_be.dto.overview.minutes.UtilityMinuteDashboardDto;
 import com.example.factory_utility_visualization_be.repository.overview.minutes.projection.UtilityMinuteProjection;
 import com.example.factory_utility_visualization_be.repository.overview.minutes.UtilityMinuteRepo;
+import com.example.factory_utility_visualization_be.service.util.FacilityValidator;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -13,13 +14,10 @@ import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
-import java.util.Set;
 
 @Service
 @RequiredArgsConstructor
 public class UtilityMinutesService {
-
-	private static final String DEFAULT_FAC = "KVH";
 
 	private static final int DEFAULT_MINUTES = 60;
 
@@ -32,14 +30,6 @@ public class UtilityMinutesService {
 
 	private static final ZoneId VIETNAM_ZONE =
 			ZoneId.of("Asia/Ho_Chi_Minh");
-
-	private static final Set<String> ALLOWED_FACS =
-			Set.of(
-					"KVH",
-					"Fac_A",
-					"Fac_B",
-					"Fac_C"
-			);
 
 	private final UtilityMinuteRepo repo;
 
@@ -77,29 +67,6 @@ public class UtilityMinutesService {
 		// d? LAG() có previous value
 		final LocalDateTime lagFromTime =
 				fromTime.minusMinutes(10);
-
-		// =====================================================
-		// DEBUG
-		// =====================================================
-
-		System.out.println(
-				"[MINUTE] FAC = " + fac
-		);
-
-		System.out.println(
-				"[MINUTE] FROM = "
-						+ fromTime
-		);
-
-		System.out.println(
-				"[MINUTE] TO = "
-						+ toTime
-		);
-
-		System.out.println(
-				"[MINUTE] LAG FROM = "
-						+ lagFromTime
-		);
 
 		// =====================================================
 		// QUERY
@@ -198,27 +165,7 @@ public class UtilityMinutesService {
 	private String normalizeFac(
 			String facId
 	) {
-
-		if (facId == null ||
-				facId.isBlank()) {
-
-			return DEFAULT_FAC;
-		}
-
-		final String normalized =
-				facId.trim();
-
-		if (!ALLOWED_FACS.contains(
-				normalized
-		)) {
-
-			throw new IllegalArgumentException(
-					"Invalid facId: "
-							+ normalized
-			);
-		}
-
-		return normalized;
+		return FacilityValidator.normalizeOptionalWithDefault(facId);
 	}
 
 	// =========================================================

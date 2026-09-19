@@ -29,52 +29,114 @@ public class UtilityMonthlyKvhJdbcRepository {
           """;
 
 	private static final String CREATE_NORMAL_DEVICES = """
-          SELECT DISTINCT
-              pa.box_device_id,
-              pa.plc_address,
-              pa.name_en,
-              pa.unit,
-              CASE
-                  WHEN pa.name_en = 'Total Energy Consumption'
-                      THEN 'Electricity'
-                  WHEN pa.name_en LIKE 'Cooling tank%'
-                      THEN 'Water'
-                  WHEN pa.name_en = 'Data Pipeline pressure'
-                      THEN 'Water'
-                  WHEN pa.name_en =
-                       'Sensor compressed air pressure Data'
-                      THEN 'Compressed Air'
-              END AS cate
-          INTO #NormalDevices
-          FROM dbo.F2_Utility_Para pa
-          WHERE (
-                 pa.name_en = 'Total Energy Consumption'
-              OR pa.name_en LIKE 'Cooling tank%'
-              OR pa.name_en = 'Data Pipeline pressure'
-              OR pa.name_en =
-                 'Sensor compressed air pressure Data'
-          )
-          AND EXISTS (
-              SELECT 1
-              FROM dbo.F2_Utility_Scada_Channel ch
-              WHERE ch.box_device_id = pa.box_device_id
-                AND UPPER(
-                        LTRIM(
-                            RTRIM(
-                                ISNULL(ch.box_id, '')
-                            )
-                        )
-                    ) <> 'SOLAR'
-          );
+      SELECT DISTINCT
+          pa.box_device_id,
+          pa.plc_address,
+          pa.name_en,
+          pa.unit,
 
-          CREATE CLUSTERED INDEX CX_NormalDevices
-          ON #NormalDevices(
-              box_device_id,
-              plc_address,
-              name_en,
-              unit
-          );
-          """;
+          CASE
+              WHEN pa.name_en = 'Total Energy Consumption'
+                  THEN 'Electricity'
+
+              WHEN pa.name_en LIKE 'Cooling tank%'
+                  THEN 'Water'
+
+              WHEN pa.name_en = 'Data Pipeline pressure'
+                  THEN 'Water'
+
+              WHEN pa.name_en =
+                   'Sensor compressed air pressure Data'
+                  THEN 'Compressed Air'
+          END AS cate
+
+      INTO #NormalDevices
+
+      FROM dbo.F2_Utility_Para pa
+
+      WHERE (
+             pa.name_en = 'Total Energy Consumption'
+          OR pa.name_en LIKE 'Cooling tank%'
+          OR pa.name_en = 'Data Pipeline pressure'
+          OR pa.name_en =
+             'Sensor compressed air pressure Data'
+      )
+
+      AND (
+          -- =====================================================
+          -- ELECTRICITY / GRID
+          --
+          -- Solar thắng:
+          -- nếu box_device_id có bất kỳ mapping SOLAR nào
+          -- thì không được đưa vào GRID.
+          -- =====================================================
+          (
+              pa.name_en = 'Total Energy Consumption'
+
+              AND NOT EXISTS (
+                  SELECT 1
+
+                  FROM dbo.F2_Utility_Scada_Channel ch
+
+                  WHERE
+                      ch.box_device_id = pa.box_device_id
+
+                      AND UPPER(
+                          LTRIM(
+                              RTRIM(
+                                  ISNULL(ch.box_id, '')
+                              )
+                          )
+                      ) = 'SOLAR'
+              )
+
+              -- Vẫn phải tồn tại trong Scada Channel
+              AND EXISTS (
+                  SELECT 1
+
+                  FROM dbo.F2_Utility_Scada_Channel ch
+
+                  WHERE
+                      ch.box_device_id = pa.box_device_id
+              )
+          )
+
+          OR
+
+          -- =====================================================
+          -- WATER / AIR
+          -- Giữ nguyên business hiện tại.
+          -- =====================================================
+          (
+              pa.name_en <> 'Total Energy Consumption'
+
+              AND EXISTS (
+                  SELECT 1
+
+                  FROM dbo.F2_Utility_Scada_Channel ch
+
+                  WHERE
+                      ch.box_device_id = pa.box_device_id
+
+                      AND UPPER(
+                          LTRIM(
+                              RTRIM(
+                                  ISNULL(ch.box_id, '')
+                              )
+                          )
+                      ) <> 'SOLAR'
+              )
+          )
+      );
+
+      CREATE CLUSTERED INDEX CX_NormalDevices
+      ON #NormalDevices(
+          box_device_id,
+          plc_address,
+          name_en,
+          unit
+      );
+      """;
 
 	/*
 	 * IMPORTANT:
@@ -134,11 +196,15 @@ public class UtilityMonthlyKvhJdbcRepository {
                   'CURRENT' AS period_type,
                   d.unit,
                   CASE
-                      WHEN DATEPART(
-                          WEEKDAY,
-                          CAST(h.pick_at AS DATE)
-                      ) = 1
-                          THEN '1'
+                      WHEN (
+                          DATEDIFF(
+                              DAY,
+                              CAST('19000101' AS DATE),
+                              CAST(h.pick_at AS DATE)
+                          ) % 7
+                      ) = 6
+                      THEN '1'
+
                       ELSE '2-7'
                   END AS WD,
                   DATEPART(HOUR, h.pick_at) AS HourNumber,
@@ -161,11 +227,14 @@ public class UtilityMonthlyKvhJdbcRepository {
                   'PREV',
                   d.unit,
                   CASE
-                      WHEN DATEPART(
-                          WEEKDAY,
-                          CAST(h.pick_at AS DATE)
-                      ) = 1
-                          THEN '1'
+                      WHEN (
+                          DATEDIFF(
+                              DAY,
+                              CAST('19000101' AS DATE),
+                              CAST(h.pick_at AS DATE)
+                          ) % 7
+                      ) = 6
+                      THEN '1'
                       ELSE '2-7'
                   END,
                   DATEPART(HOUR, h.pick_at),
@@ -198,73 +267,115 @@ public class UtilityMonthlyKvhJdbcRepository {
           """;
 
 	private static final String CREATE_SOLAR_HOURLY = """
+      SELECT
+          x.period_type,
+          x.WD,
+          x.HourNumber,
+
+          SUM(
+              x.[value]
+          ) AS solar_hour_value
+
+      INTO #SolarHourly
+
+      FROM (
           SELECT
-              x.period_type,
-              x.WD,
-              x.HourNumber,
-              SUM(x.[value]) AS solar_hour_value
-          INTO #SolarHourly
-          FROM (
-              SELECT
-                  'CURRENT' AS period_type,
-                  CASE
-                      WHEN DATEPART(
-                          WEEKDAY,
+              'CURRENT' AS period_type,
+
+              CASE
+                  WHEN (
+                      DATEDIFF(
+                          DAY,
+                          CAST('19000101' AS DATE),
                           CAST(h.pick_at AS DATE)
-                      ) = 1
-                          THEN '1'
-                      ELSE '2-7'
-                  END AS WD,
-                  DATEPART(HOUR, h.pick_at) AS HourNumber,
-                  CAST(
-                      h.[value] AS DECIMAL(19,6)
-                  ) AS [value]
-              FROM #SolarDevices d
-              INNER JOIN dbo.F2_Utility_Para_History_Main h
-                  ON h.box_device_id = d.box_device_id
-                 AND h.plc_address = d.plc_address
-              WHERE h.pick_at >= ?
-                AND h.pick_at < ?
-                AND h.[value] > 0
-                AND h.MTD = 'MTD'
+                      ) % 7
+                  ) = 6
+                  THEN '1'
 
-              UNION ALL
+                  ELSE '2-7'
+              END AS WD,
 
-              SELECT
-                  'PREV',
-                  CASE
-                      WHEN DATEPART(
-                          WEEKDAY,
+              DATEPART(
+                  HOUR,
+                  h.pick_at
+              ) AS HourNumber,
+
+              CAST(
+                  h.[value]
+                  AS DECIMAL(19,6)
+              ) AS [value]
+
+          FROM #SolarDevices d
+
+          INNER JOIN dbo.F2_Utility_Para_History_Main h
+              ON h.box_device_id = d.box_device_id
+             AND h.plc_address = d.plc_address
+
+          WHERE
+              h.pick_at >= ?
+              AND h.pick_at < ?
+
+              AND h.[value] > 0
+
+              AND h.MTD = 'MTD'
+
+
+          UNION ALL
+
+
+          SELECT
+              'PREV',
+
+              CASE
+                  WHEN (
+                      DATEDIFF(
+                          DAY,
+                          CAST('19000101' AS DATE),
                           CAST(h.pick_at AS DATE)
-                      ) = 1
-                          THEN '1'
-                      ELSE '2-7'
-                  END,
-                  DATEPART(HOUR, h.pick_at),
-                  CAST(
-                      h.[value] AS DECIMAL(19,6)
-                  )
-              FROM #SolarDevices d
-              INNER JOIN dbo.F2_Utility_Para_History_Main h
-                  ON h.box_device_id = d.box_device_id
-                 AND h.plc_address = d.plc_address
-              WHERE h.pick_at >= ?
-                AND h.pick_at < ?
-                AND h.[value] > 0
-                AND h.MTD = 'MTD'
-          ) x
-          GROUP BY
-              x.period_type,
-              x.WD,
-              x.HourNumber;
+                      ) % 7
+                  ) = 6
+                  THEN '1'
 
-          CREATE CLUSTERED INDEX CX_SolarHourly
-          ON #SolarHourly(
-              period_type,
-              WD,
-              HourNumber
-          );
-          """;
+                  ELSE '2-7'
+              END,
+
+              DATEPART(
+                  HOUR,
+                  h.pick_at
+              ),
+
+              CAST(
+                  h.[value]
+                  AS DECIMAL(19,6)
+              )
+
+          FROM #SolarDevices d
+
+          INNER JOIN dbo.F2_Utility_Para_History_Main h
+              ON h.box_device_id = d.box_device_id
+             AND h.plc_address = d.plc_address
+
+          WHERE
+              h.pick_at >= ?
+              AND h.pick_at < ?
+
+              AND h.[value] > 0
+
+              AND h.MTD = 'MTD'
+      ) x
+
+      GROUP BY
+          x.period_type,
+          x.WD,
+          x.HourNumber;
+
+      CREATE CLUSTERED INDEX CX_SolarHourly
+      ON #SolarHourly(
+          period_type,
+          WD,
+          HourNumber
+      );
+      """;
 
 	/*
 	 * Production-safe Environment:
@@ -453,13 +564,19 @@ public class UtilityMonthlyKvhJdbcRepository {
           """;
 
 	/*
-	 * Tariff giữ nguyên business của repo OLD:
+	 * Electricity business:
 	 *
-	 * - WD = 1 / 2-7
-	 * - hỗ trợ tariff crossing midnight
-	 * - gross cost theo hourly rate
-	 * - solar cost theo đúng hourly rate
-	 * - grid = MAX(gross - solar, 0)
+	 * - GRID = điện thường, không bao gồm Solar.
+	 * - SOLAR = điện Solar riêng.
+	 * - TOTAL = GRID + SOLAR.
+	 * - GRID COST = cost của GRID, không trừ Solar cost.
+	 * - SOLAR SHARE = SOLAR / TOTAL.
+	 *
+	 * Tariff:
+	 *
+	 * - WD = 1 / 2-7.
+	 * - hỗ trợ tariff crossing midnight.
+	 * - không phụ thuộc SET DATEFIRST.
 	 */
 	private static final String FINAL_QUERY = """
           ;WITH Hours AS (
@@ -671,7 +788,7 @@ public class UtilityMonthlyKvhJdbcRepository {
                               THEN e.hour_value
                           ELSE 0
                       END
-                  ) AS grossValue,
+                  ) AS gridValue,
 
                   SUM(
                       CASE
@@ -679,7 +796,7 @@ public class UtilityMonthlyKvhJdbcRepository {
                               THEN e.hour_value
                           ELSE 0
                       END
-                  ) AS prevGrossValue,
+                  ) AS prevGridValue,
 
                   SUM(
                       CASE
@@ -687,7 +804,7 @@ public class UtilityMonthlyKvhJdbcRepository {
                               THEN e.hour_value * r.vnd_rate
                           ELSE 0
                       END
-                  ) AS grossVndCost,
+                  ) AS gridVndCost,
 
                   SUM(
                       CASE
@@ -695,40 +812,13 @@ public class UtilityMonthlyKvhJdbcRepository {
                               THEN e.hour_value * r.vnd_rate
                           ELSE 0
                       END
-                  ) AS prevGrossVndCost,
-
-                  SUM(
-                      CASE
-                          WHEN e.period_type = 'CURRENT'
-                              THEN COALESCE(
-                                  s.solar_hour_value,
-                                  0
-                              ) * r.vnd_rate
-                          ELSE 0
-                      END
-                  ) AS solarVndCost,
-
-                  SUM(
-                      CASE
-                          WHEN e.period_type = 'PREV'
-                              THEN COALESCE(
-                                  s.solar_hour_value,
-                                  0
-                              ) * r.vnd_rate
-                          ELSE 0
-                      END
-                  ) AS prevSolarVndCost
+                  ) AS prevGridVndCost
 
               FROM #EnergyHourly e
 
               INNER JOIN Rate r
                   ON r.WD = e.WD
                  AND r.HourNumber = e.HourNumber
-
-              LEFT JOIN #SolarHourly s
-                  ON s.period_type = e.period_type
-                 AND s.WD = e.WD
-                 AND s.HourNumber = e.HourNumber
 
               GROUP BY e.unit
           ),
@@ -740,55 +830,26 @@ public class UtilityMonthlyKvhJdbcRepository {
                   e.unit,
 
                   CAST(
-                      CASE
-                          WHEN COALESCE(e.grossValue, 0)
-                               > COALESCE(s.solarValue, 0)
-                          THEN
-                              COALESCE(e.grossValue, 0)
-                              - COALESCE(s.solarValue, 0)
-                          ELSE 0
-                      END
+                      COALESCE(e.gridValue, 0)
                       AS DECIMAL(18,2)
                   ) AS value,
 
                   CAST(
-                      CASE
-                          WHEN COALESCE(e.prevGrossValue, 0)
-                               > COALESCE(s.prevSolarValue, 0)
-                          THEN
-                              COALESCE(e.prevGrossValue, 0)
-                              - COALESCE(s.prevSolarValue, 0)
-                          ELSE 0
-                      END
+                      COALESCE(e.prevGridValue, 0)
                       AS DECIMAL(18,2)
                   ) AS prevValue,
 
                   CAST(
-                      CASE
-                          WHEN COALESCE(e.grossVndCost, 0)
-                               > COALESCE(e.solarVndCost, 0)
-                          THEN
-                              COALESCE(e.grossVndCost, 0)
-                              - COALESCE(e.solarVndCost, 0)
-                          ELSE 0
-                      END
+                      COALESCE(e.gridVndCost, 0)
                       AS DECIMAL(18,2)
                   ) AS vndCost,
 
                   CAST(
-                      CASE
-                          WHEN COALESCE(e.prevGrossVndCost, 0)
-                               > COALESCE(e.prevSolarVndCost, 0)
-                          THEN
-                              COALESCE(e.prevGrossVndCost, 0)
-                              - COALESCE(e.prevSolarVndCost, 0)
-                          ELSE 0
-                      END
+                      COALESCE(e.prevGridVndCost, 0)
                       AS DECIMAL(18,2)
                   ) AS prevVndCost
 
               FROM EnergyMonthly e
-              CROSS JOIN SolarMonthly s
           ),
 
           FinalRows AS (

@@ -16,808 +16,738 @@ public interface SolarDashboardRepo
 		extends JpaRepository<DummyEntity, Long> {
 
 	@Query(value = """
-			WITH DeviceMap AS (
-			    SELECT DISTINCT
-			        ch.box_device_id,
-			        sc.fac,
-			
-			        CASE
-			            WHEN UPPER(
-			                LTRIM(
-			                    RTRIM(
-			                        ISNULL(ch.box_id, '')
-			                    )
-			                )
-			            ) = 'SOLAR'
-			            THEN 1
-			            ELSE 0
-			        END AS is_solar
-			
-			    FROM dbo.F2_Utility_Scada_Channel ch
-			
-			    INNER JOIN dbo.F2_Utility_Scada sc
-			        ON sc.scada_id = ch.scada_id
-			),
-			
-			EnergyRaw AS (
-			    SELECT
-			        dm.is_solar,
-			
-			        CAST(
-			            hm.[value]
-			            AS DECIMAL(19, 6)
-			        ) AS energy_value
-			
-			    FROM dbo.F2_Utility_Para_History_Main hm
-			
-			    INNER JOIN dbo.F2_Utility_Para pa
-			        ON pa.box_device_id = hm.box_device_id
-			       AND pa.plc_address = hm.plc_address
-			
-			    INNER JOIN DeviceMap dm
-			        ON dm.box_device_id = hm.box_device_id
-			
-			    WHERE
-			        pa.name_en = :energyName
-			
-			        AND hm.pick_at >= :todayStart
-			        AND hm.pick_at < :tomorrowStart
-			
-			        AND hm.[value] > 0
-			
-			        AND ISNULL(
-			            hm.MTD,
-			            ''
-			        ) = 'MTD'
-			
-			        AND (
-			            UPPER(:fac) = 'KVH'
-			            OR UPPER(dm.fac) = UPPER(:fac)
-			        )
-			),
-			
-			TodayEnergy AS (
-			    SELECT
-			        SUM(
-			            CASE
-			                WHEN is_solar = 0
-			                    THEN energy_value
-			                ELSE 0
-			            END
-			        ) AS gross_value,
-			
-			        SUM(
-			            CASE
-			                WHEN is_solar = 1
-			                    THEN energy_value
-			                ELSE 0
-			            END
-			        ) AS solar_value
-			
-			    FROM EnergyRaw
-			),
-			
-			SolarPowerDevices AS (
-			    SELECT DISTINCT
-			        ch.box_device_id
-			
-			    FROM dbo.F2_Utility_Scada_Channel ch
-			
-			    INNER JOIN dbo.F2_Utility_Scada sc
-			        ON sc.scada_id = ch.scada_id
-			
-			    WHERE
-			        UPPER(
-			            LTRIM(
-			                RTRIM(
-			                    ISNULL(ch.box_id, '')
-			                )
-			            )
-			        ) = 'SOLAR'
-			
-			        AND (
-			            UPPER(:fac) = 'KVH'
-			            OR UPPER(sc.fac) = UPPER(:fac)
-			        )
-			),
-			
-			SolarPowerParams AS (
-			    SELECT
-			        pa.box_device_id,
-			        pa.plc_address
-			
-			    FROM dbo.F2_Utility_Para pa
-			
-			    INNER JOIN SolarPowerDevices sd
-			        ON sd.box_device_id = pa.box_device_id
-			
-			    WHERE
-			        pa.name_en = :powerName
-			),
-			
-			LatestPowerRanked AS (
-			    SELECT
-			        hi.box_device_id,
-			        hi.plc_address,
-			
-			        CAST(
-			            hi.[value]
-			            AS DECIMAL(19, 6)
-			        ) AS power_value,
-			
-			        ROW_NUMBER() OVER (
-			            PARTITION BY
-			                hi.box_device_id,
-			                hi.plc_address
-			
-			            ORDER BY
-			                hi.recorded_at DESC
-			        ) AS row_num
-			
-			    FROM dbo.F2_Utility_Para_History hi
-			
-			    INNER JOIN SolarPowerParams sp
-			        ON sp.box_device_id = hi.box_device_id
-			       AND sp.plc_address = hi.plc_address
-			
-			    WHERE
-			        hi.recorded_at < :now
-			        AND hi.[value] >= 0
-			),
-			
-			CurrentPower AS (
-			    SELECT
-			        SUM(
-			            power_value
-			        ) AS current_power
-			
-			    FROM LatestPowerRanked
-			
-			    WHERE row_num = 1
-			)
-			
-			SELECT
-			    CAST(
-			        COALESCE(
-			            (
-			                SELECT current_power
-			                FROM CurrentPower
-			            ),
-			            0
-			        )
-			        AS DECIMAL(19, 1)
-			    ) AS currentPowerKw,
-			
-			    CAST(
-			        COALESCE(
-			            te.solar_value,
-			            0
-			        )
-			        AS DECIMAL(19, 1)
-			    ) AS solarKwh,
-			
-			    CAST(
-			        CASE
-			            WHEN COALESCE(
-			                te.gross_value,
-			                0
-			            )
-			            >=
-			            COALESCE(
-			                te.solar_value,
-			                0
-			            )
-			
-			            THEN
-			                COALESCE(
-			                    te.gross_value,
-			                    0
-			                )
-			                -
-			                COALESCE(
-			                    te.solar_value,
-			                    0
-			                )
-			
-			            ELSE 0
-			        END
-			        AS DECIMAL(19, 1)
-			    ) AS gridKwh,
-			
-			    CAST(
-			        COALESCE(
-			            te.gross_value,
-			            0
-			        )
-			        AS DECIMAL(19, 1)
-			    ) AS totalKwh,
-			
-			    CAST(
-			        CASE
-			            WHEN COALESCE(
-			                te.gross_value,
-			                0
-			            ) > 0
-			
-			            THEN
-			                COALESCE(
-			                    te.solar_value,
-			                    0
-			                )
-			                /
-			                NULLIF(
-			                    te.gross_value,
-			                    0
-			                )
-			                * 100
-			
-			            ELSE 0
-			        END
-			        AS DECIMAL(10, 1)
-			    ) AS solarSharePercent
-			
-			FROM TodayEnergy te
-			""", nativeQuery = true)
+    WITH DeviceMap AS (
+        SELECT
+            ch.box_device_id,
+
+            MAX(sc.fac) AS fac,
+
+            MAX(
+                CASE
+                    WHEN UPPER(
+                        LTRIM(
+                            RTRIM(
+                                ISNULL(ch.box_id, '')
+                            )
+                        )
+                    ) = 'SOLAR'
+                    THEN 1
+                    ELSE 0
+                END
+            ) AS is_solar
+
+        FROM dbo.F2_Utility_Scada_Channel ch
+
+        INNER JOIN dbo.F2_Utility_Scada sc
+            ON sc.scada_id = ch.scada_id
+
+        GROUP BY
+            ch.box_device_id
+    ),
+
+    EnergyRaw AS (
+        SELECT
+            dm.is_solar,
+
+            CAST(
+                hm.[value]
+                AS DECIMAL(19,6)
+            ) AS energy_value
+
+        FROM dbo.F2_Utility_Para_History_Main hm
+
+        INNER JOIN dbo.F2_Utility_Para pa
+            ON pa.box_device_id = hm.box_device_id
+           AND pa.plc_address = hm.plc_address
+
+        INNER JOIN DeviceMap dm
+            ON dm.box_device_id = hm.box_device_id
+
+        WHERE
+            pa.name_en = :energyName
+
+            AND hm.pick_at >= :todayStart
+            AND hm.pick_at < :tomorrowStart
+
+            AND hm.[value] > 0
+
+            AND ISNULL(hm.MTD, '') = 'MTD'
+
+            AND (
+                UPPER(:fac) = 'KVH'
+                OR UPPER(dm.fac) = UPPER(:fac)
+            )
+    ),
+
+    TodayEnergy AS (
+        SELECT
+            -- GRID = điện thường
+            COALESCE(
+                SUM(
+                    CASE
+                        WHEN is_solar = 0
+                        THEN energy_value
+                        ELSE 0
+                    END
+                ),
+                0
+            ) AS grid_value,
+
+            -- SOLAR
+            COALESCE(
+                SUM(
+                    CASE
+                        WHEN is_solar = 1
+                        THEN energy_value
+                        ELSE 0
+                    END
+                ),
+                0
+            ) AS solar_value
+
+        FROM EnergyRaw
+    ),
+
+    SolarPowerDevices AS (
+        SELECT DISTINCT
+            ch.box_device_id
+
+        FROM dbo.F2_Utility_Scada_Channel ch
+
+        INNER JOIN dbo.F2_Utility_Scada sc
+            ON sc.scada_id = ch.scada_id
+
+        WHERE
+            UPPER(
+                LTRIM(
+                    RTRIM(
+                        ISNULL(ch.box_id, '')
+                    )
+                )
+            ) = 'SOLAR'
+
+            AND (
+                UPPER(:fac) = 'KVH'
+                OR UPPER(sc.fac) = UPPER(:fac)
+            )
+    ),
+
+    SolarPowerParams AS (
+        SELECT DISTINCT
+            pa.box_device_id,
+            pa.plc_address
+
+        FROM dbo.F2_Utility_Para pa
+
+        INNER JOIN SolarPowerDevices sd
+            ON sd.box_device_id = pa.box_device_id
+
+        WHERE
+            pa.name_en = :powerName
+    ),
+
+    LatestPowerRanked AS (
+        SELECT
+            hi.box_device_id,
+            hi.plc_address,
+
+            CAST(
+                hi.[value]
+                AS DECIMAL(19,6)
+            ) AS power_value,
+
+            ROW_NUMBER() OVER (
+                PARTITION BY
+                    hi.box_device_id,
+                    hi.plc_address
+
+                ORDER BY
+                    hi.recorded_at DESC
+            ) AS row_num
+
+        FROM dbo.F2_Utility_Para_History hi
+
+        INNER JOIN SolarPowerParams sp
+            ON sp.box_device_id = hi.box_device_id
+           AND sp.plc_address = hi.plc_address
+
+        WHERE
+            hi.recorded_at < :now
+            AND hi.[value] >= 0
+    ),
+
+    CurrentPower AS (
+        SELECT
+            COALESCE(
+                SUM(power_value),
+                0
+            ) AS current_power
+
+        FROM LatestPowerRanked
+
+        WHERE
+            row_num = 1
+    )
+
+    SELECT
+        -- Solar power hiện tại
+        CAST(
+            COALESCE(
+                cp.current_power,
+                0
+            )
+            AS DECIMAL(19,1)
+        ) AS currentPowerKw,
+
+        -- Solar energy
+        CAST(
+            COALESCE(
+                te.solar_value,
+                0
+            )
+            AS DECIMAL(19,1)
+        ) AS solarKwh,
+
+        -- GRID = điện thường, KHÔNG trừ Solar
+        CAST(
+            COALESCE(
+                te.grid_value,
+                0
+            )
+            AS DECIMAL(19,1)
+        ) AS gridKwh,
+
+        -- TOTAL = GRID + SOLAR
+        CAST(
+            COALESCE(
+                te.grid_value,
+                0
+            )
+            +
+            COALESCE(
+                te.solar_value,
+                0
+            )
+            AS DECIMAL(19,1)
+        ) AS totalKwh,
+
+        -- SOLAR SHARE = SOLAR / TOTAL
+        CAST(
+            CASE
+                WHEN
+                    COALESCE(te.grid_value, 0)
+                    +
+                    COALESCE(te.solar_value, 0) > 0
+
+                THEN
+                    COALESCE(te.solar_value, 0)
+                    /
+                    NULLIF(
+                        COALESCE(te.grid_value, 0)
+                        +
+                        COALESCE(te.solar_value, 0),
+                        0
+                    )
+                    * 100
+
+                ELSE 0
+            END
+            AS DECIMAL(10,1)
+        ) AS solarSharePercent
+
+    FROM TodayEnergy te
+
+    CROSS JOIN CurrentPower cp
+    """, nativeQuery = true)
 	SolarDashboardProjection getSolarDashboardByToday(
-			@Param("fac")
-			String fac,
-
-			@Param("todayStart")
-			LocalDateTime todayStart,
-
-			@Param("tomorrowStart")
-			LocalDateTime tomorrowStart,
-
-			@Param("now")
-			LocalDateTime now,
-
-			@Param("powerName")
-			String powerName,
-
-			@Param("energyName")
-			String energyName
+			@Param("fac") String fac,
+			@Param("todayStart") LocalDateTime todayStart,
+			@Param("tomorrowStart") LocalDateTime tomorrowStart,
+			@Param("now") LocalDateTime now,
+			@Param("powerName") String powerName,
+			@Param("energyName") String energyName
 	);
 
 
 	@Query(value = """
-			WITH NormalElectricityParam AS (
-			    SELECT DISTINCT
-			        pa.box_device_id,
-			        pa.plc_address
-			
-			    FROM dbo.F2_Utility_Para pa
-			
-			    INNER JOIN dbo.F2_Utility_Scada_Channel ch
-			        ON ch.box_device_id = pa.box_device_id
-			
-			    INNER JOIN dbo.F2_Utility_Scada sc
-			        ON sc.scada_id = ch.scada_id
-			
-			    WHERE
-			        pa.name_en = :energyName
-			
-			        AND UPPER(
-			            LTRIM(
-			                RTRIM(
-			                    ISNULL(ch.box_id, '')
-			                )
-			            )
-			        ) <> 'SOLAR'
-			
-			        AND (
-			            UPPER(:fac) = 'KVH'
-			            OR UPPER(sc.fac) = UPPER(:fac)
-			        )
-			),
-			
-			SolarElectricityParam AS (
-			    SELECT DISTINCT
-			        pa.box_device_id,
-			        pa.plc_address
-			
-			    FROM dbo.F2_Utility_Para pa
-			
-			    INNER JOIN dbo.F2_Utility_Scada_Channel ch
-			        ON ch.box_device_id = pa.box_device_id
-			
-			    INNER JOIN dbo.F2_Utility_Scada sc
-			        ON sc.scada_id = ch.scada_id
-			
-			    WHERE
-			        pa.name_en = :energyName
-			
-			        AND UPPER(
-			            LTRIM(
-			                RTRIM(
-			                    ISNULL(ch.box_id, '')
-			                )
-			            )
-			        ) = 'SOLAR'
-			
-			        AND (
-			            UPPER(:fac) = 'KVH'
-			            OR UPPER(sc.fac) = UPPER(:fac)
-			        )
-			),
-			
-			/* =====================================================
-			 * ĐIỆN THƯỜNG / GROSS
-			 * ===================================================== */
-			GrossEnergy AS (
-			    SELECT
-			        COALESCE(
-			            SUM(
-			                CAST(
-			                    hm.[value]
-			                    AS DECIMAL(19, 6)
-			                )
-			            ),
-			            0
-			        ) AS gross_value
-			
-			    FROM NormalElectricityParam ep
-			
-			    INNER JOIN dbo.F2_Utility_Para_History_Main hm
-			        ON hm.box_device_id = ep.box_device_id
-			       AND hm.plc_address = ep.plc_address
-			
-			    WHERE
-			        hm.pick_at >= :monthStart
-			        AND hm.pick_at < :nextMonthStart
-			
-			        AND hm.[value] > 0
-			
-			        -- QUAN TRỌNG:
-			        -- giữ dòng này nếu Monthly chính của bạn cũng dùng MTD
-			        AND ISNULL(hm.MTD, '') = 'MTD'
-			),
-			
-			/* =====================================================
-			 * SOLAR
-			 * ===================================================== */
-			SolarEnergy AS (
-			    SELECT
-			        COALESCE(
-			            SUM(
-			                CAST(
-			                    hm.[value]
-			                    AS DECIMAL(19, 6)
-			                )
-			            ),
-			            0
-			        ) AS solar_value
-			
-			    FROM SolarElectricityParam ep
-			
-			    INNER JOIN dbo.F2_Utility_Para_History_Main hm
-			        ON hm.box_device_id = ep.box_device_id
-			       AND hm.plc_address = ep.plc_address
-			
-			    WHERE
-			        hm.pick_at >= :monthStart
-			        AND hm.pick_at < :nextMonthStart
-			
-			        AND hm.[value] > 0
-			
-			        AND ISNULL(hm.MTD, '') = 'MTD'
-			),
-			
-			/* =====================================================
-			 * SOLAR POWER DEVICES
-			 * ===================================================== */
-			SolarPowerDevices AS (
-			    SELECT DISTINCT
-			        ch.box_device_id
-			
-			    FROM dbo.F2_Utility_Scada_Channel ch
-			
-			    INNER JOIN dbo.F2_Utility_Scada sc
-			        ON sc.scada_id = ch.scada_id
-			
-			    WHERE
-			        UPPER(
-			            LTRIM(
-			                RTRIM(
-			                    ISNULL(ch.box_id, '')
-			                )
-			            )
-			        ) = 'SOLAR'
-			
-			        AND (
-			            UPPER(:fac) = 'KVH'
-			            OR UPPER(sc.fac) = UPPER(:fac)
-			        )
-			),
-			
-			SolarPowerParams AS (
-			    SELECT DISTINCT
-			        pa.box_device_id,
-			        pa.plc_address
-			
-			    FROM dbo.F2_Utility_Para pa
-			
-			    INNER JOIN SolarPowerDevices sd
-			        ON sd.box_device_id = pa.box_device_id
-			
-			    WHERE
-			        pa.name_en = :powerName
-			),
-			
-			LatestPowerRanked AS (
-			    SELECT
-			        hi.box_device_id,
-			        hi.plc_address,
-			
-			        CAST(
-			            hi.[value]
-			            AS DECIMAL(19, 6)
-			        ) AS power_value,
-			
-			        ROW_NUMBER() OVER (
-			            PARTITION BY
-			                hi.box_device_id,
-			                hi.plc_address
-			            ORDER BY
-			                hi.recorded_at DESC
-			        ) AS row_num
-			
-			    FROM dbo.F2_Utility_Para_History hi
-			
-			    INNER JOIN SolarPowerParams sp
-			        ON sp.box_device_id = hi.box_device_id
-			       AND sp.plc_address = hi.plc_address
-			
-			    WHERE
-			        hi.recorded_at <= :now
-			        AND hi.[value] >= 0
-			),
-			
-			CurrentPower AS (
-			    SELECT
-			        COALESCE(
-			            SUM(power_value),
-			            0
-			        ) AS current_power
-			
-			    FROM LatestPowerRanked
-			
-			    WHERE row_num = 1
-			)
-			
-			SELECT
-			    CAST(
-			        cp.current_power
-			        AS DECIMAL(19, 1)
-			    ) AS currentPowerKw,
-			
-			    CAST(
-			        se.solar_value
-			        AS DECIMAL(19, 1)
-			    ) AS solarKwh,
-			
-			    /* GRID = GROSS - SOLAR */
-			    CAST(
-			        CASE
-			            WHEN ge.gross_value >= se.solar_value
-			            THEN ge.gross_value - se.solar_value
-			            ELSE 0
-			        END
-			        AS DECIMAL(19, 1)
-			    ) AS gridKwh,
-			
-			    /* GROSS */
-			    CAST(
-			        ge.gross_value
-			        AS DECIMAL(19, 1)
-			    ) AS totalKwh,
-			
-			    CAST(
-			        CASE
-			            WHEN ge.gross_value > 0
-			            THEN
-			                se.solar_value
-			                /
-			                NULLIF(ge.gross_value, 0)
-			                * 100
-			            ELSE 0
-			        END
-			        AS DECIMAL(10, 1)
-			    ) AS solarSharePercent
-			
-			FROM GrossEnergy ge
-			CROSS JOIN SolarEnergy se
-			CROSS JOIN CurrentPower cp
-			""", nativeQuery = true)
+    WITH GridElectricityParam AS (
+        SELECT DISTINCT
+            pa.box_device_id,
+            pa.plc_address
+
+        FROM dbo.F2_Utility_Para pa
+
+        INNER JOIN dbo.F2_Utility_Scada_Channel ch
+            ON ch.box_device_id = pa.box_device_id
+
+        INNER JOIN dbo.F2_Utility_Scada sc
+            ON sc.scada_id = ch.scada_id
+
+        WHERE
+            pa.name_en = :energyName
+
+            AND UPPER(
+                LTRIM(
+                    RTRIM(
+                        ISNULL(ch.box_id, '')
+                    )
+                )
+            ) <> 'SOLAR'
+
+            AND (
+                UPPER(:fac) = 'KVH'
+                OR UPPER(sc.fac) = UPPER(:fac)
+            )
+    ),
+
+    SolarElectricityParam AS (
+        SELECT DISTINCT
+            pa.box_device_id,
+            pa.plc_address
+
+        FROM dbo.F2_Utility_Para pa
+
+        INNER JOIN dbo.F2_Utility_Scada_Channel ch
+            ON ch.box_device_id = pa.box_device_id
+
+        INNER JOIN dbo.F2_Utility_Scada sc
+            ON sc.scada_id = ch.scada_id
+
+        WHERE
+            pa.name_en = :energyName
+
+            AND UPPER(
+                LTRIM(
+                    RTRIM(
+                        ISNULL(ch.box_id, '')
+                    )
+                )
+            ) = 'SOLAR'
+
+            AND (
+                UPPER(:fac) = 'KVH'
+                OR UPPER(sc.fac) = UPPER(:fac)
+            )
+    ),
+
+    GridEnergy AS (
+        SELECT
+            COALESCE(
+                SUM(
+                    CAST(
+                        hm.[value]
+                        AS DECIMAL(19,6)
+                    )
+                ),
+                0
+            ) AS grid_value
+
+        FROM GridElectricityParam ep
+
+        INNER JOIN dbo.F2_Utility_Para_History_Main hm
+            ON hm.box_device_id = ep.box_device_id
+           AND hm.plc_address = ep.plc_address
+
+        WHERE
+            hm.pick_at >= :monthStart
+            AND hm.pick_at < :nextMonthStart
+
+            AND hm.[value] > 0
+
+            AND ISNULL(hm.MTD, '') = 'MTD'
+    ),
+
+    SolarEnergy AS (
+        SELECT
+            COALESCE(
+                SUM(
+                    CAST(
+                        hm.[value]
+                        AS DECIMAL(19,6)
+                    )
+                ),
+                0
+            ) AS solar_value
+
+        FROM SolarElectricityParam ep
+
+        INNER JOIN dbo.F2_Utility_Para_History_Main hm
+            ON hm.box_device_id = ep.box_device_id
+           AND hm.plc_address = ep.plc_address
+
+        WHERE
+            hm.pick_at >= :monthStart
+            AND hm.pick_at < :nextMonthStart
+
+            AND hm.[value] > 0
+
+            AND ISNULL(hm.MTD, '') = 'MTD'
+    ),
+
+    SolarPowerDevices AS (
+        SELECT DISTINCT
+            ch.box_device_id
+
+        FROM dbo.F2_Utility_Scada_Channel ch
+
+        INNER JOIN dbo.F2_Utility_Scada sc
+            ON sc.scada_id = ch.scada_id
+
+        WHERE
+            UPPER(
+                LTRIM(
+                    RTRIM(
+                        ISNULL(ch.box_id, '')
+                    )
+                )
+            ) = 'SOLAR'
+
+            AND (
+                UPPER(:fac) = 'KVH'
+                OR UPPER(sc.fac) = UPPER(:fac)
+            )
+    ),
+
+    SolarPowerParams AS (
+        SELECT DISTINCT
+            pa.box_device_id,
+            pa.plc_address
+
+        FROM dbo.F2_Utility_Para pa
+
+        INNER JOIN SolarPowerDevices sd
+            ON sd.box_device_id = pa.box_device_id
+
+        WHERE
+            pa.name_en = :powerName
+    ),
+
+    LatestPowerRanked AS (
+        SELECT
+            hi.box_device_id,
+            hi.plc_address,
+
+            CAST(
+                hi.[value]
+                AS DECIMAL(19,6)
+            ) AS power_value,
+
+            ROW_NUMBER() OVER (
+                PARTITION BY
+                    hi.box_device_id,
+                    hi.plc_address
+
+                ORDER BY
+                    hi.recorded_at DESC
+            ) AS row_num
+
+        FROM dbo.F2_Utility_Para_History hi
+
+        INNER JOIN SolarPowerParams sp
+            ON sp.box_device_id = hi.box_device_id
+           AND sp.plc_address = hi.plc_address
+
+        WHERE
+            hi.recorded_at <= :now
+            AND hi.[value] >= 0
+    ),
+
+    CurrentPower AS (
+        SELECT
+            COALESCE(
+                SUM(power_value),
+                0
+            ) AS current_power
+
+        FROM LatestPowerRanked
+
+        WHERE
+            row_num = 1
+    )
+
+    SELECT
+        CAST(
+            cp.current_power
+            AS DECIMAL(19,1)
+        ) AS currentPowerKw,
+
+        -- Solar
+        CAST(
+            se.solar_value
+            AS DECIMAL(19,1)
+        ) AS solarKwh,
+
+        -- GRID giữ nguyên
+        CAST(
+            ge.grid_value
+            AS DECIMAL(19,1)
+        ) AS gridKwh,
+
+        -- TOTAL = GRID + SOLAR
+        CAST(
+            ge.grid_value
+            +
+            se.solar_value
+            AS DECIMAL(19,1)
+        ) AS totalKwh,
+
+        -- SOLAR SHARE
+        CAST(
+            CASE
+                WHEN
+                    ge.grid_value
+                    +
+                    se.solar_value > 0
+
+                THEN
+                    se.solar_value
+                    /
+                    NULLIF(
+                        ge.grid_value
+                        +
+                        se.solar_value,
+                        0
+                    )
+                    * 100
+
+                ELSE 0
+            END
+            AS DECIMAL(10,1)
+        ) AS solarSharePercent
+
+    FROM GridEnergy ge
+
+    CROSS JOIN SolarEnergy se
+    CROSS JOIN CurrentPower cp
+    """, nativeQuery = true)
 	SolarDashboardProjection getSolarDashboardByMonth(
-
-			@Param("fac")
-			String fac,
-
-			@Param("monthStart")
-			LocalDateTime monthStart,
-
-			@Param("nextMonthStart")
-			LocalDateTime nextMonthStart,
-
-			@Param("now")
-			LocalDateTime now,
-
-			@Param("powerName")
-			String powerName,
-
-			@Param("energyName")
-			String energyName
+			@Param("fac") String fac,
+			@Param("monthStart") LocalDateTime monthStart,
+			@Param("nextMonthStart") LocalDateTime nextMonthStart,
+			@Param("now") LocalDateTime now,
+			@Param("powerName") String powerName,
+			@Param("energyName") String energyName
 	);
 
 
 	@Query(value = """
-        WITH GrossDaily AS (
+    WITH GridDaily AS (
 
-            /* =====================================================
-             * GROSS ELECTRICITY
-             * KHÔNG LẤY SOLAR
-             * ===================================================== */
-            SELECT
-                CAST(
-                    hi.pick_at AS DATE
-                ) AS record_date,
-
-                SUM(
-                    CAST(
-                        hi.[value]
-                        AS DECIMAL(19, 6)
-                    )
-                ) AS gross_value
-
-            FROM dbo.F2_Utility_Para_History_Main hi
-
-            INNER JOIN dbo.F2_Utility_Para pa
-                ON pa.box_device_id = hi.box_device_id
-               AND pa.plc_address = hi.plc_address
-               AND pa.name_en = :energyName
-
-            WHERE
-                hi.pick_at >= :monthStart
-                AND hi.pick_at < :nextMonthStart
-
-                AND hi.[value] > 0
-
-                /* =================================================
-                 * KHÔNG SOLAR
-                 *
-                 * EXISTS tránh duplicate history
-                 * ================================================= */
-                AND EXISTS (
-                    SELECT 1
-
-                    FROM dbo.F2_Utility_Scada_Channel ch
-
-                    INNER JOIN dbo.F2_Utility_Scada sc
-                        ON sc.scada_id = ch.scada_id
-
-                    WHERE
-                        ch.box_device_id = hi.box_device_id
-
-                        AND UPPER(
-                            LTRIM(
-                                RTRIM(
-                                    ISNULL(
-                                        ch.box_id,
-                                        ''
-                                    )
-                                )
-                            )
-                        ) <> 'SOLAR'
-
-                        AND (
-                            UPPER(:fac) = 'KVH'
-                            OR UPPER(sc.fac) = UPPER(:fac)
-                        )
-                )
-
-            GROUP BY
-                CAST(
-                    hi.pick_at AS DATE
-                )
-        ),
-
-
-        SolarDaily AS (
-
-            /* =====================================================
-             * SOLAR
-             * ===================================================== */
-            SELECT
-                CAST(
-                    hi.pick_at AS DATE
-                ) AS record_date,
-
-                SUM(
-                    CAST(
-                        hi.[value]
-                        AS DECIMAL(19, 6)
-                    )
-                ) AS solar_value
-
-            FROM dbo.F2_Utility_Para_History_Main hi
-
-            INNER JOIN dbo.F2_Utility_Para pa
-                ON pa.box_device_id = hi.box_device_id
-               AND pa.plc_address = hi.plc_address
-               AND pa.name_en = :energyName
-
-            WHERE
-                hi.pick_at >= :monthStart
-                AND hi.pick_at < :nextMonthStart
-
-                AND hi.[value] > 0
-
-                /* =================================================
-                 * CHỈ SOLAR
-                 * ================================================= */
-                AND EXISTS (
-                    SELECT 1
-
-                    FROM dbo.F2_Utility_Scada_Channel ch
-
-                    INNER JOIN dbo.F2_Utility_Scada sc
-                        ON sc.scada_id = ch.scada_id
-
-                    WHERE
-                        ch.box_device_id = hi.box_device_id
-
-                        AND UPPER(
-                            LTRIM(
-                                RTRIM(
-                                    ISNULL(
-                                        ch.box_id,
-                                        ''
-                                    )
-                                )
-                            )
-                        ) = 'SOLAR'
-
-                        AND (
-                            UPPER(:fac) = 'KVH'
-                            OR UPPER(sc.fac) = UPPER(:fac)
-                        )
-                )
-
-            GROUP BY
-                CAST(
-                    hi.pick_at AS DATE
-                )
-        ),
-
-
-        Dates AS (
-            SELECT
-                record_date
-            FROM GrossDaily
-
-            UNION
-
-            SELECT
-                record_date
-            FROM SolarDaily
-        )
-
+        -- =====================================================
+        -- GRID / ĐIỆN THƯỜNG
+        -- Không lấy Solar
+        -- =====================================================
 
         SELECT
-            d.record_date AS recordDate,
-
-
-            /* =====================================================
-             * SOLAR
-             * ===================================================== */
             CAST(
-                COALESCE(
-                    s.solar_value,
-                    0
+                hi.pick_at AS DATE
+            ) AS record_date,
+
+            SUM(
+                CAST(
+                    hi.[value]
+                    AS DECIMAL(19,6)
                 )
-                AS DECIMAL(19, 2)
-            ) AS solarKwh,
+            ) AS grid_value
 
+        FROM dbo.F2_Utility_Para_History_Main hi
 
-            /* =====================================================
-             * GRID
-             *
-             * GRID = GROSS - SOLAR
-             * ===================================================== */
+        INNER JOIN dbo.F2_Utility_Para pa
+            ON pa.box_device_id = hi.box_device_id
+           AND pa.plc_address = hi.plc_address
+           AND pa.name_en = :energyName
+
+        WHERE
+            hi.pick_at >= :monthStart
+            AND hi.pick_at < :nextMonthStart
+
+            AND hi.[value] > 0
+
+            AND ISNULL(hi.MTD, '') = 'MTD'
+
+            AND EXISTS (
+                SELECT 1
+
+                FROM dbo.F2_Utility_Scada_Channel ch
+
+                INNER JOIN dbo.F2_Utility_Scada sc
+                    ON sc.scada_id = ch.scada_id
+
+                WHERE
+                    ch.box_device_id = hi.box_device_id
+
+                    AND UPPER(
+                        LTRIM(
+                            RTRIM(
+                                ISNULL(ch.box_id, '')
+                            )
+                        )
+                    ) <> 'SOLAR'
+
+                    AND (
+                        UPPER(:fac) = 'KVH'
+                        OR UPPER(sc.fac) = UPPER(:fac)
+                    )
+            )
+
+        GROUP BY
             CAST(
-                CASE
-                    WHEN
-                        COALESCE(
-                            g.gross_value,
-                            0
-                        )
-                        >=
-                        COALESCE(
-                            s.solar_value,
-                            0
-                        )
+                hi.pick_at AS DATE
+            )
+    ),
 
-                    THEN
-                        COALESCE(
-                            g.gross_value,
-                            0
-                        )
-                        -
-                        COALESCE(
-                            s.solar_value,
-                            0
-                        )
+    SolarDaily AS (
 
-                    ELSE 0
-                END
-                AS DECIMAL(19, 2)
-            ) AS gridKwh,
+        -- =====================================================
+        -- SOLAR
+        -- Chỉ lấy Solar
+        -- =====================================================
 
-
-            /* =====================================================
-             * TOTAL / GROSS
-             * ===================================================== */
+        SELECT
             CAST(
-                COALESCE(
-                    g.gross_value,
-                    0
+                hi.pick_at AS DATE
+            ) AS record_date,
+
+            SUM(
+                CAST(
+                    hi.[value]
+                    AS DECIMAL(19,6)
                 )
-                AS DECIMAL(19, 2)
-            ) AS totalKwh,
+            ) AS solar_value
 
+        FROM dbo.F2_Utility_Para_History_Main hi
 
-            /* =====================================================
-             * SOLAR SHARE
-             * ===================================================== */
+        INNER JOIN dbo.F2_Utility_Para pa
+            ON pa.box_device_id = hi.box_device_id
+           AND pa.plc_address = hi.plc_address
+           AND pa.name_en = :energyName
+
+        WHERE
+            hi.pick_at >= :monthStart
+            AND hi.pick_at < :nextMonthStart
+
+            AND hi.[value] > 0
+
+            AND ISNULL(hi.MTD, '') = 'MTD'
+
+            AND EXISTS (
+                SELECT 1
+
+                FROM dbo.F2_Utility_Scada_Channel ch
+
+                INNER JOIN dbo.F2_Utility_Scada sc
+                    ON sc.scada_id = ch.scada_id
+
+                WHERE
+                    ch.box_device_id = hi.box_device_id
+
+                    AND UPPER(
+                        LTRIM(
+                            RTRIM(
+                                ISNULL(ch.box_id, '')
+                            )
+                        )
+                    ) = 'SOLAR'
+
+                    AND (
+                        UPPER(:fac) = 'KVH'
+                        OR UPPER(sc.fac) = UPPER(:fac)
+                    )
+            )
+
+        GROUP BY
             CAST(
-                CASE
-                    WHEN
-                        COALESCE(
-                            g.gross_value,
-                            0
-                        ) > 0
+                hi.pick_at AS DATE
+            )
+    ),
 
-                    THEN
-                        COALESCE(
-                            s.solar_value,
-                            0
-                        )
-                        /
-                        NULLIF(
-                            g.gross_value,
-                            0
-                        )
-                        * 100
+    Dates AS (
+        SELECT
+            record_date
+        FROM GridDaily
 
-                    ELSE 0
-                END
-                AS DECIMAL(10, 2)
-            ) AS solarSharePercent
+        UNION
 
-        FROM Dates d
+        SELECT
+            record_date
+        FROM SolarDaily
+    )
 
-        LEFT JOIN GrossDaily g
-            ON g.record_date = d.record_date
+    SELECT
+        d.record_date AS recordDate,
 
-        LEFT JOIN SolarDaily s
-            ON s.record_date = d.record_date
+        -- SOLAR
+        CAST(
+            COALESCE(
+                s.solar_value,
+                0
+            )
+            AS DECIMAL(19,2)
+        ) AS solarKwh,
 
-        ORDER BY
-            d.record_date
-        """, nativeQuery = true)
+        -- GRID giữ nguyên
+        CAST(
+            COALESCE(
+                g.grid_value,
+                0
+            )
+            AS DECIMAL(19,2)
+        ) AS gridKwh,
+
+        -- TOTAL = GRID + SOLAR
+        CAST(
+            COALESCE(
+                g.grid_value,
+                0
+            )
+            +
+            COALESCE(
+                s.solar_value,
+                0
+            )
+            AS DECIMAL(19,2)
+        ) AS totalKwh,
+
+        -- SOLAR SHARE = SOLAR / TOTAL
+        CAST(
+            CASE
+                WHEN
+                    COALESCE(g.grid_value, 0)
+                    +
+                    COALESCE(s.solar_value, 0) > 0
+
+                THEN
+                    COALESCE(s.solar_value, 0)
+                    /
+                    NULLIF(
+                        COALESCE(g.grid_value, 0)
+                        +
+                        COALESCE(s.solar_value, 0),
+                        0
+                    )
+                    * 100
+
+                ELSE 0
+            END
+            AS DECIMAL(10,2)
+        ) AS solarSharePercent
+
+    FROM Dates d
+
+    LEFT JOIN GridDaily g
+        ON g.record_date = d.record_date
+
+    LEFT JOIN SolarDaily s
+        ON s.record_date = d.record_date
+
+    ORDER BY
+        d.record_date
+    """, nativeQuery = true)
 	List<SolarDailyTrendProjection> getSolarDailyTrend(
-
-			@Param("fac")
-			String fac,
-
-			@Param("monthStart")
-			LocalDateTime monthStart,
-
-			@Param("nextMonthStart")
-			LocalDateTime nextMonthStart,
-
-			@Param("energyName")
-			String energyName
+			@Param("fac") String fac,
+			@Param("monthStart") LocalDateTime monthStart,
+			@Param("nextMonthStart") LocalDateTime nextMonthStart,
+			@Param("energyName") String energyName
 	);
 
 

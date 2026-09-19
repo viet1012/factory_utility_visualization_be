@@ -3,7 +3,6 @@ package com.example.factory_utility_visualization_be.service.runtime;
 
 import com.example.factory_utility_visualization_be.dto.runtime.ChannelDto;
 import com.example.factory_utility_visualization_be.dto.runtime.HourPointDto;
-import com.example.factory_utility_visualization_be.dto.runtime.LatestRecordDto;
 import com.example.factory_utility_visualization_be.dto.runtime.MinutePointDto;
 import com.example.factory_utility_visualization_be.dto.runtime.ParamDto;
 import com.example.factory_utility_visualization_be.dto.runtime.ScadaDto;
@@ -18,8 +17,7 @@ import com.example.factory_utility_visualization_be.repository.F2UtilityParaHist
 import com.example.factory_utility_visualization_be.repository.F2UtilityParaRepo;
 import com.example.factory_utility_visualization_be.repository.F2UtilityScadaChannelRepo;
 import com.example.factory_utility_visualization_be.repository.F2UtilityScadaRepo;
-import com.example.factory_utility_visualization_be.request.UtilitySeriesRequest;
-import com.example.factory_utility_visualization_be.response.UtilitySeriesResponse;
+import com.example.factory_utility_visualization_be.service.util.FacilityValidator;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -38,6 +36,7 @@ public class UtilityQueryService {
 	private final F2UtilityScadaChannelRepo channelRepo;
 	private final F2UtilityParaRepo paraRepo;
 	private final F2UtilityParaHistoryRepo historyRepo;
+	private final UtilityMasterDataCacheService masterDataCache;
 
 	// HELPER
 	public static String blankToNull(String s) {
@@ -46,17 +45,17 @@ public class UtilityQueryService {
 
 	// 1) GET /scadas
 	public List<ScadaDto> getScadas() {
-		return scadaRepo.findAll().stream().map(s -> ScadaDto.builder().scadaId(s.getScadaId()).fac(s.getFac()).plcIp(s.getPlcIp()).plcPort(s.getPlcPort()).wlan(s.getWlan()).build()).toList();
+		return masterDataCache.findAllScadas().stream().map(s -> ScadaDto.builder().scadaId(s.getScadaId()).fac(s.getFac()).plcIp(s.getPlcIp()).plcPort(s.getPlcPort()).wlan(s.getWlan()).build()).toList();
 	}
 
 	// 2) GET /channels?facId&scadaId&cate
 	public List<ChannelDto> getChannels(String facId, String scadaId, String cate) {
 
-		final Set<String> allowedScadaIds = (facId != null && !facId.isBlank()) ? scadaRepo.findAll().stream().filter(s -> facId.equalsIgnoreCase(s.getFac())).map(F2UtilityScada::getScadaId).collect(Collectors.toSet()) : null;
+		final Set<String> allowedScadaIds = (facId != null && !facId.isBlank()) ? masterDataCache.findAllScadas().stream().filter(s -> facId.equalsIgnoreCase(s.getFac())).map(F2UtilityScada::getScadaId).collect(Collectors.toSet()) : null;
 
 		if (allowedScadaIds != null && allowedScadaIds.isEmpty()) return List.of();
 
-		List<F2UtilityScadaChannel> channels = channelRepo.findAll();
+		List<F2UtilityScadaChannel> channels = masterDataCache.findAllChannels();
 
 		if (allowedScadaIds != null) {
 			channels = channels.stream().filter(c -> allowedScadaIds.contains(c.getScadaId())).toList();
@@ -101,7 +100,7 @@ public class UtilityQueryService {
 			String boxDeviceId,
 			List<String> cateIds
 	) {
-		String normalizedFac = blankToNull(facId);
+		String normalizedFac = FacilityValidator.normalizeOptionalOrNull(facId);
 		String normalizedScada = blankToNull(scadaId);
 		String normalizedCate = blankToNull(cate);
 		String normalizedDevice = blankToNull(boxDeviceId);
@@ -368,50 +367,14 @@ public class UtilityQueryService {
 		);
 	}
 
-	public List<LatestRecordDto> getLatest1(String facId, String scadaId, String cate, String boxDeviceId, List<String> cateIds) {
-		List<ChannelDto> channelDtos = getChannels(facId, scadaId, cate);
-
-		Set<String> filteredDeviceIds = channelDtos.stream().map(ChannelDto::getBoxDeviceId).collect(Collectors.toSet());
-
-		final List<String> deviceIds;
-
-		if (boxDeviceId != null && !boxDeviceId.isBlank()) {
-			if (!filteredDeviceIds.isEmpty() && !filteredDeviceIds.contains(boxDeviceId)) {
-				return List.of();
-			}
-			deviceIds = List.of(boxDeviceId);
-		} else {
-			deviceIds = filteredDeviceIds.isEmpty() ? List.of() : new ArrayList<>(filteredDeviceIds);
-		}
-
-		// nếu user filter fac/scada/cate mà không ra device nào
-		if (deviceIds.isEmpty() && (facId != null || scadaId != null || cate != null)) {
-			return List.of();
-		}
-
-		int useDeviceIds = deviceIds.isEmpty() ? 0 : 1;
-		List<String> safeDeviceIds = useDeviceIds == 1 ? deviceIds : List.of("__NO_DEVICE__");
-
-		List<String> cateIdsNorm = cateIds == null ? List.of() : cateIds.stream().filter(s -> s != null && !s.isBlank()).toList();
-
-		int useCateIds = cateIdsNorm.isEmpty() ? 0 : 1;
-		List<String> safeCateIds = useCateIds == 1 ? cateIdsNorm : List.of("__NO_CATE__");
-
-		var rows = historyRepo.latestPerKey(facId, scadaId, cate, blankToNull(boxDeviceId),
-
-				useDeviceIds, safeDeviceIds,
-
-				useCateIds, safeCateIds);
-
-		return rows.stream().map(r -> LatestRecordDto.builder().boxDeviceId(r.getBoxDeviceId()).plcAddress(r.getPlcAddress()).value(r.getValue()).recordedAt(r.getRecordedAt()).cateId(r.getCateId()).scadaId(r.getScadaId()).fac(r.getFac()).cate(r.getCate()).boxId(r.getBoxId()).name_en(r.getNameEn()).unit(r.getUnit()).minVol(r.getMinVol()).maxVol(r.getMaxVol()).minVolStd(r.getMinVolStd()).maxVolStd(r.getMaxVolStd()).alarm(r.getAlarm() == null ? "Normal" : r.getAlarm()).build()).toList();
-	}
-
 
 	public List<MinutePointView> getSeriesByMinute(LocalDateTime fromTs, LocalDateTime toTs, String facId,
 	                                               String cate,
 	                                               String boxDeviceId,
 	                                               String plcAddress,
 	                                               List<String> cateIds) {
+		String normalizedFac = FacilityValidator.normalizeOptionalOrNull(facId);
+
 		// normalize cateIds
 		List<String> cateIdsNorm = (cateIds == null) ? List.of() : cateIds.stream().filter(s -> s != null && !s.isBlank()).map(String::trim).toList();
 
@@ -421,7 +384,7 @@ public class UtilityQueryService {
 		List<String> safeCateIds = (useCateIds == 1) ? cateIdsNorm : List.of("__NO_CATE__");
 		return historyRepo.seriesByMinuteLast(fromTs, toTs, blankToNull(boxDeviceId), blankToNull(plcAddress),
 
-				blankToNull(facId),     // ✅ NEW
+				normalizedFac,          // ✅ NEW
 				blankToNull(cate),      // ✅ NEW
 
 				useCateIds, safeCateIds);

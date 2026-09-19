@@ -1,16 +1,17 @@
 package com.example.factory_utility_visualization_be.repository.overview.daily;
 
-import com.example.factory_utility_visualization_be.repository.overview.daily.projection.UtilityDailyDashboardProjection;
-import com.example.factory_utility_visualization_be.repository.overview.daily.projection.UtilityDailyElectricityStackProjection;
-import com.example.factory_utility_visualization_be.repository.overview.daily.projection.UtilityDailySignalProjection;
-import com.example.factory_utility_visualization_be.model.DummyEntity;
+import java.time.LocalDateTime;
+import java.util.List;
+
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
-import java.time.LocalDateTime;
-import java.util.List;
+import com.example.factory_utility_visualization_be.model.DummyEntity;
+import com.example.factory_utility_visualization_be.repository.overview.daily.projection.UtilityDailyDashboardProjection;
+import com.example.factory_utility_visualization_be.repository.overview.daily.projection.UtilityDailyElectricityStackProjection;
+import com.example.factory_utility_visualization_be.repository.overview.daily.projection.UtilityDailySignalProjection;
 
 @Repository
 public interface UtilityDailyRepo extends JpaRepository<DummyEntity, Long> {
@@ -120,44 +121,24 @@ public interface UtilityDailyRepo extends JpaRepository<DummyEntity, Long> {
         SELECT
             record_date AS recordDate,
 
-            -- =========================================
-            -- GRID = TOTAL - SOLAR
-            -- =========================================
+            -- Điện thường: giữ nguyên
             CAST(
-                CASE
-                    WHEN COALESCE(total_value, 0)
-                         >= COALESCE(solar_value, 0)
-
-                    THEN
-                        COALESCE(total_value, 0)
-                        -
-                        COALESCE(solar_value, 0)
-
-                    ELSE 0
-                END
+                COALESCE(total_value, 0)
                 AS DECIMAL(19,4)
             ) AS gridKwh,
 
-            -- =========================================
-            -- SOLAR
-            -- =========================================
+            -- Solar: chỉ lấy meter Solar
             CAST(
-                COALESCE(
-                    solar_value,
-                    0
-                )
+                COALESCE(solar_value, 0)
                 AS DECIMAL(19,4)
             ) AS solarKwh,
 
-            -- =========================================
-            -- TOTAL
-            -- Đã bao gồm Solar
-            -- =========================================
+            -- Nếu totalKwh muốn thể hiện tổng thực tế:
+            -- điện thường + solar
             CAST(
-                COALESCE(
-                    total_value,
-                    0
-                )
+                COALESCE(total_value, 0)
+                +
+                COALESCE(solar_value, 0)
                 AS DECIMAL(19,4)
             ) AS totalKwh
 
@@ -167,7 +148,7 @@ public interface UtilityDailyRepo extends JpaRepository<DummyEntity, Long> {
             record_date
         """, nativeQuery = true)
 	List<UtilityDailyElectricityStackProjection>
-	getDailyElectricityStack(
+	getDailyElectricityByDateRange(
 
 			@Param("fac")
 			String fac,
@@ -322,7 +303,7 @@ public interface UtilityDailyRepo extends JpaRepository<DummyEntity, Long> {
         recordDate,
         utilityType
     """, nativeQuery = true)
-	List<UtilityDailyDashboardProjection> getDailyDashboardByMonth(
+	List<UtilityDailyDashboardProjection> getDailyWaterAndAirByDateRange(
 			@Param("fac") String fac,
 			@Param("fromTime") LocalDateTime fromTime,
 			@Param("toTime") LocalDateTime toTime

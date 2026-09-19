@@ -1,5 +1,6 @@
 package com.example.factory_utility_visualization_be.service.overview.monthly;
 
+import com.example.factory_utility_visualization_be.config.UtilityFinanceProperties;
 import com.example.factory_utility_visualization_be.dto.overview.monthly.MonthlyQueryRange;
 import com.example.factory_utility_visualization_be.dto.overview.monthly.MonthlySummaryDto;
 import com.example.factory_utility_visualization_be.repository.overview.monthly.projection.MonthlySummaryProjection;
@@ -10,7 +11,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
@@ -21,12 +21,6 @@ import java.util.List;
 @RequiredArgsConstructor
 public class UtilityMonthlyQueryService {
 
-	private static final BigDecimal DEFAULT_EXCHANGE =
-			new BigDecimal("25585");
-
-	private static final BigDecimal DEFAULT_SEPZONE =
-			BigDecimal.ONE;
-
 	private static final ZoneId APP_ZONE =
 			ZoneId.of("Asia/Ho_Chi_Minh");
 
@@ -34,6 +28,7 @@ public class UtilityMonthlyQueryService {
 
 	private final UtilityMonthlyRepo repo;
 	private final UtilityMonthlyKvhJdbcRepository kvhJdbcRepository;
+	private final UtilityFinanceProperties financeProperties;
 
 	@Transactional(readOnly = true)
 	public List<MonthlySummaryDto> query(
@@ -98,8 +93,8 @@ public class UtilityMonthlyQueryService {
 					range.currentTo(),
 					range.prevFrom(),
 					range.prevTo(),
-					DEFAULT_EXCHANGE,
-					DEFAULT_SEPZONE
+					financeProperties.getMonthly().getExchangeRate(),
+					financeProperties.getMonthly().getSepzone()
 			);
 		}
 
@@ -110,8 +105,8 @@ public class UtilityMonthlyQueryService {
 				range.currentTo(),
 				range.prevFrom(),
 				range.prevTo(),
-				DEFAULT_EXCHANGE,
-				DEFAULT_SEPZONE
+				financeProperties.getMonthly().getExchangeRate(),
+				financeProperties.getMonthly().getSepzone()
 		);
 	}
 

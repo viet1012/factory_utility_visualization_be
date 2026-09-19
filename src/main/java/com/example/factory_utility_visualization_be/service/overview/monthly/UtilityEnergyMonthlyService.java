@@ -1,18 +1,17 @@
 package com.example.factory_utility_visualization_be.service.overview.monthly;
 
-import java.time.DateTimeException;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.YearMonth;
 import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
 import java.util.List;
-import java.util.Set;
 
 import org.springframework.stereotype.Service;
 
 import com.example.factory_utility_visualization_be.dto.overview.monthly.MonthlyQueryRange;
 import com.example.factory_utility_visualization_be.dto.overview.monthly.MonthlySummaryDto;
+import com.example.factory_utility_visualization_be.service.util.FacilityValidator;
+import com.example.factory_utility_visualization_be.service.util.YearMonthParser;
 
 import lombok.RequiredArgsConstructor;
 
@@ -20,22 +19,8 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class UtilityEnergyMonthlyService {
 
-	private static final String DEFAULT_FAC =
-			"KVH";
-
 	private static final ZoneId APP_ZONE =
 			ZoneId.of("Asia/Ho_Chi_Minh");
-
-	private static final DateTimeFormatter MONTH_FORMATTER =
-			DateTimeFormatter.ofPattern("yyyyMM");
-
-	private static final Set<String> ALLOWED_FACS =
-			Set.of(
-					"KVH",
-					"Fac_A",
-					"Fac_B",
-					"Fac_C"
-			);
 
 	private final UtilityMonthlyCacheService cacheService;
 
@@ -207,44 +192,16 @@ public class UtilityEnergyMonthlyService {
 	private YearMonth parseMonth(
 			String monthYyyyMm
 	) {
-		if (monthYyyyMm == null ||
-				!monthYyyyMm.matches("\\d{6}")) {
-			throw new IllegalArgumentException(
-					"month must use yyyyMM format"
-			);
-		}
-
-		try {
-			return YearMonth.parse(
-					monthYyyyMm,
-					MONTH_FORMATTER
-			);
-		} catch (DateTimeException exception) {
-			throw new IllegalArgumentException(
-					"Invalid month: " + monthYyyyMm,
-					exception
-			);
-		}
+		return YearMonthParser.parse(
+				monthYyyyMm,
+				"month must use yyyyMM format",
+				"Invalid month: "
+		);
 	}
 
 	private String normalizeFac(
 			String facId
 	) {
-		if (facId == null || facId.isBlank()) {
-			return DEFAULT_FAC;
-		}
-
-		final String input =
-				facId.trim();
-
-		for (String allowed : ALLOWED_FACS) {
-			if (allowed.equalsIgnoreCase(input)) {
-				return allowed;
-			}
-		}
-
-		throw new IllegalArgumentException(
-				"Invalid facId: " + input
-		);
+		return FacilityValidator.normalizeOptionalWithDefault(facId);
 	}
 }

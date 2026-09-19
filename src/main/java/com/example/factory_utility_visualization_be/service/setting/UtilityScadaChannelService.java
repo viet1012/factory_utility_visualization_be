@@ -6,6 +6,7 @@ import com.example.factory_utility_visualization_be.response.setting.BoxDto;
 import com.example.factory_utility_visualization_be.response.setting.DeviceDto;
 import com.example.factory_utility_visualization_be.repository.projection.FacBoxDeviceProjection;
 import com.example.factory_utility_visualization_be.response.setting.FacScadaBoxDto;
+import com.example.factory_utility_visualization_be.service.runtime.UtilityMasterDataCacheService;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -17,9 +18,11 @@ import java.util.Map;
 public class UtilityScadaChannelService {
 
 	private final F2UtilityScadaChannelRepo repository;
+	private final UtilityMasterDataCacheService masterDataCache;
 
-	public UtilityScadaChannelService(F2UtilityScadaChannelRepo repository) {
+	public UtilityScadaChannelService(F2UtilityScadaChannelRepo repository, UtilityMasterDataCacheService masterDataCache) {
 		this.repository = repository;
+		this.masterDataCache = masterDataCache;
 	}
 
 	public List<FacScadaBoxDto> getAllGroupedByFac() {
@@ -86,7 +89,9 @@ public class UtilityScadaChannelService {
 	}
 
 	public F2UtilityScadaChannel create(F2UtilityScadaChannel request) {
-		return repository.save(request);
+		F2UtilityScadaChannel saved = repository.save(request);
+		masterDataCache.evictChannels();
+		return saved;
 	}
 
 	public F2UtilityScadaChannel update(Long id, F2UtilityScadaChannel request) {
@@ -98,12 +103,15 @@ public class UtilityScadaChannelService {
 		entity.setBoxDeviceId(request.getBoxDeviceId());
 		entity.setBoxId(request.getBoxId());
 
-		return repository.save(entity);
+		F2UtilityScadaChannel saved = repository.save(entity);
+		masterDataCache.evictChannels();
+		return saved;
 	}
 
 	public void delete(Long id) {
 		F2UtilityScadaChannel entity = repository.findById(id)
 				.orElseThrow(() -> new RuntimeException("Channel not found with id: " + id));
 		repository.delete(entity);
+		masterDataCache.evictChannels();
 	}
 }

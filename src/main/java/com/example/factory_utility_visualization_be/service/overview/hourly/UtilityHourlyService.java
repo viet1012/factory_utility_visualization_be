@@ -3,7 +3,9 @@ package com.example.factory_utility_visualization_be.service.overview.hourly;
 import com.example.factory_utility_visualization_be.dto.overview.hourly.*;
 import com.example.factory_utility_visualization_be.repository.overview.hourly.projection.HourlyEnergyCompareProjection;
 import com.example.factory_utility_visualization_be.repository.overview.hourly.projection.HourlySensorCompareProjection;
+import com.example.factory_utility_visualization_be.config.UtilityFinanceProperties;
 import com.example.factory_utility_visualization_be.repository.overview.hourly.UtilityHourlyRepo;
+import com.example.factory_utility_visualization_be.service.util.FacilityValidator;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -14,33 +16,16 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
-import java.util.Set;
 
 @Service
 @RequiredArgsConstructor
 public class UtilityHourlyService {
 
-	private static final String DEFAULT_FAC =
-			"KVH";
-
 	private static final String DEFAULT_METRIC =
 			"Total Energy Consumption";
 
-	private static final BigDecimal DEFAULT_EXCHANGE =
-			new BigDecimal("26005");
-
-	private static final BigDecimal DEFAULT_SEPZONE =
-			new BigDecimal("1.075");
-
-	private static final Set<String> ALLOWED_FACS =
-			Set.of(
-					"KVH",
-					"Fac_A",
-					"Fac_B",
-					"Fac_C"
-			);
-
 	private final UtilityHourlyRepo repo;
+	private final UtilityFinanceProperties financeProperties;
 
 
 	// ============================================================
@@ -180,6 +165,102 @@ public class UtilityHourlyService {
 		// MAPPING WATER / AIR
 		// ========================================================
 
+		final SensorSplit sensorSplit =
+				splitSensorRows(sensorRows);
+
+
+		// ========================================================
+		// RESPONSE
+		// ========================================================
+
+		return new UtilityHourlyDashboardDto(
+				fac,
+				LocalDateTime.now(),
+
+				List.copyOf(electricity),
+				List.copyOf(solar),
+
+				List.copyOf(sensorSplit.water()),
+				List.copyOf(sensorSplit.air())
+		);
+	}
+
+
+	// ============================================================
+	// SENSOR ONLY
+	//
+	// Chỉ gọi findHourlySensorCompare — không chạy electricity/solar.
+	// ============================================================
+
+	@Transactional(readOnly = true)
+	public List<HourlyTempCompareDto>
+	getUtilityHourlySensorCompare(
+			String facId,
+			String type
+	) {
+
+		final String normalizedType =
+				normalizeSensorType(type);
+
+		final String fac =
+				normalizeFac(facId);
+
+		final LocalDate today =
+				LocalDate.now();
+
+		final LocalDate yesterday =
+				today.minusDays(1);
+
+		final LocalDateTime fromTime =
+				yesterday.atStartOfDay();
+
+		final LocalDateTime toTime =
+				today
+						.plusDays(1)
+						.atStartOfDay();
+
+		final LocalDateTime todayDate =
+				today.atStartOfDay();
+
+		final LocalDateTime yesterdayDate =
+				yesterday.atStartOfDay();
+
+		final List<HourlySensorCompareProjection>
+				sensorRows =
+				repo.findHourlySensorCompare(
+						fac,
+						fromTime,
+						toTime,
+						todayDate,
+						yesterdayDate
+				);
+
+		final SensorSplit sensorSplit =
+				splitSensorRows(sensorRows);
+
+		return switch (normalizedType) {
+
+			case "AIR" ->
+					List.copyOf(sensorSplit.air());
+
+			default ->
+					List.copyOf(sensorSplit.water());
+		};
+	}
+
+
+	// ============================================================
+	// SENSOR ROW SPLIT (WATER / AIR)
+	//
+	// Dùng chung cho:
+	// - getHourlyDashboard
+	// - getUtilityHourlySensorCompare
+	// ============================================================
+
+	private SensorSplit splitSensorRows(
+			List<HourlySensorCompareProjection> sensorRows
+	) {
+
 		final List<HourlyTempCompareDto> water =
 				new ArrayList<>();
 
@@ -225,54 +306,18 @@ public class UtilityHourlyService {
 			}
 		}
 
-
-		// ========================================================
-		// RESPONSE
-		// ========================================================
-
-		return new UtilityHourlyDashboardDto(
-				fac,
-				LocalDateTime.now(),
-
-				List.copyOf(electricity),
-				List.copyOf(solar),
-
-				List.copyOf(water),
-				List.copyOf(air)
-		);
+		return new SensorSplit(water, air);
 	}
 
 
 	// ============================================================
-	// SENSOR ONLY
+	// SENSOR SPLIT HOLDER
 	// ============================================================
 
-	@Transactional(readOnly = true)
-	public List<HourlyTempCompareDto>
-	getUtilityHourlySensorCompare(
-			String facId,
-			String type
+	private record SensorSplit(
+			List<HourlyTempCompareDto> water,
+			List<HourlyTempCompareDto> air
 	) {
-
-		final String normalizedType =
-				normalizeSensorType(type);
-
-		final UtilityHourlyDashboardDto dashboard =
-				getHourlyDashboard(
-						facId,
-						DEFAULT_METRIC,
-						DEFAULT_EXCHANGE,
-						DEFAULT_SEPZONE
-				);
-
-		return switch (normalizedType) {
-
-			case "AIR" ->
-					dashboard.air();
-
-			default ->
-					dashboard.water();
-		};
 	}
 
 
@@ -346,28 +391,7 @@ public class UtilityHourlyService {
 	private String normalizeFac(
 			String facId
 	) {
-
-		if (facId == null
-				|| facId.isBlank()) {
-			return DEFAULT_FAC;
-		}
-
-		final String input =
-				facId.trim();
-
-		return ALLOWED_FACS.stream()
-
-				.filter(fac ->
-						fac.equalsIgnoreCase(input)
-				)
-
-				.findFirst()
-
-				.orElseThrow(() ->
-						new IllegalArgumentException(
-								"Invalid facId: " + input
-						)
-				);
+		return FacilityValidator.normalizeOptionalWithDefault(facId);
 	}
 
 
@@ -431,7 +455,7 @@ public class UtilityHourlyService {
 				BigDecimal.ZERO
 		) <= 0) {
 
-			return DEFAULT_EXCHANGE;
+			return financeProperties.getHourly().getExchangeRate();
 		}
 
 		return exchange;
@@ -451,7 +475,7 @@ public class UtilityHourlyService {
 				BigDecimal.ZERO
 		) <= 0) {
 
-			return DEFAULT_SEPZONE;
+			return financeProperties.getHourly().getSepzone();
 		}
 
 		return sepzone;
