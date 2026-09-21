@@ -7,6 +7,7 @@ import com.example.factory_utility_visualization_be.request.setting.UtilityScada
 import com.example.factory_utility_visualization_be.response.setting.UtilityScadaResponse;
 import com.example.factory_utility_visualization_be.service.runtime.UtilityMasterDataCacheService;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -34,6 +35,7 @@ public class UtilityScadaService {
 		return toResponse(entity);
 	}
 
+	@Transactional
 	public UtilityScadaResponse create(UtilityScadaRequest request) {
 		F2UtilityScada entity = new F2UtilityScada();
 		mapRequestToEntity(request, entity);
@@ -47,6 +49,7 @@ public class UtilityScadaService {
 		return response;
 	}
 
+	@Transactional
 	public UtilityScadaResponse update(Long id, UtilityScadaRequest request) {
 		F2UtilityScada entity = repository.findById(id)
 				.orElseThrow(() -> new RuntimeException("UtilityScada not found with id: " + id));
@@ -57,11 +60,12 @@ public class UtilityScadaService {
 			entity.setTimeUpdate(LocalDateTime.now());
 		}
 
-		UtilityScadaResponse response = toResponse(repository.save(entity));
+		UtilityScadaResponse response = toResponse(entity);
 		masterDataCache.evictScadas();
 		return response;
 	}
 
+	@Transactional
 	public void delete(Long id) {
 		F2UtilityScada entity = repository.findById(id)
 				.orElseThrow(() -> new RuntimeException("UtilityScada not found with id: " + id));

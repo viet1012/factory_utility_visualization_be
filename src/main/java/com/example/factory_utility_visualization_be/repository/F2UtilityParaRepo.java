@@ -100,9 +100,6 @@ public interface F2UtilityParaRepo extends JpaRepository<F2UtilityPara, Long> {
 			@Param("importantOnly") int importantOnly
 	);
 
-	List<F2UtilityPara> findByCateIdIn(List<String> cateIds);
-
-
 	@Query(value = """
 			SELECT
 			    s.fac AS fac,

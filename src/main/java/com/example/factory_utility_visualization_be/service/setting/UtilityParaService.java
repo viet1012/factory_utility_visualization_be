@@ -8,6 +8,7 @@ import com.example.factory_utility_visualization_be.response.setting.*;
 import com.example.factory_utility_visualization_be.response.setting.para.*;
 import com.example.factory_utility_visualization_be.repository.projection.FacBoxDeviceParaProjection;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -58,36 +59,32 @@ public class UtilityParaService {
 
 			if (row.getBoxId() == null || row.getBoxId().isBlank()) continue;
 
-			boxMap.putIfAbsent(
-					boxKey,
-					BoxWithParaDto.builder()
+			BoxWithParaDto box = boxMap.get(boxKey);
+			if (box == null) {
+				box = BoxWithParaDto.builder()
 							.boxId(row.getBoxId())
 							.devices(new ArrayList<>())
-							.build()
-			);
-
-			if (!facMap.get(facKey).getBoxes().contains(boxMap.get(boxKey))) {
-				facMap.get(facKey).getBoxes().add(boxMap.get(boxKey));
+							.build();
+				boxMap.put(boxKey, box);
+				facMap.get(facKey).getBoxes().add(box);
 			}
 
 			if (row.getBoxDeviceId() == null || row.getBoxDeviceId().isBlank()) continue;
 
-			deviceMap.putIfAbsent(
-					deviceKey,
-					DeviceWithParaDto.builder()
+			DeviceWithParaDto device = deviceMap.get(deviceKey);
+			if (device == null) {
+				device = DeviceWithParaDto.builder()
 							.channelId(row.getChannelId())
 							.cate(row.getCate())
 							.boxDeviceId(row.getBoxDeviceId())
 							.paras(new ArrayList<>())
-							.build()
-			);
-
-			if (!boxMap.get(boxKey).getDevices().contains(deviceMap.get(deviceKey))) {
-				boxMap.get(boxKey).getDevices().add(deviceMap.get(deviceKey));
+							.build();
+				deviceMap.put(deviceKey, device);
+				box.getDevices().add(device);
 			}
 
 			if (row.getParaId() != null) {
-				deviceMap.get(deviceKey).getParas().add(
+				device.getParas().add(
 						ParaDto.builder()
 								.id(row.getParaId())
 								.plcAddress(row.getPlcAddress())
@@ -117,6 +114,7 @@ public class UtilityParaService {
 	}
 
 	// ===== CREATE =====
+	@Transactional
 	public UtilityParaResponse create(UtilityParaRequest request) {
 		F2UtilityPara entity = new F2UtilityPara();
 		mapRequestToEntity(request, entity);
@@ -124,12 +122,13 @@ public class UtilityParaService {
 	}
 
 	// ===== UPDATE =====
+	@Transactional
 	public UtilityParaResponse update(Long id, UtilityParaRequest request) {
 		F2UtilityPara entity = repository.findById(id)
 				.orElseThrow(() -> new RuntimeException("UtilityPara not found with id: " + id));
 
 		mapRequestToEntity(request, entity);
-		return toResponse(repository.save(entity));
+		return toResponse(entity);
 	}
 
 	// ===== DELETE =====

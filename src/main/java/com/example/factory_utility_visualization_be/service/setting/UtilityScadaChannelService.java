@@ -8,6 +8,7 @@ import com.example.factory_utility_visualization_be.repository.projection.FacBox
 import com.example.factory_utility_visualization_be.response.setting.FacScadaBoxDto;
 import com.example.factory_utility_visualization_be.service.runtime.UtilityMasterDataCacheService;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -52,20 +53,18 @@ public class UtilityScadaChannelService {
 			);
 
 			if (row.getBoxId() != null && !row.getBoxId().isBlank()) {
-				boxMap.putIfAbsent(
-						boxKey,
-						BoxDto.builder()
+				BoxDto box = boxMap.get(boxKey);
+				if (box == null) {
+					box = BoxDto.builder()
 								.boxId(row.getBoxId())
 								.devices(new ArrayList<>())
-								.build()
-				);
-
-				if (!facMap.get(facKey).getBoxes().contains(boxMap.get(boxKey))) {
-					facMap.get(facKey).getBoxes().add(boxMap.get(boxKey));
+								.build();
+					boxMap.put(boxKey, box);
+					facMap.get(facKey).getBoxes().add(box);
 				}
 
 				if (row.getBoxDeviceId() != null && !row.getBoxDeviceId().isBlank()) {
-					boxMap.get(boxKey).getDevices().add(
+					box.getDevices().add(
 							DeviceDto.builder()
 									.channelId(row.getChannelId())
 									.cate(row.getCate())
@@ -88,12 +87,14 @@ public class UtilityScadaChannelService {
 				.orElseThrow(() -> new RuntimeException("Channel not found with id: " + id));
 	}
 
+	@Transactional
 	public F2UtilityScadaChannel create(F2UtilityScadaChannel request) {
 		F2UtilityScadaChannel saved = repository.save(request);
 		masterDataCache.evictChannels();
 		return saved;
 	}
 
+	@Transactional
 	public F2UtilityScadaChannel update(Long id, F2UtilityScadaChannel request) {
 		F2UtilityScadaChannel entity = repository.findById(id)
 				.orElseThrow(() -> new RuntimeException("Channel not found with id: " + id));
@@ -103,9 +104,8 @@ public class UtilityScadaChannelService {
 		entity.setBoxDeviceId(request.getBoxDeviceId());
 		entity.setBoxId(request.getBoxId());
 
-		F2UtilityScadaChannel saved = repository.save(entity);
 		masterDataCache.evictChannels();
-		return saved;
+		return entity;
 	}
 
 	public void delete(Long id) {

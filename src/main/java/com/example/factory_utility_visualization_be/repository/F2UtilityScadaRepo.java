@@ -12,7 +12,5 @@ public interface F2UtilityScadaRepo extends JpaRepository<F2UtilityScada, Long> 
 
 	List<F2UtilityScada> findByFac(String fac);
 
-	List<F2UtilityScada> findByConnected(String connected);
-
 	List<F2UtilityScada> findByAlert(Boolean alert);
 }

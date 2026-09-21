@@ -9,14 +9,6 @@ import java.util.List;
 
 public interface F2UtilityScadaChannelRepo extends JpaRepository<F2UtilityScadaChannel, Long> {
 
-    List<F2UtilityScadaChannel> findByScadaId(String scadaId);
-
-    List<F2UtilityScadaChannel> findByCate(String cate);
-
-    List<F2UtilityScadaChannel> findByScadaIdAndCate(String scadaId, String cate);
-
-    List<F2UtilityScadaChannel> findByBoxDeviceId(String boxDeviceId);
-
     @Query(value = """
         SELECT
             s.fac AS fac,
@@ -28,7 +20,7 @@ public interface F2UtilityScadaChannelRepo extends JpaRepository<F2UtilityScadaC
         FROM f2_utility_scada s
         LEFT JOIN f2_utility_scada_channel c
             ON s.scada_id = c.scada_id
-
+        ORDER BY s.fac, s.scada_id, c.box_id, c.box_device_id, c.id
         """, nativeQuery = true)
     List<FacBoxDeviceProjection> findAllFacBoxDevices();
 }
