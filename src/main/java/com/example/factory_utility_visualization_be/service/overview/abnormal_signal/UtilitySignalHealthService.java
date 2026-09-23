@@ -1,19 +1,32 @@
 package com.example.factory_utility_visualization_be.service.overview.abnormal_signal;
 
 
-import com.example.factory_utility_visualization_be.dto.overview.abnormal_signal.*;
-import com.example.factory_utility_visualization_be.repository.overview.abnormal_signal.projection.UtilityAbnormalSignalProjection;
-import com.example.factory_utility_visualization_be.repository.overview.abnormal_signal.projection.UtilitySignalHealthMatrixProjection;
-import com.example.factory_utility_visualization_be.repository.overview.abnormal_signal.UtilitySignalHealthRepo;
-import org.apache.poi.ss.usermodel.*;
-import org.apache.poi.xssf.usermodel.XSSFWorkbook;
-import org.springframework.stereotype.Service;
-
 import java.io.ByteArrayOutputStream;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.stream.Collectors;
+
+import org.apache.poi.ss.usermodel.BorderStyle;
+import org.apache.poi.ss.usermodel.Cell;
+import org.apache.poi.ss.usermodel.CellStyle;
+import org.apache.poi.ss.usermodel.DataFormat;
+import org.apache.poi.ss.usermodel.FillPatternType;
+import org.apache.poi.ss.usermodel.Font;
+import org.apache.poi.ss.usermodel.HorizontalAlignment;
+import org.apache.poi.ss.usermodel.IndexedColors;
+import org.apache.poi.ss.usermodel.Row;
+import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.ss.usermodel.VerticalAlignment;
+import org.apache.poi.ss.usermodel.Workbook;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.springframework.stereotype.Service;
+
+import com.example.factory_utility_visualization_be.dto.overview.abnormal_signal.SignalHealthMatrixDto;
+import com.example.factory_utility_visualization_be.dto.overview.abnormal_signal.SignalHealthMatrixItemDto;
+import com.example.factory_utility_visualization_be.repository.overview.abnormal_signal.UtilitySignalHealthRepo;
+import com.example.factory_utility_visualization_be.repository.overview.abnormal_signal.projection.UtilityAbnormalSignalProjection;
+import com.example.factory_utility_visualization_be.repository.overview.abnormal_signal.projection.UtilitySignalHealthMatrixProjection;
 
 @Service
 public class UtilitySignalHealthService {
@@ -105,10 +118,19 @@ public class UtilitySignalHealthService {
 
 	public byte[] exportAbnormalSignalsExcel() {
 
-		List<UtilityAbnormalSignalProjection> rows = repo.findAbnormalSignals();
+		List<UtilityAbnormalSignalProjection> rows =
+				repo.findAbnormalSignals()
+						.stream()
+						.filter(row -> row.getStatus() != null)
+						.filter(row -> !"OK".equalsIgnoreCase(
+								row.getStatus().trim()
+						))
+						.toList();
 
-		try (Workbook workbook = new XSSFWorkbook();
-		     ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+		try (
+				Workbook workbook = new XSSFWorkbook();
+				ByteArrayOutputStream out = new ByteArrayOutputStream()
+		) {
 
 			Sheet sheet = workbook.createSheet("Abnormal Signals");
 
@@ -147,54 +169,110 @@ public class UtilitySignalHealthService {
 			int no = 1;
 
 			for (UtilityAbnormalSignalProjection row : rows) {
+
 				Row excelRow = sheet.createRow(rowIndex++);
 
 				createCell(excelRow, 0, no++, numberStyle);
 				createCell(excelRow, 1, row.getFac(), textStyle);
 				createCell(excelRow, 2, row.getCate(), textStyle);
-				createCell(excelRow, 3, row.getScadaId(), numberStyle);
+				createCell(excelRow, 3, row.getScadaId(), textStyle);
 				createCell(excelRow, 4, row.getBoxDeviceId(), textStyle);
 				createCell(excelRow, 5, row.getSignalName(), textStyle);
 				createCell(excelRow, 6, row.getPlcAddress(), textStyle);
 
-				createCell(excelRow, 7, row.getPrevValue(), numberStyle);
-				createCell(excelRow, 8, row.getCurrentValue(), warningStyle);
-				createCell(excelRow, 9, row.getJumpSize(), warningStyle);
+				createCell(
+						excelRow,
+						7,
+						row.getPrevValue(),
+						numberStyle
+				);
 
-				createCell(excelRow, 10, row.getStatus(), warningStyle);
-				createCell(excelRow, 11, row.getDescription(), textStyle);
+				createCell(
+						excelRow,
+						8,
+						row.getCurrentValue(),
+						warningStyle
+				);
+
+				createCell(
+						excelRow,
+						9,
+						row.getJumpSize(),
+						warningStyle
+				);
+
+				createCell(
+						excelRow,
+						10,
+						row.getStatus(),
+						warningStyle
+				);
+
+				createCell(
+						excelRow,
+						11,
+						row.getDescription(),
+						textStyle
+				);
 
 				Cell recordedCell = excelRow.createCell(12);
+
 				if (row.getRecordedAt() != null) {
-					recordedCell.setCellValue(row.getRecordedAt().toString());
+					recordedCell.setCellValue(
+							row.getRecordedAt().toString()
+					);
 				} else {
 					recordedCell.setCellValue("");
 				}
+
 				recordedCell.setCellStyle(dateStyle);
 			}
 
 			sheet.createFreezePane(0, 1);
-			sheet.setAutoFilter(new org.apache.poi.ss.util.CellRangeAddress(
-					0,
-					Math.max(1, rows.size()),
-					0,
-					headers.length - 1
-			));
+
+			if (!rows.isEmpty()) {
+				sheet.setAutoFilter(
+						new org.apache.poi.ss.util.CellRangeAddress(
+								0,
+								rows.size(),
+								0,
+								headers.length - 1
+						)
+				);
+			}
 
 			int[] widths = {
-					8, 14, 18, 12, 22, 34, 16,
-					18, 18, 18, 20, 42, 24
+					8,
+					14,
+					18,
+					12,
+					22,
+					34,
+					16,
+					18,
+					18,
+					18,
+					20,
+					42,
+					24
 			};
 
 			for (int i = 0; i < headers.length; i++) {
-				sheet.setColumnWidth(i, widths[i] * 256);
+				sheet.setColumnWidth(
+						i,
+						widths[i] * 256
+				);
 			}
 
 			workbook.write(out);
+
 			return out.toByteArray();
 
 		} catch (Exception e) {
-			throw new RuntimeException("Export abnormal signals Excel failed", e);
+			throw new RuntimeException(
+					"Export abnormal signals Excel failed",
+					e
+			);
 		}
 	}
 

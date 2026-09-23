@@ -29,8 +29,17 @@ public class UtilityAlertEvaluationService {
 			List<F2UtilityAlertMaster> rules,
 			Map<Integer, UtilitySignalWindowStats> windowStats
 	) {
+		return evaluate(signal, rules, windowStats, LocalDateTime.now(clock));
+	}
+
+	public UtilitySignalEvaluation evaluate(
+			UtilitySignalSnapshot signal,
+			List<F2UtilityAlertMaster> rules,
+			Map<Integer, UtilitySignalWindowStats> windowStats,
+			LocalDateTime evaluationAt
+	) {
 		F2UtilityAlertMaster matched = rules.stream()
-				.filter(rule -> isTriggered(signal, rule, windowStats))
+				.filter(rule -> isTriggered(signal, rule, windowStats, evaluationAt))
 				.findFirst()
 				.orElse(null);
 
@@ -54,7 +63,8 @@ public class UtilityAlertEvaluationService {
 	private boolean isTriggered(
 			UtilitySignalSnapshot signal,
 			F2UtilityAlertMaster rule,
-			Map<Integer, UtilitySignalWindowStats> windowStats
+			Map<Integer, UtilitySignalWindowStats> windowStats,
+			LocalDateTime evaluationAt
 	) {
 		if (!Boolean.TRUE.equals(rule.getIsActive()) || rule.getRuleType() == null) {
 			return false;
@@ -64,7 +74,7 @@ public class UtilityAlertEvaluationService {
 			case "THRESHOLD" -> thresholdTriggered(signal.currentValue(), rule);
 			case "JUMP" -> jumpTriggered(signal, rule);
 			case "STUCK" -> stuckTriggered(rule, windowStats);
-			case "NO_DATA" -> noDataTriggered(signal.recordedAt(), rule.getWindowMinutes());
+			case "NO_DATA" -> noDataTriggered(signal.recordedAt(), rule.getWindowMinutes(), evaluationAt);
 			default -> false;
 		};
 	}
@@ -108,12 +118,16 @@ public class UtilityAlertEvaluationService {
 		return compareByOperator(range, rule.getThresholdValue(), rule.getCompareOperator());
 	}
 
-	private boolean noDataTriggered(LocalDateTime recordedAt, Integer windowMinutes) {
+	private boolean noDataTriggered(
+			LocalDateTime recordedAt,
+			Integer windowMinutes,
+			LocalDateTime evaluationAt
+	) {
 		if (recordedAt == null) {
 			return true;
 		}
 		return windowMinutes != null && windowMinutes > 0
-				&& Duration.between(recordedAt, LocalDateTime.now(clock))
+				&& Duration.between(recordedAt, evaluationAt)
 				.compareTo(Duration.ofMinutes(windowMinutes)) > 0;
 	}
 

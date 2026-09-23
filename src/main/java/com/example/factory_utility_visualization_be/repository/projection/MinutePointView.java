@@ -4,6 +4,7 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 public interface MinutePointView {
 	LocalDateTime getTs();
+	LocalDateTime getSampleRecordedAt();
 	BigDecimal getValue();
 	String getBoxDeviceId();
 	String getPlcAddress();

@@ -166,6 +166,7 @@ public interface F2UtilityParaHistoryRepo extends JpaRepository<F2UtilityParaHis
 			WITH t AS (
 			    SELECT
 			        DATEADD(MINUTE, DATEDIFF(MINUTE, 0, h.recorded_at), 0) AS ts,
+			        h.recorded_at   AS sampleRecordedAt,
 			        h.box_device_id AS boxDeviceId,
 			        h.plc_address   AS plcAddress,
 			        p.cate_id       AS cateId,
@@ -199,7 +200,7 @@ public interface F2UtilityParaHistoryRepo extends JpaRepository<F2UtilityParaHis
 			        AND (:cate IS NULL OR ch.cate = :cate)
 			        AND (:useCateIds = 0 OR p.cate_id IN (:cateIds))
 			)
-			SELECT ts, value, boxDeviceId, plcAddress, cateId, nameEn, nameVi, unit, fac, cate
+			SELECT ts, sampleRecordedAt, value, boxDeviceId, plcAddress, cateId, nameEn, nameVi, unit, fac, cate
 			FROM t
 			WHERE rn = 1
 			ORDER BY ts

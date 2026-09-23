@@ -6,6 +6,7 @@ import java.time.*;
 
 public record MinutePointDto(
 		LocalDateTime ts,
+		LocalDateTime sampleRecordedAt,
 		BigDecimal value,
 		String boxDeviceId,
 		String plcAddress,

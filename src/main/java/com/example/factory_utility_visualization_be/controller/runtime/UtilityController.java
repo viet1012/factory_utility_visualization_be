@@ -110,6 +110,7 @@ public class UtilityController {
 		var dto = rows.stream()
 				.map(r -> new MinutePointDto(
 						r.getTs(),
+						r.getSampleRecordedAt(),
 						r.getValue(),
 						r.getBoxDeviceId(),
 						r.getPlcAddress(),
