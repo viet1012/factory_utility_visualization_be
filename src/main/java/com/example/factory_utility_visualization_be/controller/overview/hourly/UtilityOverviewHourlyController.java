@@ -1,6 +1,5 @@
 package com.example.factory_utility_visualization_be.controller.overview.hourly;
 
-import com.example.factory_utility_visualization_be.dto.overview.hourly.HourlyCompareDto;
 import com.example.factory_utility_visualization_be.dto.overview.hourly.HourlyTempCompareDto;
 import com.example.factory_utility_visualization_be.dto.overview.hourly.UtilityHourlyDashboardDto;
 import com.example.factory_utility_visualization_be.service.overview.hourly.UtilityHourlyService;

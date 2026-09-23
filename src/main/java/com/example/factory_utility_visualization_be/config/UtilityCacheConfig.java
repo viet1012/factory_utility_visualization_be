@@ -3,15 +3,18 @@ package com.example.factory_utility_visualization_be.config;
 
 import com.example.factory_utility_visualization_be.cache_config.UtilityCacheNames;
 import com.github.benmanes.caffeine.cache.Caffeine;
+import org.springframework.cache.Cache;
 import org.springframework.cache.CacheManager;
 import org.springframework.cache.annotation.EnableCaching;
 import org.springframework.cache.caffeine.CaffeineCache;
 import org.springframework.cache.support.SimpleCacheManager;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.lang.NonNull;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Objects;
 
 @Configuration
 @EnableCaching
@@ -19,67 +22,37 @@ public class UtilityCacheConfig {
 
 	@Bean
 	public CacheManager cacheManager() {
-		final CaffeineCache currentMonthCache =
+		final Cache currentMonthCache =
 				new CaffeineCache(
 						UtilityCacheNames.MONTHLY_CURRENT,
-						Caffeine.newBuilder()
-								.maximumSize(100)
-								.expireAfterWrite(
-										Duration.ofMinutes(10)
-								)
-								.recordStats()
-								.build()
+						buildNativeCache(100, Duration.ofMinutes(10))
 				);
 
-		final CaffeineCache historyMonthCache =
+		final Cache historyMonthCache =
 				new CaffeineCache(
 						UtilityCacheNames.MONTHLY_HISTORY,
-						Caffeine.newBuilder()
-								.maximumSize(300)
-								.expireAfterWrite(
-										Duration.ofHours(12)
-								)
-								.recordStats()
-								.build()
+						buildNativeCache(300, Duration.ofHours(12))
 				);
 
-		final CaffeineCache scadaMasterCache =
+		final Cache scadaMasterCache =
 				new CaffeineCache(
 						UtilityCacheNames.SCADA_MASTER,
-						Caffeine.newBuilder()
-								.maximumSize(10)
-								.expireAfterWrite(
-										Duration.ofSeconds(60)
-								)
-								.recordStats()
-								.build()
+						buildNativeCache(10, Duration.ofSeconds(60))
 				);
 
-		final CaffeineCache channelMasterCache =
+		final Cache channelMasterCache =
 				new CaffeineCache(
 						UtilityCacheNames.CHANNEL_MASTER,
-						Caffeine.newBuilder()
-								.maximumSize(10)
-								.expireAfterWrite(
-										Duration.ofSeconds(60)
-								)
-								.recordStats()
-								.build()
+						buildNativeCache(10, Duration.ofSeconds(60))
 				);
 
 		// Historical months only (current month always bypasses this cache
 		// — see SolarDashboardService/SolarDetailService), so a completed
 		// month's result cannot change; long TTL matches MONTHLY_HISTORY.
-		final CaffeineCache solarMonthlySummaryCache =
+		final Cache solarMonthlySummaryCache =
 				new CaffeineCache(
 						UtilityCacheNames.SOLAR_MONTHLY_SUMMARY,
-						Caffeine.newBuilder()
-								.maximumSize(300)
-								.expireAfterWrite(
-										Duration.ofHours(12)
-								)
-								.recordStats()
-								.build()
+						buildNativeCache(300, Duration.ofHours(12))
 				);
 
 		final SimpleCacheManager cacheManager =
@@ -96,5 +69,20 @@ public class UtilityCacheConfig {
 		);
 
 		return cacheManager;
+	}
+
+	@NonNull
+	private static com.github.benmanes.caffeine.cache.Cache<Object, Object> buildNativeCache(
+			long maximumSize,
+			Duration expiration
+	) {
+		return Objects.requireNonNull(
+				Caffeine.newBuilder()
+						.maximumSize(maximumSize)
+						.expireAfterWrite(expiration)
+						.recordStats()
+						.build(),
+				"Caffeine cache builder returned null"
+		);
 	}
 }

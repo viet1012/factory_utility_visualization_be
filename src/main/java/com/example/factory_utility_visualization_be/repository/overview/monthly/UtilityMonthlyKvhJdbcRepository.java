@@ -19,15 +19,6 @@ public class UtilityMonthlyKvhJdbcRepository {
 
 	private final JdbcTemplate jdbcTemplate;
 
-	private static final String DROP_TEMP_TABLES = """
-          DROP TABLE IF EXISTS #NormalDevices;
-          DROP TABLE IF EXISTS #SolarDevices;
-          DROP TABLE IF EXISTS #EnergyHourly;
-          DROP TABLE IF EXISTS #SolarHourly;
-          DROP TABLE IF EXISTS #EnvironmentAgg;
-          DROP TABLE IF EXISTS #LastPick;
-          """;
-
 	private static final String CREATE_NORMAL_DEVICES = """
       SELECT DISTINCT
           pa.box_device_id,

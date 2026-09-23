@@ -5,7 +5,6 @@ import com.example.factory_utility_visualization_be.dto.overview.abnormal_signal
 import com.example.factory_utility_visualization_be.repository.overview.abnormal_signal.projection.UtilityAbnormalSignalProjection;
 import com.example.factory_utility_visualization_be.repository.overview.abnormal_signal.projection.UtilitySignalHealthMatrixProjection;
 import com.example.factory_utility_visualization_be.repository.overview.abnormal_signal.UtilitySignalHealthRepo;
-import lombok.RequiredArgsConstructor;
 import org.apache.poi.ss.usermodel.*;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.springframework.stereotype.Service;
@@ -17,11 +16,13 @@ import java.util.List;
 import java.util.stream.Collectors;
 
 @Service
-@RequiredArgsConstructor
 public class UtilitySignalHealthService {
 
 	private final UtilitySignalHealthRepo repo;
 
+	public UtilitySignalHealthService(UtilitySignalHealthRepo repo) {
+		this.repo = repo;
+	}
 
 	public List<SignalHealthMatrixDto> getSignalHealthMatrix() {
 

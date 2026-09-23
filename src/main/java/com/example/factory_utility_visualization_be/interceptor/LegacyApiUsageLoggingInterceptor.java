@@ -4,6 +4,8 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.lang.NonNull;
+import org.springframework.lang.Nullable;
 import org.springframework.web.servlet.HandlerInterceptor;
 
 import java.time.Instant;
@@ -37,8 +39,8 @@ public class LegacyApiUsageLoggingInterceptor implements HandlerInterceptor {
 	private static final Logger LEGACY_USAGE_LOG = LoggerFactory.getLogger("utility.legacy.api.usage");
 
 	@Override
-	public void afterCompletion(HttpServletRequest request, HttpServletResponse response,
-	                             Object handler, Exception ex) {
+	public void afterCompletion(@NonNull HttpServletRequest request, @NonNull HttpServletResponse response,
+	                             @NonNull Object handler, @Nullable Exception ex) {
 		if (!LEGACY_USAGE_LOG.isInfoEnabled()) {
 			return;
 		}

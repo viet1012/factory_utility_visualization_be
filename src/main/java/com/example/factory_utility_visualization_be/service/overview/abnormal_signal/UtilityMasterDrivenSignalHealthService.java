@@ -12,7 +12,6 @@ import com.example.factory_utility_visualization_be.repository.overview.abnormal
 import com.example.factory_utility_visualization_be.repository.overview.abnormal_signal.UtilitySignalSnapshotRepository;
 import com.example.factory_utility_visualization_be.repository.overview.abnormal_signal.projection.UtilitySignalSnapshotProjection;
 import com.example.factory_utility_visualization_be.repository.overview.abnormal_signal.projection.UtilitySignalWindowStatsProjection;
-import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -28,12 +27,21 @@ import java.util.stream.Collectors;
 
 /** Parallel master-driven flow. No production controller is wired to this service yet. */
 @Service
-@RequiredArgsConstructor
 public class UtilityMasterDrivenSignalHealthService {
 
 	private final UtilityAlertMasterRepository alertMasterRepository;
 	private final UtilitySignalSnapshotRepository snapshotRepository;
 	private final UtilityAlertEvaluationService evaluationService;
+
+	public UtilityMasterDrivenSignalHealthService(
+			UtilityAlertMasterRepository alertMasterRepository,
+			UtilitySignalSnapshotRepository snapshotRepository,
+			UtilityAlertEvaluationService evaluationService
+	) {
+		this.alertMasterRepository = alertMasterRepository;
+		this.snapshotRepository = snapshotRepository;
+		this.evaluationService = evaluationService;
+	}
 
 	@Transactional(readOnly = true)
 	public List<UtilitySignalEvaluation> evaluateSignals() {

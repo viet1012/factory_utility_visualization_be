@@ -215,19 +215,6 @@ public class UtilityCatalogRepo {
 		return d;
 	}
 
-	private Boolean toBool(Object v) {
-		if (v == null) return null;
-		if (v instanceof Boolean b) return b;
-		if (v instanceof Number n) return n.intValue() != 0;
-		if (v instanceof String s) {
-			s = s.trim();
-			if (s.isEmpty()) return null;
-			return s.equalsIgnoreCase("true") || s.equals("1") || s.equalsIgnoreCase("y");
-		}
-		return "1".equals(v.toString()) || "true".equalsIgnoreCase(v.toString());
-	}
-
-
 	private LatestRecordDto mapLatest(ResultSet rs) throws java.sql.SQLException {
 		LatestRecordDto d = new LatestRecordDto();
 		d.setBoxDeviceId(rs.getString("boxDeviceId"));

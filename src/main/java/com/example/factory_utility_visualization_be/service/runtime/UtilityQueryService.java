@@ -3,7 +3,6 @@ package com.example.factory_utility_visualization_be.service.runtime;
 
 import com.example.factory_utility_visualization_be.dto.runtime.ChannelDto;
 import com.example.factory_utility_visualization_be.dto.runtime.HourPointDto;
-import com.example.factory_utility_visualization_be.dto.runtime.MinutePointDto;
 import com.example.factory_utility_visualization_be.dto.runtime.ParamDto;
 import com.example.factory_utility_visualization_be.dto.runtime.ScadaDto;
 import com.example.factory_utility_visualization_be.dto.latest.*;
@@ -21,7 +20,6 @@ import com.example.factory_utility_visualization_be.service.util.FacilityValidat
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
-import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.regex.Matcher;

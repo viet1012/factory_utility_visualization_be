@@ -1,6 +1,5 @@
 package com.example.factory_utility_visualization_be.controller.overview.minutes;
 
-import com.example.factory_utility_visualization_be.dto.overview.minutes.OverviewMinutePointDto;
 import com.example.factory_utility_visualization_be.dto.overview.minutes.UtilityMinuteDashboardDto;
 import com.example.factory_utility_visualization_be.service.overview.minutes.UtilityMinutesService;
 import lombok.RequiredArgsConstructor;
@@ -9,8 +8,6 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-
-import java.util.List;
 
 @RestController
 @RequestMapping("/api/utility")

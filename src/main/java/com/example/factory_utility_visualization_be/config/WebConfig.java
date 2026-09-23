@@ -3,6 +3,7 @@ package com.example.factory_utility_visualization_be.config;
 
 import com.example.factory_utility_visualization_be.interceptor.LegacyApiUsageLoggingInterceptor;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.lang.NonNull;
 import org.springframework.web.servlet.config.annotation.CorsRegistry;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
@@ -11,7 +12,7 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 public class WebConfig implements WebMvcConfigurer {
 
     @Override
-    public void addCorsMappings(CorsRegistry registry) {
+    public void addCorsMappings(@NonNull CorsRegistry registry) {
         registry.addMapping("/**")  // Cấu hình CORS cho tất cả các endpoint
                 .allowedOrigins("*")  // Thêm http://localhost:54483
                 .allowedMethods("GET", "POST", "PUT", "DELETE")  // Các phương thức HTTP được phép
@@ -25,7 +26,7 @@ public class WebConfig implements WebMvcConfigurer {
     // Remove this registration together with LegacyApiUsageLoggingInterceptor
     // once the legacy endpoint retirement decision has been made.
     @Override
-    public void addInterceptors(InterceptorRegistry registry) {
+    public void addInterceptors(@NonNull InterceptorRegistry registry) {
         registry.addInterceptor(new LegacyApiUsageLoggingInterceptor())
                 .addPathPatterns(
                         "/api/utility/scadas",

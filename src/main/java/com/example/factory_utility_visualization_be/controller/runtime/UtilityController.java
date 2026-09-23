@@ -90,7 +90,7 @@ public class UtilityController {
 		List<String> cateIds = null;
 		if (cateIdsCsv != null && !cateIdsCsv.isBlank()) {
 			cateIds = Arrays.stream(cateIdsCsv.split(","))
-					.map(String::trim)
+					.map(value -> value.trim())
 					.filter(s -> !s.isBlank())
 					.toList();
 		}
