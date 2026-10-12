@@ -7,6 +7,7 @@ import com.example.factory_utility_visualization_be.dto.overview.abnormal_signal
 import com.example.factory_utility_visualization_be.dto.overview.abnormal_signal.ScadaDto;
 import com.example.factory_utility_visualization_be.dto.overview.abnormal_signal.SignalHealthMatrixDto;
 import com.example.factory_utility_visualization_be.dto.overview.abnormal_signal.SignalHealthMatrixItemDto;
+import com.example.factory_utility_visualization_be.dto.overview.abnormal_signal.UtilitySignalEvaluation;
 import com.example.factory_utility_visualization_be.model.F2UtilityAlertMaster;
 import com.example.factory_utility_visualization_be.repository.overview.abnormal_signal.UtilityAlertMasterRepository;
 import com.example.factory_utility_visualization_be.repository.overview.abnormal_signal.UtilitySignalSnapshotRepository;

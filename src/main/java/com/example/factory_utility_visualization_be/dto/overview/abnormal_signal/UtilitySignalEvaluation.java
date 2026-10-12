@@ -1,4 +1,4 @@
-package com.example.factory_utility_visualization_be.service.overview.abnormal_signal;
+package com.example.factory_utility_visualization_be.dto.overview.abnormal_signal;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;

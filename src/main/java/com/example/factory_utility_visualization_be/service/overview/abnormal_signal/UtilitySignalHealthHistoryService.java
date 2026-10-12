@@ -16,6 +16,7 @@ import com.example.factory_utility_visualization_be.dto.overview.abnormal_signal
 import com.example.factory_utility_visualization_be.dto.overview.abnormal_signal.UtilityAlertDeviceCountDto;
 import com.example.factory_utility_visualization_be.dto.overview.abnormal_signal.UtilityAlertLevelSummaryDto;
 import com.example.factory_utility_visualization_be.dto.overview.abnormal_signal.UtilityAlertSignalDetailDto;
+import com.example.factory_utility_visualization_be.dto.overview.abnormal_signal.UtilitySignalEvaluation;
 import com.example.factory_utility_visualization_be.dto.overview.abnormal_signal.UtilitySignalHealthHourlyBucketDto;
 import com.example.factory_utility_visualization_be.model.F2UtilityAlertMaster;
 import com.example.factory_utility_visualization_be.repository.overview.abnormal_signal.UtilityAlertMasterRepository;
