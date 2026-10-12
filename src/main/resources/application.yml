@@ -37,3 +37,14 @@ utility:
     monthly:
       exchange-rate: 25585
       sepzone: 1.0
+  # cate_id -> ANALOG | STATUS | COUNTER for GET /api/utility/series/history
+  # (default ANALOG). Bracket keys that contain '_' or Spring strips it.
+  signal-kind:
+    default-kind: ANALOG
+    codes:
+      "[E_EneCon]": COUNTER
+      # TODO: map remaining cate_id values (STATUS / COUNTER)
+
+  history:
+    # from up to this many minutes before the oldest raw sample still uses RAW
+    raw-tolerance-minutes: 60

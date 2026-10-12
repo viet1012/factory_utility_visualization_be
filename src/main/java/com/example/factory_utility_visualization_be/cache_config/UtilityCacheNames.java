@@ -17,6 +17,12 @@ public final class UtilityCacheNames {
 	public static final String SOLAR_MONTHLY_SUMMARY =
 			"solarMonthlySummary";
 
+	public static final String ALERT_THRESHOLD =
+			"utilityAlertThreshold";
+
+	public static final String RAW_HISTORY_OLDEST =
+			"utilityRawHistoryOldest";
+
 	private UtilityCacheNames() {
 	}
 }

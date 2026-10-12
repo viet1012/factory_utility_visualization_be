@@ -55,6 +55,21 @@ public class UtilityCacheConfig {
 						buildNativeCache(300, Duration.ofHours(12))
 				);
 
+		// Active THRESHOLD rules from F2_Utility_Alert_Master, same 60s TTL
+		// as the other master data.
+		final Cache alertThresholdCache =
+				new CaffeineCache(
+						UtilityCacheNames.ALERT_THRESHOLD,
+						buildNativeCache(10, Duration.ofSeconds(60))
+				);
+
+		// Oldest recorded_at still in F2_Utility_Para_History (raw keeps ~24h)
+		final Cache rawHistoryOldestCache =
+				new CaffeineCache(
+						UtilityCacheNames.RAW_HISTORY_OLDEST,
+						buildNativeCache(1, Duration.ofMinutes(5))
+				);
+
 		final SimpleCacheManager cacheManager =
 				new SimpleCacheManager();
 
@@ -64,7 +79,9 @@ public class UtilityCacheConfig {
 						historyMonthCache,
 						scadaMasterCache,
 						channelMasterCache,
-						solarMonthlySummaryCache
+						solarMonthlySummaryCache,
+						alertThresholdCache,
+						rawHistoryOldestCache
 				)
 		);
 
