@@ -107,11 +107,4 @@ public class UtilityScadaChannelService {
 		masterDataCache.evictChannels();
 		return entity;
 	}
-
-	public void delete(Long id) {
-		F2UtilityScadaChannel entity = repository.findById(id)
-				.orElseThrow(() -> new RuntimeException("Channel not found with id: " + id));
-		repository.delete(entity);
-		masterDataCache.evictChannels();
-	}
 }

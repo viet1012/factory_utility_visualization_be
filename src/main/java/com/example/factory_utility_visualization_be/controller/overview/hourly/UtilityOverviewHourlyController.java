@@ -1,6 +1,5 @@
 package com.example.factory_utility_visualization_be.controller.overview.hourly;
 
-import com.example.factory_utility_visualization_be.dto.overview.hourly.HourlyTempCompareDto;
 import com.example.factory_utility_visualization_be.dto.overview.hourly.UtilityHourlyDashboardDto;
 import com.example.factory_utility_visualization_be.service.overview.hourly.UtilityHourlyService;
 import lombok.RequiredArgsConstructor;
@@ -11,7 +10,6 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.math.BigDecimal;
-import java.util.List;
 
 @RequiredArgsConstructor
 @RestController
@@ -43,15 +41,5 @@ public class UtilityOverviewHourlyController {
 						sepzone
 				)
 		);
-	}
-
-
-
-	@GetMapping("/hourly-sensor-compare")
-	public List<HourlyTempCompareDto> getUtilityHourlySensorCompare(
-			@RequestParam(required = false) String facId,
-			@RequestParam(required = false, defaultValue = "WATER") String type
-	) {
-		return service.getUtilityHourlySensorCompare(facId, type);
 	}
 }

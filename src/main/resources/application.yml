@@ -25,6 +25,8 @@ spring:
 server:
   address: 0.0.0.0
   port: ${SERVER_PORT:9999}
+  error:
+    include-stacktrace: never
 
 utility:
   finance:
@@ -48,3 +50,10 @@ utility:
   history:
     # from up to this many minutes before the oldest raw sample still uses RAW
     raw-tolerance-minutes: 60
+
+  # GET /api/utility/weather (OpenWeatherMap proxy).
+  # Key comes only from the OPENWEATHER_API_KEY environment variable; never put it in this file.
+  weather:
+    api-key: ${OPENWEATHER_API_KEY:}
+    lat: 10.889414655521932
+    lon: 106.72094061256969

@@ -53,11 +53,4 @@ public class UtilityScadaChannelController {
 	) {
 		return ResponseEntity.ok(service.update(id, request));
 	}
-
-	// DELETE
-	@DeleteMapping("/{id}")
-	public ResponseEntity<Void> delete(@PathVariable Long id) {
-		service.delete(id);
-		return ResponseEntity.noContent().build(); // 👈 chuẩn REST
-	}
 }

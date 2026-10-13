@@ -1,21 +1,14 @@
 package com.example.factory_utility_visualization_be.service.runtime;
 
 
+import com.example.factory_utility_visualization_be.config.UtilitySignalKindProperties;
 import com.example.factory_utility_visualization_be.dto.runtime.ChannelDto;
-import com.example.factory_utility_visualization_be.dto.runtime.HourPointDto;
-import com.example.factory_utility_visualization_be.dto.runtime.ParamDto;
-import com.example.factory_utility_visualization_be.dto.runtime.ScadaDto;
 import com.example.factory_utility_visualization_be.dto.latest.*;
-import com.example.factory_utility_visualization_be.repository.projection.HourPointView;
 import com.example.factory_utility_visualization_be.repository.projection.LatestRecordView;
 import com.example.factory_utility_visualization_be.repository.projection.MinutePointView;
-import com.example.factory_utility_visualization_be.model.F2UtilityPara;
 import com.example.factory_utility_visualization_be.model.F2UtilityScada;
 import com.example.factory_utility_visualization_be.model.F2UtilityScadaChannel;
 import com.example.factory_utility_visualization_be.repository.F2UtilityParaHistoryRepo;
-import com.example.factory_utility_visualization_be.repository.F2UtilityParaRepo;
-import com.example.factory_utility_visualization_be.repository.F2UtilityScadaChannelRepo;
-import com.example.factory_utility_visualization_be.repository.F2UtilityScadaRepo;
 import com.example.factory_utility_visualization_be.service.util.FacilityValidator;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -30,23 +23,16 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class UtilityQueryService {
 
-	private final F2UtilityScadaRepo scadaRepo;
-	private final F2UtilityScadaChannelRepo channelRepo;
-	private final F2UtilityParaRepo paraRepo;
 	private final F2UtilityParaHistoryRepo historyRepo;
 	private final UtilityMasterDataCacheService masterDataCache;
+	private final UtilitySignalKindProperties kindProperties;
 
 	// HELPER
 	public static String blankToNull(String s) {
 		return (s == null || s.isBlank()) ? null : s;
 	}
 
-	// 1) GET /scadas
-	public List<ScadaDto> getScadas() {
-		return masterDataCache.findAllScadas().stream().map(s -> ScadaDto.builder().scadaId(s.getScadaId()).fac(s.getFac()).plcIp(s.getPlcIp()).plcPort(s.getPlcPort()).wlan(s.getWlan()).build()).toList();
-	}
-
-	// 2) GET /channels?facId&scadaId&cate
+	// Channels theo facId/scadaId/cate (dùng cho getLatest)
 	public List<ChannelDto> getChannels(String facId, String scadaId, String cate) {
 
 		final Set<String> allowedScadaIds = (facId != null && !facId.isBlank()) ? masterDataCache.findAllScadas().stream().filter(s -> facId.equalsIgnoreCase(s.getFac())).map(F2UtilityScada::getScadaId).collect(Collectors.toSet()) : null;
@@ -68,27 +54,6 @@ public class UtilityQueryService {
 		}
 
 		return channels.stream().map(c -> ChannelDto.builder().id(c.getId()).scadaId(c.getScadaId()).cate(c.getCate()).boxDeviceId(c.getBoxDeviceId()).boxId(c.getBoxId()).build()).toList();
-	}
-
-	// 3) GET /params?boxDeviceId&cate&facId
-	public List<ParamDto> getParams(String boxDeviceId, String cate, String facId, Integer importantOnly // 0/1, null allowed
-	) {
-		int important = (importantOnly == null) ? 0 : importantOnly; // default 0
-
-		List<F2UtilityPara> ps = paraRepo.searchParams(blankToNull(boxDeviceId), blankToNull(cate), null, blankToNull(facId), important);
-
-		Map<String, F2UtilityScadaChannel> chByDevice = channelRepo.findAll().stream().collect(Collectors.toMap(F2UtilityScadaChannel::getBoxDeviceId, x -> x, (a, b) -> a));
-
-//		Map<String, F2UtilityScada> scadaById = scadaRepo.findAll().stream()
-//				.collect(Collectors.toMap(F2UtilityScada::getScadaId, x -> x));
-		Map<String, F2UtilityScada> scadaById = scadaRepo.findAll().stream().collect(Collectors.toMap(F2UtilityScada::getScadaId, x -> x, (a, b) -> a   // 👈 FIX
-		));
-		return ps.stream().map(p -> {
-			var ch = chByDevice.get(p.getBoxDeviceId());
-			var sc = (ch == null) ? null : scadaById.get(ch.getScadaId());
-
-			return ParamDto.builder().id(p.getId()).boxDeviceId(p.getBoxDeviceId()).plcAddress(p.getPlcAddress()).valueType(p.getValueType()).unit(p.getUnit()).category(p.getCateId()).nameVi(p.getNameVi()).nameEn(p.getNameEn()).isImportant(p.getIsImportant()).isAlert(p.getIsAlert()).scadaId(ch == null ? null : ch.getScadaId()).fac(sc == null ? null : sc.getFac()).cate(ch == null ? null : ch.getCate()).boxId(ch == null ? null : ch.getBoxId()).build();
-		}).toList();
 	}
 
 	public List<LatestFacilityDto> getLatest(
@@ -302,6 +267,7 @@ public class UtilityQueryService {
 				.value(row.getValue())
 				.unit(row.getUnit())
 				.recordedAt(row.getRecordedAt())
+				.kind(kindProperties.resolveRaw(row.getCateId(), row.getNameEn()))
 				.build();
 	}
 
@@ -386,41 +352,6 @@ public class UtilityQueryService {
 				blankToNull(cate),      // ✅ NEW
 
 				useCateIds, safeCateIds);
-	}
-
-
-
-	public List<HourPointDto> seriesHourlySum(LocalDateTime fromTs, LocalDateTime toTs, String fac, String scadaId, String cate, String boxDeviceId, String plcAddress, String cateId,          // single
-	                                          List<String> cateIds    // list
-	) {
-		// cateId single -> merge into cateIds
-		List<String> mergedCateIds = new ArrayList<>();
-		if (cateIds != null) mergedCateIds.addAll(cateIds);
-		if (cateId != null && !cateId.trim().isEmpty()) mergedCateIds.add(cateId.trim());
-
-		mergedCateIds = mergedCateIds.stream().filter(Objects::nonNull).map(String::trim).filter(s -> !s.isEmpty()).distinct().toList();
-
-		int useCateIds = mergedCateIds.isEmpty() ? 0 : 1;
-		List<String> safeCateIds = useCateIds == 1 ? mergedCateIds : Collections.emptyList();
-
-		List<HourPointView> rows = historyRepo.seriesByHourSum(fromTs, toTs, blankToNull(plcAddress), blankToNull(boxDeviceId), blankToNull(fac), blankToNull(cate), blankToNull(scadaId), useCateIds, safeCateIds);
-
-		return rows.stream().map(v -> HourPointDto.builder().ts(v.getTs()).value(v.getValue()).boxDeviceId(v.getBoxDeviceId()).plcAddress(v.getPlcAddress()).cateId(v.getCateId()).nameEn(v.getNameEn()).nameVi(v.getNameVi()).fac(v.getFac()).cate(v.getCate()).build()).collect(Collectors.toList());
-	}
-
-	private double round2(double v) {
-		return new java.math.BigDecimal(v).setScale(2, java.math.RoundingMode.HALF_UP).doubleValue();
-	}
-
-	private String fmtPct(Double pct) {
-		if (pct == null) return "--";
-		// luôn 2 chữ số
-		return String.format(java.util.Locale.US, "%.2f%%", pct);
-	}
-
-	private String trendFromDelta(double delta, double eps) {
-		if (Math.abs(delta) <= eps) return "STABLE";
-		return delta > 0 ? "UP" : "DOWN";
 	}
 
 }

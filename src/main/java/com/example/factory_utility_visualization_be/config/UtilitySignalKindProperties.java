@@ -52,4 +52,17 @@ public class UtilitySignalKindProperties {
 
 		return defaultKind;
 	}
+
+	/**
+	 * resolve() for a raw f2_utility_para.cate_id, normalized the same way
+	 * SignalHistoryService does it (NULL / blank / '0' -> no category).
+	 * Used by /chart-catalog and /latest so their kind matches /series/history.
+	 */
+	public SignalKind resolveRaw(String rawCateId, String nameEn) {
+		String cateId = rawCateId == null || rawCateId.isBlank() || "0".equals(rawCateId.trim())
+				? null
+				: rawCateId.trim();
+
+		return resolve(cateId, nameEn);
+	}
 }

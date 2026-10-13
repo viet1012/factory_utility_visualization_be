@@ -19,10 +19,6 @@ import com.example.factory_utility_visualization_be.service.overview.abnormal_si
 @RequestMapping("/api/utility")
 public class UtilitySignalHealthController {
 
-    // Legacy: retained for Excel export
-//     private final UtilitySignalHealthService legacyService;
-
-    // New master-driven alert engine
     private final UtilityMasterDrivenSignalHealthService masterDrivenService;
     private final UtilitySignalHealthExcelService excelService;
 
@@ -54,19 +50,4 @@ public class UtilitySignalHealthController {
                         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
                 .body(file);
     }
-
-//     @GetMapping("/abnormal-signals/export")
-//     public ResponseEntity<byte[]> exportAbnormalSignals() {
-//         byte[] file = legacyService.exportAbnormalSignalsExcel();
-
-//         String fileName = "abnormal-signals-" +
-//                 LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss")) +
-//                 ".xlsx";
-
-//         return ResponseEntity.ok()
-//                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + fileName + "\"")
-//                 .contentType(MediaType.parseMediaType(
-//                         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
-//                 .body(file);
-//     }
 }

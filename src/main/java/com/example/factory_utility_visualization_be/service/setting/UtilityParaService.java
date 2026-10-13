@@ -24,13 +24,6 @@ public class UtilityParaService {
 		this.repository = repository;
 	}
 
-	// ===== GET ALL =====
-	public List<UtilityParaResponse> getAll() {
-		return repository.findAll()
-				.stream()
-				.map(this::toResponse)
-				.toList();
-	}
 	public List<FacScadaBoxParaDto> getAllGroupedByFacWithParas() {
 		List<FacBoxDeviceParaProjection> rows = repository.findAllFacBoxDeviceParas();
 		return groupRowsWithParas(rows);
@@ -129,34 +122,6 @@ public class UtilityParaService {
 
 		mapRequestToEntity(request, entity);
 		return toResponse(entity);
-	}
-
-	// ===== DELETE =====
-	public void delete(Long id) {
-		F2UtilityPara entity = repository.findById(id)
-				.orElseThrow(() -> new RuntimeException("UtilityPara not found with id: " + id));
-		repository.delete(entity);
-	}
-
-	// ===== FILTER =====
-	public List<UtilityParaResponse> getByBoxDeviceId(String boxDeviceId) {
-		return repository.findByBoxDeviceId(boxDeviceId)
-				.stream().map(this::toResponse).toList();
-	}
-
-	public List<UtilityParaResponse> getByCateId(String cateId) {
-		return repository.findByCateId(cateId)
-				.stream().map(this::toResponse).toList();
-	}
-
-	public List<UtilityParaResponse> getByImportant(Integer isImportant) {
-		return repository.findByIsImportant(isImportant)
-				.stream().map(this::toResponse).toList();
-	}
-
-	public List<UtilityParaResponse> getByAlert(Integer isAlert) {
-		return repository.findByIsAlert(isAlert)
-				.stream().map(this::toResponse).toList();
 	}
 
 	// ===== MAPPING =====

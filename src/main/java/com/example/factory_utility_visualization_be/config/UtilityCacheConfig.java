@@ -70,6 +70,13 @@ public class UtilityCacheConfig {
 						buildNativeCache(1, Duration.ofMinutes(5))
 				);
 
+		// OpenWeatherMap current weather, keyed by lat/lon rounded to 2 decimals
+		final Cache weatherCurrentCache =
+				new CaffeineCache(
+						UtilityCacheNames.WEATHER_CURRENT,
+						buildNativeCache(100, Duration.ofMinutes(10))
+				);
+
 		final SimpleCacheManager cacheManager =
 				new SimpleCacheManager();
 
@@ -81,7 +88,8 @@ public class UtilityCacheConfig {
 						channelMasterCache,
 						solarMonthlySummaryCache,
 						alertThresholdCache,
-						rawHistoryOldestCache
+						rawHistoryOldestCache,
+						weatherCurrentCache
 				)
 		);
 

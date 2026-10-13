@@ -187,74 +187,7 @@ public class UtilityHourlyService {
 
 
 	// ============================================================
-	// SENSOR ONLY
-	//
-	// Chỉ gọi findHourlySensorCompare — không chạy electricity/solar.
-	// ============================================================
-
-	@Transactional(readOnly = true)
-	public List<HourlyTempCompareDto>
-	getUtilityHourlySensorCompare(
-			String facId,
-			String type
-	) {
-
-		final String normalizedType =
-				normalizeSensorType(type);
-
-		final String fac =
-				normalizeFac(facId);
-
-		final LocalDate today =
-				LocalDate.now();
-
-		final LocalDate yesterday =
-				today.minusDays(1);
-
-		final LocalDateTime fromTime =
-				yesterday.atStartOfDay();
-
-		final LocalDateTime toTime =
-				today
-						.plusDays(1)
-						.atStartOfDay();
-
-		final LocalDateTime todayDate =
-				today.atStartOfDay();
-
-		final LocalDateTime yesterdayDate =
-				yesterday.atStartOfDay();
-
-		final List<HourlySensorCompareProjection>
-				sensorRows =
-				repo.findHourlySensorCompare(
-						fac,
-						fromTime,
-						toTime,
-						todayDate,
-						yesterdayDate
-				);
-
-		final SensorSplit sensorSplit =
-				splitSensorRows(sensorRows);
-
-		return switch (normalizedType) {
-
-			case "AIR" ->
-					List.copyOf(sensorSplit.air());
-
-			default ->
-					List.copyOf(sensorSplit.water());
-		};
-	}
-
-
-	// ============================================================
 	// SENSOR ROW SPLIT (WATER / AIR)
-	//
-	// Dùng chung cho:
-	// - getHourlyDashboard
-	// - getUtilityHourlySensorCompare
 	// ============================================================
 
 	private SensorSplit splitSensorRows(
@@ -409,36 +342,6 @@ public class UtilityHourlyService {
 		}
 
 		return nameEn.trim();
-	}
-
-
-	// ============================================================
-	// SENSOR TYPE
-	// ============================================================
-
-	private String normalizeSensorType(
-			String type
-	) {
-
-		if (type == null
-				|| type.isBlank()) {
-			return "WATER";
-		}
-
-		final String normalized =
-				type
-						.trim()
-						.toUpperCase(Locale.ROOT);
-
-		if (!normalized.equals("WATER")
-				&& !normalized.equals("AIR")) {
-
-			throw new IllegalArgumentException(
-					"type must be WATER or AIR"
-			);
-		}
-
-		return normalized;
 	}
 
 

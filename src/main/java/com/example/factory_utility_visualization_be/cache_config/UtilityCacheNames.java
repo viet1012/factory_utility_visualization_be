@@ -23,6 +23,9 @@ public final class UtilityCacheNames {
 	public static final String RAW_HISTORY_OLDEST =
 			"utilityRawHistoryOldest";
 
+	public static final String WEATHER_CURRENT =
+			"utilityWeatherCurrent";
+
 	private UtilityCacheNames() {
 	}
 }

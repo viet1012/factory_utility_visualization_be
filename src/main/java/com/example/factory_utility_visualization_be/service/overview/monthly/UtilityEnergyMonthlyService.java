@@ -116,10 +116,6 @@ public class UtilityEnergyMonthlyService {
 		);
 	}
 
-	public void clearAllMonthlyCache() {
-		cacheService.clearAll();
-	}
-
 	private MonthlyQueryRange buildRange(
 			YearMonth requestedMonth,
 			LocalDateTime now

@@ -31,14 +31,4 @@ public class UtilityOverlayController {
 	) {
 		return service.upsert(dto);
 	}
-
-	// Bulk save (optional)
-	@PostMapping("/bulk")
-	public List<OverlayPosDto> bulk(
-			@RequestBody List<OverlayPosDto> list
-	) {
-		return list.stream()
-				.map(service::upsert)
-				.toList();
-	}
 }

@@ -73,26 +73,6 @@ public class UtilityScadaService {
 		masterDataCache.evictScadas();
 	}
 
-	public UtilityScadaResponse getByScadaId(String scadaId) {
-		F2UtilityScada entity = repository.findByScadaId(scadaId)
-				.orElseThrow(() -> new RuntimeException("UtilityScada not found with scadaId: " + scadaId));
-		return toResponse(entity);
-	}
-
-	public List<UtilityScadaResponse> getByFac(String fac) {
-		return repository.findByFac(fac).stream()
-				.map(this::toResponse)
-				.toList();
-	}
-
-
-
-	public List<UtilityScadaResponse> getByAlert(Boolean alert) {
-		return repository.findByAlert(alert).stream()
-				.map(this::toResponse)
-				.toList();
-	}
-
 	private void mapRequestToEntity(UtilityScadaRequest request, F2UtilityScada entity) {
 		entity.setScadaId(request.getScadaId());
 		entity.setFac(request.getFac());

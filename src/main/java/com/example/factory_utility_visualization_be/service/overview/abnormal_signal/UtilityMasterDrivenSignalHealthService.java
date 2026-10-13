@@ -1,10 +1,5 @@
 package com.example.factory_utility_visualization_be.service.overview.abnormal_signal;
 
-import com.example.factory_utility_visualization_be.dto.overview.abnormal_signal.AbnormalSignalDto;
-import com.example.factory_utility_visualization_be.dto.overview.abnormal_signal.CategoryDto;
-import com.example.factory_utility_visualization_be.dto.overview.abnormal_signal.DeviceDto;
-import com.example.factory_utility_visualization_be.dto.overview.abnormal_signal.FacilityHealthDto;
-import com.example.factory_utility_visualization_be.dto.overview.abnormal_signal.ScadaDto;
 import com.example.factory_utility_visualization_be.dto.overview.abnormal_signal.SignalHealthMatrixDto;
 import com.example.factory_utility_visualization_be.dto.overview.abnormal_signal.SignalHealthMatrixItemDto;
 import com.example.factory_utility_visualization_be.dto.overview.abnormal_signal.UtilitySignalEvaluation;
@@ -23,10 +18,9 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import java.util.function.Function;
 import java.util.stream.Collectors;
 
-/** Parallel master-driven flow. No production controller is wired to this service yet. */
+/** Master-driven signal health flow; backs GET /api/utility/signal-health-matrix. */
 @Service
 public class UtilityMasterDrivenSignalHealthService {
 
@@ -84,37 +78,6 @@ public class UtilityMasterDrivenSignalHealthService {
 				.toList();
 	}
 
-	/** Compatibility adapter for the existing abnormal-signals JSON shape. */
-	public List<FacilityHealthDto> getAbnormalSignals() {
-		Map<String, List<UtilitySignalEvaluation>> byFacility = evaluateSignals().stream()
-				.filter(UtilitySignalEvaluation::alert)
-				.collect(Collectors.groupingBy(UtilitySignalEvaluation::fac, LinkedHashMap::new, Collectors.toList()));
-
-		return byFacility.entrySet().stream()
-				.map(facility -> new FacilityHealthDto(
-						facility.getKey(), buildCategories(facility.getValue())))
-				.toList();
-	}
-
-	private List<CategoryDto> buildCategories(List<UtilitySignalEvaluation> rows) {
-		return group(rows, UtilitySignalEvaluation::cate).entrySet().stream()
-				.map(category -> new CategoryDto(category.getKey(), buildScadas(category.getValue())))
-				.toList();
-	}
-
-	private List<ScadaDto> buildScadas(List<UtilitySignalEvaluation> rows) {
-		return group(rows, UtilitySignalEvaluation::scadaId).entrySet().stream()
-				.map(scada -> new ScadaDto(scada.getKey(), buildDevices(scada.getValue())))
-				.toList();
-	}
-
-	private List<DeviceDto> buildDevices(List<UtilitySignalEvaluation> rows) {
-		return group(rows, UtilitySignalEvaluation::boxDeviceId).entrySet().stream()
-				.map(device -> new DeviceDto(device.getKey(), device.getValue().stream()
-						.map(this::toAbnormalDto).toList()))
-				.toList();
-	}
-
 	/** Compatibility adapter for the existing signal-health-matrix JSON shape. */
 	public List<SignalHealthMatrixDto> getSignalHealthMatrix() {
 		return evaluateSignals().stream()
@@ -165,11 +128,6 @@ public class UtilityMasterDrivenSignalHealthService {
 		return result;
 	}
 
-	private AbnormalSignalDto toAbnormalDto(UtilitySignalEvaluation row) {
-		return new AbnormalSignalDto(row.signalName(), row.plcAddress(), row.currentValue(), row.prevValue(),
-				row.jumpSize(), row.status(), row.description(), row.recordedAt());
-	}
-
 	private SignalHealthMatrixItemDto toMatrixItem(UtilitySignalEvaluation row) {
 		return new SignalHealthMatrixItemDto(row.signalName(), row.unit(), row.plcAddress(),
 				doubleValue(row.currentValue()), doubleValue(row.prevValue()), doubleValue(row.jumpSize()),
@@ -178,13 +136,6 @@ public class UtilityMasterDrivenSignalHealthService {
 
 	private Double doubleValue(Number value) {
 		return value == null ? null : value.doubleValue();
-	}
-
-	private <K> Map<K, List<UtilitySignalEvaluation>> group(
-			List<UtilitySignalEvaluation> rows,
-			Function<UtilitySignalEvaluation, K> classifier
-	) {
-		return rows.stream().collect(Collectors.groupingBy(classifier, LinkedHashMap::new, Collectors.toList()));
 	}
 
 	private String key(String value) {

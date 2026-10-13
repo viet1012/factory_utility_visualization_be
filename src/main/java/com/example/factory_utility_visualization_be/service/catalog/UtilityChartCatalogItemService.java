@@ -1,5 +1,6 @@
 package com.example.factory_utility_visualization_be.service.catalog;
 
+import com.example.factory_utility_visualization_be.config.UtilitySignalKindProperties;
 import com.example.factory_utility_visualization_be.dto.overview.catalog.UtilityChartCatalogItemDto;
 import com.example.factory_utility_visualization_be.repository.overview.catalog.projection.UtilityChartCatalogProjection;
 import com.example.factory_utility_visualization_be.dto.overview.catalog.UtilityChartCatalogResponse;
@@ -19,6 +20,8 @@ public class UtilityChartCatalogItemService {
 
 	@Autowired
 	private  F2UtilityParaRepo paraRepo;
+
+	private final UtilitySignalKindProperties kindProperties;
 
 	@Transactional()
 	public UtilityChartCatalogResponse getChartCatalog(
@@ -115,6 +118,7 @@ public class UtilityChartCatalogItemService {
 				.isAlert(row.getIsAlert())
 				.minAlert(row.getMinAlert())
 				.maxAlert(row.getMaxAlert())
+				.kind(kindProperties.resolveRaw(row.getCateId(), row.getNameEn()))
 				.build();
 	}
 

@@ -4,7 +4,6 @@ import com.example.factory_utility_visualization_be.dto.overview.monthly.Monthly
 import com.example.factory_utility_visualization_be.service.overview.monthly.UtilityEnergyMonthlyService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -66,19 +65,5 @@ public class UtilityOverviewMonthlyController {
 						month
 				)
 		);
-	}
-
-	/**
-	 * Dùng cho admin hoặc debug.
-	 * Xóa toàn bộ monthly cache.
-	 */
-	@DeleteMapping("/monthly-summary/cache")
-	public ResponseEntity<Void>
-	clearMonthlyCache() {
-		service.clearAllMonthlyCache();
-
-		return ResponseEntity
-				.noContent()
-				.build();
 	}
 }

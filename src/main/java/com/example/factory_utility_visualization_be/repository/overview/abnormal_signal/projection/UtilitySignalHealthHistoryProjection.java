@@ -30,6 +30,4 @@ public interface UtilitySignalHealthHistoryProjection {
 	LocalDateTime getCurrentRecordedAt();
 
 	BigDecimal getPrevValue();
-
-	LocalDateTime getPrevRecordedAt();
 }

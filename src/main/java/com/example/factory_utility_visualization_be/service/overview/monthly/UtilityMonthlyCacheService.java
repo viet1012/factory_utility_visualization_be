@@ -83,14 +83,4 @@ public class UtilityMonthlyCacheService {
 			String monthYyyyMm
 	) {
 	}
-
-	@CacheEvict(
-			cacheNames = {
-					UtilityCacheNames.MONTHLY_CURRENT,
-					UtilityCacheNames.MONTHLY_HISTORY
-			},
-			allEntries = true
-	)
-	public void clearAll() {
-	}
 }

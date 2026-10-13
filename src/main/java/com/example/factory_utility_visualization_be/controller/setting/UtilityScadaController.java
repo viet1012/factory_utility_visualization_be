@@ -29,22 +29,6 @@ public class UtilityScadaController {
 		return service.getById(id);
 	}
 
-	@GetMapping("/scada/{scadaId}")
-	public UtilityScadaResponse getByScadaId(@PathVariable String scadaId) {
-		return service.getByScadaId(scadaId);
-	}
-
-	@GetMapping("/fac/{fac}")
-	public List<UtilityScadaResponse> getByFac(@PathVariable String fac) {
-		return service.getByFac(fac);
-	}
-
-
-	@GetMapping("/alert/{alert}")
-	public List<UtilityScadaResponse> getByAlert(@PathVariable Boolean alert) {
-		return service.getByAlert(alert);
-	}
-
 	@PostMapping
 	public UtilityScadaResponse create(@RequestBody UtilityScadaRequest request) {
 		return service.create(request);

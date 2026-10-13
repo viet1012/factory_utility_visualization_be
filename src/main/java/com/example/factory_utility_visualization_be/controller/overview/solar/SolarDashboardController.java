@@ -20,23 +20,6 @@ public class SolarDashboardController {
 	private final SolarDetailService solarDetailService;
 
 	// ============================================================
-	// TODAY
-	// ============================================================
-	@GetMapping("/today")
-	public SolarDashboardDto getTodayDashboard(
-
-			@RequestParam(
-					defaultValue = "KVH"
-			)
-			String facId
-	) {
-
-		return service.getDashboard(
-				facId
-		);
-	}
-
-	// ============================================================
 	// MONTHLY
 	//
 	// Example:

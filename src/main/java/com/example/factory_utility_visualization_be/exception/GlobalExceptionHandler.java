@@ -16,6 +16,8 @@ import java.util.Map;
  *
  * SignalHistoryBadRequestException is thrown only by /series/history, so
  * mapping it here does not change any existing endpoint.
+ *
+ * WeatherProxyException is thrown only by /weather and carries its own status.
  */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -30,13 +32,22 @@ public class GlobalExceptionHandler {
 		return badRequest(ex.getMessage());
 	}
 
+	@ExceptionHandler(WeatherProxyException.class)
+	public ResponseEntity<Map<String, Object>> handleWeatherProxy(WeatherProxyException ex) {
+		return error(ex.getStatus(), ex.getMessage());
+	}
+
 	private ResponseEntity<Map<String, Object>> badRequest(String message) {
+		return error(HttpStatus.BAD_REQUEST, message);
+	}
+
+	private ResponseEntity<Map<String, Object>> error(HttpStatus status, String message) {
 		return ResponseEntity
-				.status(HttpStatus.BAD_REQUEST)
+				.status(status)
 				.body(
 						Map.of(
-								"status", HttpStatus.BAD_REQUEST.value(),
-								"error", "Bad Request",
+								"status", status.value(),
+								"error", status.getReasonPhrase(),
 								"message", message,
 								"timestamp", OffsetDateTime.now().toString()
 						)

@@ -1,6 +1,7 @@
 package com.example.factory_utility_visualization_be.dto.latest;
 
 
+import com.example.factory_utility_visualization_be.dto.runtime.history.SignalKind;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -28,4 +29,7 @@ public class LatestSignalDto {
 	private String unit;
 
 	private LocalDateTime recordedAt;
+
+	// ANALOG | STATUS | COUNTER, same resolver as /series/history
+	private SignalKind kind;
 }

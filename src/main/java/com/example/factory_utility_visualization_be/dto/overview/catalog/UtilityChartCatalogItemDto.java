@@ -1,5 +1,6 @@
 package com.example.factory_utility_visualization_be.dto.overview.catalog;
 
+import com.example.factory_utility_visualization_be.dto.runtime.history.SignalKind;
 
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -34,4 +35,7 @@ public class UtilityChartCatalogItemDto {
 
 	private Double minAlert;
 	private Double maxAlert;
+
+	// ANALOG | STATUS | COUNTER, same resolver as /series/history
+	private SignalKind kind;
 }

@@ -21,11 +21,6 @@ public class UtilityParaController {
 		this.service = service;
 	}
 
-	@GetMapping
-	public List<UtilityParaResponse> getAll() {
-		return service.getAll();
-	}
-
 	@GetMapping("/grouped-by-fac-with-paras")
 	public ResponseEntity<List<FacScadaBoxParaDto>> getAllGroupedByFacWithParas() {
 		return ResponseEntity.ok(service.getAllGroupedByFacWithParas());
@@ -45,32 +40,5 @@ public class UtilityParaController {
 	public UtilityParaResponse update(@PathVariable Long id,
 	                                  @RequestBody UtilityParaRequest request) {
 		return service.update(id, request);
-	}
-
-	@DeleteMapping("/{id}")
-	public void delete(@PathVariable Long id) {
-		service.delete(id);
-	}
-
-	// ===== FILTER =====
-
-	@GetMapping("/box/{boxDeviceId}")
-	public List<UtilityParaResponse> getByBox(@PathVariable String boxDeviceId) {
-		return service.getByBoxDeviceId(boxDeviceId);
-	}
-
-	@GetMapping("/cate/{cateId}")
-	public List<UtilityParaResponse> getByCate(@PathVariable String cateId) {
-		return service.getByCateId(cateId);
-	}
-
-	@GetMapping("/important/{flag}")
-	public List<UtilityParaResponse> getByImportant(@PathVariable Integer flag) {
-		return service.getByImportant(flag);
-	}
-
-	@GetMapping("/alert/{flag}")
-	public List<UtilityParaResponse> getByAlert(@PathVariable Integer flag) {
-		return service.getByAlert(flag);
 	}
 }
