@@ -55,6 +55,15 @@ public class UtilityCacheConfig {
 						buildNativeCache(300, Duration.ofHours(12))
 				);
 
+		// /api/solar/hourly for PAST days only (today always bypasses it —
+		// see SolarHourlyService), keyed by fac + date; a closed day cannot
+		// change, so the TTL is long.
+		final Cache solarHourlyHistoryCache =
+				new CaffeineCache(
+						UtilityCacheNames.SOLAR_HOURLY_HISTORY,
+						buildNativeCache(500, Duration.ofHours(24))
+				);
+
 		// Active THRESHOLD rules from F2_Utility_Alert_Master, same 60s TTL
 		// as the other master data.
 		final Cache alertThresholdCache =
@@ -87,6 +96,7 @@ public class UtilityCacheConfig {
 						scadaMasterCache,
 						channelMasterCache,
 						solarMonthlySummaryCache,
+						solarHourlyHistoryCache,
 						alertThresholdCache,
 						rawHistoryOldestCache,
 						weatherCurrentCache

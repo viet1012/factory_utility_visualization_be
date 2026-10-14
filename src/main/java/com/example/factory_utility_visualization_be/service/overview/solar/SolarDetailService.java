@@ -63,7 +63,7 @@ public class SolarDetailService {
 						.atStartOfDay();
 
 		final LocalDateTime now =
-				LocalDateTime.now();
+				LocalDateTime.now(APP_ZONE);
 
 		// =========================================================
 		// SUMMARY
