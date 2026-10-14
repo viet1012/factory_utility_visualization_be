@@ -6,11 +6,14 @@ import com.example.factory_utility_visualization_be.dto.runtime.history.SignalHi
 import com.example.factory_utility_visualization_be.dto.runtime.history.SignalHistoryResponseDto;
 import com.example.factory_utility_visualization_be.dto.runtime.history.SignalHistorySeriesDto;
 import com.example.factory_utility_visualization_be.dto.runtime.history.SignalKind;
+import com.example.factory_utility_visualization_be.dto.runtime.history.SignalThresholdDto;
 import com.example.factory_utility_visualization_be.exception.SignalHistoryBadRequestException;
 import com.example.factory_utility_visualization_be.repository.runtime.SignalHistoryRepo;
+import com.example.factory_utility_visualization_be.repository.runtime.projection.SignalHistoryDailyBucketProjection;
 import com.example.factory_utility_visualization_be.repository.runtime.projection.SignalHistoryMetaProjection;
 import com.example.factory_utility_visualization_be.repository.runtime.projection.SignalHistoryRawBucketProjection;
 import com.example.factory_utility_visualization_be.repository.runtime.projection.SignalHistorySnapshotProjection;
+import com.example.factory_utility_visualization_be.service.runtime.UtilityAlertThresholdCacheService.AlertRule;
 import com.example.factory_utility_visualization_be.service.runtime.UtilityAlertThresholdCacheService.AlertThreshold;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -28,13 +31,17 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 /**
  * GET /api/utility/series/history.
@@ -46,6 +53,16 @@ import java.util.regex.Pattern;
  * sample minus utility.history.raw-tolerance-minutes, auto falls back to
  * HOURLY_SNAPSHOT, manual 1h falls back to HOURLY_SNAPSHOT and manual
  * sub-hour buckets are rejected.
+ *
+ * bucket=1d -> DAILY (F2_Utility_Para_History_Main), same rules as
+ * /daily-signals, range up to 62 days; never chosen by auto.
+ *
+ * boxDeviceId may be repeated or CSV (max 30 boxes, max 300 signals in
+ * total); each box is queried on its own so the box_device_id seek is kept.
+ * A single box behaves exactly as before (max 50 signals, unknown
+ * plcAddress returned with null meta); with several boxes, plcAddress is
+ * applied to every box and only addresses present in that box's
+ * F2_Utility_Para are returned.
  */
 @Service
 @RequiredArgsConstructor
@@ -55,9 +72,13 @@ public class SignalHistoryService {
 	private static final ZoneId DB_ZONE = ZoneId.of("Asia/Ho_Chi_Minh");
 
 	private static final int MAX_SIGNALS = 50;
+	private static final int MAX_BOXES = 30;
+	private static final int MAX_TOTAL_SIGNALS = 300;
 	private static final int MAX_POINTS_PER_SIGNAL = 1000;
 	private static final Duration MAX_RANGE = Duration.ofDays(7);
+	private static final Duration DAILY_MAX_RANGE = Duration.ofDays(62);
 	private static final Duration RAW_MAX_RANGE = Duration.ofHours(24);
+	private static final int DAY_MINUTES = 24 * 60;
 
 	// SQL Server DATEDIFF(MINUTE, 0, x) counts from 1900-01-01; Java gap-fill
 	// must floor on the same origin to produce the same bucket timestamps.
@@ -76,7 +97,10 @@ public class SignalHistoryService {
 
 	private enum Source {
 		RAW("MIN_AVG_MAX"),
-		HOURLY_SNAPSHOT("SNAPSHOT");
+		// COUNTER: delta = consumption of the hour starting at ts
+		HOURLY_SNAPSHOT("SNAPSHOT;COUNTER=HOURLY_CONSUMPTION"),
+		// main value: avg; COUNTER: delta = SUM(value > 0) of the day
+		DAILY("AVG_MIN_MAX_LAST;COUNTER=DAILY_SUM");
 
 		private final String aggregation;
 
@@ -97,15 +121,25 @@ public class SignalHistoryService {
 		private static final BucketValues EMPTY = new BucketValues(null, null, null, null, 0, null);
 	}
 
+	// signals selected for one box
+	private record BoxSelection(String box, Map<String, SignalMeta> metaByPlc, List<String> plcs) {
+	}
+
 	@Transactional(readOnly = true)
 	public SignalHistoryResponseDto getHistory(
-			String boxDeviceId,
+			List<String> boxDeviceIds,
 			String plcAddressCsv,
 			String from,
 			String to,
 			String bucket
 	) {
-		String box = requireText(boxDeviceId, "boxDeviceId is required");
+		List<String> boxes = parseBoxDeviceIds(boxDeviceIds);
+
+		if (boxes.size() > MAX_BOXES) {
+			throw new SignalHistoryBadRequestException(
+					"At most " + MAX_BOXES + " boxDeviceId values per request");
+		}
+
 		LocalDateTime fromTs = parseDateTime(from, "from");
 		LocalDateTime toTs = parseDateTime(to, "to");
 
@@ -114,12 +148,18 @@ public class SignalHistoryService {
 		}
 
 		Duration range = Duration.between(fromTs, toTs);
+		String bucketValue = normalizeBucket(bucket);
 
-		if (range.compareTo(MAX_RANGE) > 0) {
+		if ("1d".equals(bucketValue)) {
+			if (range.compareTo(DAILY_MAX_RANGE) > 0) {
+				throw new SignalHistoryBadRequestException(
+						"Range between from and to must not exceed 62 days for bucket=1d");
+			}
+		} else if (range.compareTo(MAX_RANGE) > 0) {
 			throw new SignalHistoryBadRequestException("Range between from and to must not exceed 7 days");
 		}
 
-		Plan plan = resolvePlan(bucket, fromTs, range);
+		Plan plan = resolvePlan(bucketValue, fromTs, range);
 		List<LocalDateTime> bucketTimes = bucketTimes(fromTs, toTs, plan);
 
 		if (bucketTimes.size() > MAX_POINTS_PER_SIGNAL) {
@@ -130,44 +170,73 @@ public class SignalHistoryService {
 			);
 		}
 
+		boolean singleBox = boxes.size() == 1;
 		List<String> requestedPlcs = parsePlcAddresses(plcAddressCsv);
+		int maxRequestedPlcs = singleBox ? MAX_SIGNALS : MAX_TOTAL_SIGNALS;
 
-		if (requestedPlcs.size() > MAX_SIGNALS) {
+		if (requestedPlcs.size() > maxRequestedPlcs) {
 			throw new SignalHistoryBadRequestException(
-					"At most " + MAX_SIGNALS + " plcAddress values per request");
+					"At most " + maxRequestedPlcs + " plcAddress values per request");
 		}
 
-		Map<String, SignalMeta> metaByPlc = loadMeta(box, requestedPlcs);
+		List<BoxSelection> selections = new ArrayList<>(boxes.size());
+		int totalSignals = 0;
 
-		List<String> plcs = requestedPlcs.isEmpty()
-				? metaByPlc.keySet().stream().sorted(this::comparePlcAddress).toList()
-				: requestedPlcs;
+		for (String box : boxes) {
+			Map<String, SignalMeta> metaByPlc = loadMeta(box, requestedPlcs);
 
-		if (plcs.size() > MAX_SIGNALS) {
+			List<String> plcs;
+
+			if (requestedPlcs.isEmpty()) {
+				plcs = metaByPlc.keySet().stream().sorted(this::comparePlcAddress).toList();
+			} else if (singleBox) {
+				plcs = requestedPlcs;
+			} else {
+				plcs = requestedPlcs.stream().filter(metaByPlc::containsKey).toList();
+			}
+
+			if (singleBox && plcs.size() > MAX_SIGNALS) {
+				throw new SignalHistoryBadRequestException(
+						"boxDeviceId " + box + " has " + plcs.size() + " signals (max " + MAX_SIGNALS
+								+ " per request); pass plcAddress to select signals");
+			}
+
+			totalSignals += plcs.size();
+			selections.add(new BoxSelection(box, metaByPlc, plcs));
+		}
+
+		if (totalSignals > MAX_TOTAL_SIGNALS) {
 			throw new SignalHistoryBadRequestException(
-					"boxDeviceId " + box + " has " + plcs.size() + " signals (max " + MAX_SIGNALS
-							+ " per request); pass plcAddress to select signals");
+					boxes.size() + " boxDeviceId values give " + totalSignals + " signals (max "
+							+ MAX_TOTAL_SIGNALS + " per request); pass plcAddress or fewer boxDeviceId");
 		}
 
 		// plcAddress requested but not found in F2_Utility_Para
 		SignalMeta unknownMeta = new SignalMeta(null, null, null, kindProperties.resolve(null, null));
 
-		Map<String, Map<LocalDateTime, BucketValues>> valuesByPlc = plcs.isEmpty()
-				? Map.of()
-				: loadValues(box, plcs, toTs, plan, bucketTimes, metaByPlc, unknownMeta);
-
 		Map<String, AlertThreshold> thresholds = thresholdCache.findActiveThresholdsByCode();
+		Map<String, List<AlertRule>> rules = thresholdCache.findActiveThresholdRulesByCode();
 
-		List<SignalHistorySeriesDto> signals = plcs.stream()
-				.map(plc -> toSeries(
-						box,
+		List<SignalHistorySeriesDto> signals = new ArrayList<>(totalSignals);
+
+		for (BoxSelection selection : selections) {
+			Map<String, Map<LocalDateTime, BucketValues>> valuesByPlc = selection.plcs().isEmpty()
+					? Map.of()
+					: loadValues(selection.box(), selection.plcs(), toTs, plan, bucketTimes,
+					selection.metaByPlc(), unknownMeta);
+
+			for (String plc : selection.plcs()) {
+				signals.add(toSeries(
+						selection.box(),
 						plc,
-						metaByPlc.getOrDefault(plc, unknownMeta),
+						selection.metaByPlc().getOrDefault(plc, unknownMeta),
 						valuesByPlc.getOrDefault(plc, Map.of()),
 						bucketTimes,
-						thresholds
-				))
-				.toList();
+						thresholds,
+						rules
+				));
+			}
+		}
 
 		return new SignalHistoryResponseDto(
 				formatTs(fromTs),
@@ -183,9 +252,11 @@ public class SignalHistoryService {
 	// Request parsing / planning
 	// ---------------------------------------------------------------------
 
-	private Plan resolvePlan(String bucket, LocalDateTime fromTs, Duration range) {
-		String value = (bucket == null || bucket.isBlank()) ? "auto" : bucket.trim().toLowerCase(Locale.ROOT);
+	private String normalizeBucket(String bucket) {
+		return (bucket == null || bucket.isBlank()) ? "auto" : bucket.trim().toLowerCase(Locale.ROOT);
+	}
 
+	private Plan resolvePlan(String value, LocalDateTime fromTs, Duration range) {
 		return switch (value) {
 			case "auto" -> autoPlan(fromTs, range);
 			case "1m" -> rawPlan(fromTs, range, 1, value);
@@ -195,8 +266,10 @@ public class SignalHistoryService {
 			case "1h" -> range.compareTo(RAW_MAX_RANGE) <= 0 && rawCovers(fromTs, rawTolerance())
 					? new Plan(Source.RAW, 60, value)
 					: new Plan(Source.HOURLY_SNAPSHOT, 60, value);
+			// no raw-window check: days older than History_Main keeps are just empty buckets
+			case "1d" -> new Plan(Source.DAILY, DAY_MINUTES, value);
 			default -> throw new SignalHistoryBadRequestException(
-					"bucket must be one of: auto, 1m, 5m, 15m, 1h");
+					"bucket must be one of: auto, 1m, 5m, 15m, 1h, 1d");
 		};
 	}
 
@@ -282,6 +355,25 @@ public class SignalHistoryService {
 				.toList();
 	}
 
+	// repeated params and CSV values, trimmed, first occurrence order
+	private List<String> parseBoxDeviceIds(List<String> values) {
+		List<String> boxes = values == null
+				? List.of()
+				: values.stream()
+						.filter(Objects::nonNull)
+						.flatMap(value -> Arrays.stream(value.split(",")))
+						.map(String::trim)
+						.filter(value -> !value.isEmpty())
+						.distinct()
+						.toList();
+
+		if (boxes.isEmpty()) {
+			throw new SignalHistoryBadRequestException("boxDeviceId is required");
+		}
+
+		return boxes;
+	}
+
 	private String requireText(String value, String message) {
 		if (value == null || value.isBlank()) {
 			throw new SignalHistoryBadRequestException(message);
@@ -341,9 +433,72 @@ public class SignalHistoryService {
 			return Map.of();
 		}
 
-		return plan.source() == Source.RAW
-				? loadRaw(box, plcs, toTs, plan.bucketMinutes(), bucketTimes, metaByPlc, unknownMeta)
-				: loadSnapshots(box, plcs, toTs, bucketTimes, metaByPlc, unknownMeta);
+		return switch (plan.source()) {
+			case RAW -> loadRaw(box, plcs, toTs, plan.bucketMinutes(), bucketTimes, metaByPlc, unknownMeta);
+			case HOURLY_SNAPSHOT -> loadSnapshots(box, plcs, toTs, bucketTimes, metaByPlc, unknownMeta);
+			case DAILY -> loadDaily(box, plcs, toTs, bucketTimes, metaByPlc, unknownMeta);
+		};
+	}
+
+	/**
+	 * One bucket per local day, from the start of the day containing from.
+	 * Readings (min/avg/max/last) use cur_value (value when null).
+	 * ANALOG: day = CAST(pick_at AS DATE).
+	 * COUNTER: day = CAST(pick_at - 1h AS DATE), since a row holds the hour
+	 * ending at pick_at (pick_at 00:00 belongs to the previous day); last =
+	 * cumulative at the end of the day, delta = SUM(value > 0) of the day.
+	 */
+	private Map<String, Map<LocalDateTime, BucketValues>> loadDaily(
+			String box,
+			List<String> plcs,
+			LocalDateTime toTs,
+			List<LocalDateTime> bucketTimes,
+			Map<String, SignalMeta> metaByPlc,
+			SignalMeta unknownMeta
+	) {
+		Map<Boolean, List<String>> plcsByCounter = plcs.stream()
+				.collect(Collectors.partitioningBy(
+						plc -> metaByPlc.getOrDefault(plc, unknownMeta).kind() == SignalKind.COUNTER));
+
+		LocalDateTime firstDay = bucketTimes.get(0);
+		Map<String, Map<LocalDateTime, BucketValues>> result = new HashMap<>();
+
+		List<String> analogPlcs = plcsByCounter.get(false);
+
+		if (!analogPlcs.isEmpty()) {
+			putDailyRows(result, historyRepo.findDailyBuckets(box, analogPlcs, firstDay, toTs, 0), false);
+		}
+
+		List<String> counterPlcs = plcsByCounter.get(true);
+
+		if (!counterPlcs.isEmpty()) {
+			putDailyRows(result, historyRepo.findDailyBuckets(
+					box, counterPlcs, firstDay.plusHours(1), toTs.plusHours(1), -1), true);
+		}
+
+		return result;
+	}
+
+	private void putDailyRows(
+			Map<String, Map<LocalDateTime, BucketValues>> result,
+			List<SignalHistoryDailyBucketProjection> rows,
+			boolean counter
+	) {
+		for (SignalHistoryDailyBucketProjection row : rows) {
+			BigDecimal delta = counter && row.getPositiveCount() != null && row.getPositiveCount() > 0
+					? row.getPositiveSum()
+					: null;
+
+			result.computeIfAbsent(row.getPlcAddress(), key -> new HashMap<>())
+					.put(row.getBucketAt(), new BucketValues(
+							row.getMinValue(),
+							row.getAvgValue(),
+							row.getMaxValue(),
+							row.getLastValue(),
+							row.getSampleCount() == null ? 0 : row.getSampleCount(),
+							delta
+					));
+		}
 	}
 
 	/**
@@ -416,6 +571,15 @@ public class SignalHistoryService {
 		return delta.signum() < 0 ? null : delta;
 	}
 
+	/**
+	 * History_Main row: cur_value = reading at pick_at (cumulative for
+	 * COUNTER), value = cur_value - prev_value for COUNTER, i.e. consumption
+	 * of the hour ENDING at pick_at.
+	 * ANALOG: bucket = pick_at hour, avg = last = reading.
+	 * COUNTER: bucket = pick_at hour - 1h (the hour the consumption belongs
+	 * to), avg = last = reading at the end of that hour, delta = value
+	 * (negative -> null). Queried up to one hour past to for that reason.
+	 */
 	private Map<String, Map<LocalDateTime, BucketValues>> loadSnapshots(
 			String box,
 			List<String> plcs,
@@ -424,41 +588,29 @@ public class SignalHistoryService {
 			Map<String, SignalMeta> metaByPlc,
 			SignalMeta unknownMeta
 	) {
-		// one extra hour before the first bucket so COUNTER delta has a previous snapshot
-		LocalDateTime queryFrom = bucketTimes.get(0).minusHours(1);
-
-		Map<String, Map<LocalDateTime, BigDecimal>> snapshotsByPlc = new HashMap<>();
-
-		for (SignalHistorySnapshotProjection row :
-				historyRepo.findHourlySnapshots(box, plcs, queryFrom, toTs)) {
-			snapshotsByPlc.computeIfAbsent(row.getPlcAddress(), key -> new HashMap<>())
-					.put(row.getBucketAt(), row.getValue());
-		}
-
+		Set<LocalDateTime> bucketSet = new HashSet<>(bucketTimes);
 		Map<String, Map<LocalDateTime, BucketValues>> result = new HashMap<>();
 
-		snapshotsByPlc.forEach((plc, snapshots) -> {
-			boolean counter = metaByPlc.getOrDefault(plc, unknownMeta).kind() == SignalKind.COUNTER;
-			Map<LocalDateTime, BucketValues> values = new HashMap<>();
+		for (SignalHistorySnapshotProjection row :
+				historyRepo.findHourlySnapshots(box, plcs, bucketTimes.get(0), toTs.plusHours(1))) {
+			boolean counter = metaByPlc.getOrDefault(row.getPlcAddress(), unknownMeta).kind() == SignalKind.COUNTER;
+			LocalDateTime bucketAt = counter ? row.getBucketAt().minusHours(1) : row.getBucketAt();
 
-			for (LocalDateTime bucketAt : bucketTimes) {
-				BigDecimal value = snapshots.get(bucketAt);
-
-				if (value == null) {
-					continue;
-				}
-
-				BigDecimal delta = counter
-						? counterDelta(value, snapshots.get(bucketAt.minusHours(1)))
-						: null;
-
-				values.put(bucketAt, new BucketValues(null, value, null, value, 1, delta));
+			if (!bucketSet.contains(bucketAt) || row.getValue() == null) {
+				continue;
 			}
 
-			result.put(plc, values);
-		});
+			BigDecimal delta = counter ? nonNegative(row.getConsumption()) : null;
+
+			result.computeIfAbsent(row.getPlcAddress(), key -> new HashMap<>())
+					.put(bucketAt, new BucketValues(null, row.getValue(), null, row.getValue(), 1, delta));
+		}
 
 		return result;
+	}
+
+	private BigDecimal nonNegative(BigDecimal value) {
+		return value == null || value.signum() < 0 ? null : value;
 	}
 
 	// ---------------------------------------------------------------------
@@ -471,16 +623,44 @@ public class SignalHistoryService {
 			SignalMeta meta,
 			Map<LocalDateTime, BucketValues> values,
 			List<LocalDateTime> bucketTimes,
-			Map<String, AlertThreshold> thresholds
+			Map<String, AlertThreshold> thresholds,
+			Map<String, List<AlertRule>> rules
 	) {
-		AlertThreshold threshold = meta.code() == null
-				? null
-				: thresholds.get(UtilityAlertThresholdCacheService.normalize(meta.code()));
+		String codeKey = meta.code() == null ? null : UtilityAlertThresholdCacheService.normalize(meta.code());
+		AlertThreshold threshold = codeKey == null ? null : thresholds.get(codeKey);
+		List<AlertRule> codeRules = codeKey == null ? List.of() : rules.getOrDefault(codeKey, List.of());
+
+		boolean nonNegative = values.values()
+				.stream()
+				.map(this::lowValue)
+				.filter(Objects::nonNull)
+				.allMatch(value -> value.signum() >= 0);
+
+		List<SignalThresholdDto> thresholdDtos = new ArrayList<>(codeRules.size());
+		List<AlertRule> breachRules = new ArrayList<>(codeRules.size());
+
+		for (AlertRule rule : codeRules) {
+			boolean trivial = isTrivial(rule, nonNegative);
+
+			thresholdDtos.add(new SignalThresholdDto(
+					rule.level(), rule.low(), rule.high(), rule.ruleName(), rule.description(), trivial));
+
+			if (!trivial) {
+				breachRules.add(rule);
+			}
+		}
 
 		List<SignalHistoryPointDto> points = new ArrayList<>(bucketTimes.size());
+		int breachCount = 0;
+		LocalDateTime lastBreachAt = null;
 
 		for (LocalDateTime bucketAt : bucketTimes) {
 			BucketValues bucket = values.getOrDefault(bucketAt, BucketValues.EMPTY);
+
+			if (isBreach(bucket, breachRules)) {
+				breachCount++;
+				lastBreachAt = bucketAt;
+			}
 
 			points.add(new SignalHistoryPointDto(
 					formatTs(bucketAt),
@@ -503,8 +683,45 @@ public class SignalHistoryService {
 				threshold == null ? null : threshold.low(),
 				threshold == null ? null : threshold.high(),
 				threshold == null ? null : threshold.alertLevel(),
+				thresholdDtos,
+				breachCount,
+				lastBreachAt == null ? null : formatTs(lastBreachAt),
 				points
 		);
+	}
+
+	// low = 0 with no high limit can never fire on non-negative data
+	private boolean isTrivial(AlertRule rule, boolean nonNegative) {
+		return nonNegative
+				&& rule.high() == null
+				&& rule.low() != null
+				&& rule.low().signum() == 0;
+	}
+
+	private boolean isBreach(BucketValues bucket, List<AlertRule> rules) {
+		BigDecimal low = lowValue(bucket);
+		BigDecimal high = highValue(bucket);
+
+		for (AlertRule rule : rules) {
+			if (rule.high() != null && high != null && high.compareTo(rule.high()) > 0) {
+				return true;
+			}
+
+			if (rule.low() != null && low != null && low.compareTo(rule.low()) < 0) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	// HOURLY_SNAPSHOT has no min/max: fall back to the snapshot (avg)
+	private BigDecimal lowValue(BucketValues bucket) {
+		return bucket.min() != null ? bucket.min() : bucket.avg();
+	}
+
+	private BigDecimal highValue(BucketValues bucket) {
+		return bucket.max() != null ? bucket.max() : bucket.avg();
 	}
 
 	/**

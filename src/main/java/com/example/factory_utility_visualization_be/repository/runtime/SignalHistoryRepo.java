@@ -1,6 +1,7 @@
 package com.example.factory_utility_visualization_be.repository.runtime;
 
 import com.example.factory_utility_visualization_be.model.DummyEntity;
+import com.example.factory_utility_visualization_be.repository.runtime.projection.SignalHistoryDailyBucketProjection;
 import com.example.factory_utility_visualization_be.repository.runtime.projection.SignalHistoryMetaProjection;
 import com.example.factory_utility_visualization_be.repository.runtime.projection.SignalHistoryOldestRawProjection;
 import com.example.factory_utility_visualization_be.repository.runtime.projection.SignalHistoryRawBucketProjection;
@@ -113,17 +114,23 @@ public interface SignalHistoryRepo extends JpaRepository<DummyEntity, Long> {
 	);
 
 	// One snapshot per hour; if the collector wrote more than one row for
-	// the same hour, keep the latest pick_at.
+	// the same hour, keep the latest pick_at. bucketAt = pick_at hour (the
+	// service moves COUNTER rows back one hour).
+	// value       = reading at pick_at: cur_value, value when cur_value is NULL
+	// consumption = raw value (COUNTER: cur_value - prev_value of the hour
+	//               ending at pick_at)
 	@Query(value = """
 			SELECT
 			    s.plc_address AS plcAddress,
 			    s.bucket_at   AS bucketAt,
-			    s.[value]     AS value
+			    s.reading     AS value,
+			    s.consumption AS consumption
 			FROM (
 			    SELECT
 			        m.plc_address,
 			        DATEADD(HOUR, DATEDIFF(HOUR, 0, m.pick_at), 0) AS bucket_at,
-			        m.[value],
+			        COALESCE(m.cur_value, m.[value])               AS reading,
+			        m.[value]                                      AS consumption,
 			        ROW_NUMBER() OVER (
 			            PARTITION BY m.plc_address, DATEADD(HOUR, DATEDIFF(HOUR, 0, m.pick_at), 0)
 			            ORDER BY m.pick_at DESC
@@ -142,5 +149,61 @@ public interface SignalHistoryRepo extends JpaRepository<DummyEntity, Long> {
 			@Param("plcAddresses") List<String> plcAddresses,
 			@Param("fromTs") LocalDateTime fromTs,
 			@Param("toTs") LocalDateTime toTs
+	);
+
+	// bucket=1d. day = CAST(pick_at + :shiftHours AS DATE): 0 for ANALOG,
+	// -1 for COUNTER (a row holds the hour ending at pick_at, so pick_at
+	// 00:00 belongs to the previous day); fromTs/toTs are shifted the same
+	// way by the caller. Readings use cur_value (value when NULL), cast to
+	// DECIMAL(19,4) before aggregating; last = latest pick_at of the day;
+	// positiveSum / positiveCount = SUM / COUNT of raw value > 0 (COUNTER
+	// daily consumption). The day is computed once in the innermost derived
+	// table so :shiftHours is bound only once. No F2_Utility_Para join and
+	// no LTRIM/RTRIM on the box filter, so the index seek is kept.
+	@Query(value = """
+			SELECT
+			    d.plc_address                                        AS plcAddress,
+			    CAST(d.record_date AS DATETIME)                      AS bucketAt,
+			    CAST(MIN(d.v) AS DECIMAL(19, 4))                     AS minValue,
+			    CAST(AVG(d.v) AS DECIMAL(19, 4))                     AS avgValue,
+			    CAST(MAX(d.v) AS DECIMAL(19, 4))                     AS maxValue,
+			    CAST(MAX(CASE WHEN d.rn_last = 1 THEN d.v END) AS DECIMAL(19, 4)) AS lastValue,
+			    COUNT_BIG(*)                                         AS sampleCount,
+			    CAST(SUM(CASE WHEN d.consumption > 0 THEN d.consumption ELSE 0 END) AS DECIMAL(19, 4)) AS positiveSum,
+			    COUNT_BIG(CASE WHEN d.consumption > 0 THEN 1 END)    AS positiveCount
+			FROM (
+			    SELECT
+			        r.plc_address,
+			        r.record_date,
+			        r.v,
+			        r.consumption,
+			        ROW_NUMBER() OVER (
+			            PARTITION BY r.plc_address, r.record_date
+			            ORDER BY r.pick_at DESC
+			        ) AS rn_last
+			    FROM (
+			        SELECT
+			            m.plc_address,
+			            m.pick_at,
+			            CAST(DATEADD(HOUR, :shiftHours, m.pick_at) AS DATE)   AS record_date,
+			            CAST(COALESCE(m.cur_value, m.[value]) AS DECIMAL(19, 4)) AS v,
+			            CAST(m.[value] AS DECIMAL(19, 4))                    AS consumption
+			        FROM dbo.F2_Utility_Para_History_Main m
+			        WHERE m.box_device_id = :boxDeviceId
+			          AND m.plc_address IN (:plcAddresses)
+			          AND m.pick_at >= :fromTs
+			          AND m.pick_at <  :toTs
+			          AND COALESCE(m.cur_value, m.[value]) IS NOT NULL
+			    ) r
+			) d
+			GROUP BY d.plc_address, d.record_date
+			ORDER BY d.plc_address, d.record_date
+			""", nativeQuery = true)
+	List<SignalHistoryDailyBucketProjection> findDailyBuckets(
+			@Param("boxDeviceId") String boxDeviceId,
+			@Param("plcAddresses") List<String> plcAddresses,
+			@Param("fromTs") LocalDateTime fromTs,
+			@Param("toTs") LocalDateTime toTs,
+			@Param("shiftHours") int shiftHours
 	);
 }

@@ -146,8 +146,8 @@
 
 				<configuration>
 
-					<source>17</source>
-					<target>17</target>
+					<!-- release (not source/target) also rejects JDK APIs newer than 17 -->
+					<release>${java.version}</release>
 
 					<annotationProcessorPaths>
 

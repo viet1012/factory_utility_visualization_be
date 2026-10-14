@@ -39,6 +39,7 @@ import java.util.stream.Stream;
 public class UtilityAlertThresholdCacheService {
 
 	private static final String ALL_KEY = "'all'";
+	private static final String RULES_KEY = "'rules'";
 
 	private static final Set<String> LOW_OPERATORS = Set.of("LT", "LTE", "OUTSIDE_RANGE");
 	private static final Set<String> HIGH_OPERATORS = Set.of("GT", "GTE", "OUTSIDE_RANGE");
@@ -46,6 +47,55 @@ public class UtilityAlertThresholdCacheService {
 	private final UtilityAlertMasterRepository alertMasterRepository;
 
 	public record AlertThreshold(BigDecimal low, BigDecimal high, Integer alertLevel) {
+	}
+
+	// One active THRESHOLD rule. low/high follow the same operator mapping as
+	// AlertThreshold (low only for LT/LTE/OUTSIDE_RANGE, high only for
+	// GT/GTE/OUTSIDE_RANGE); a side the operator does not use is null.
+	public record AlertRule(
+			Long id, Integer level, BigDecimal low, BigDecimal high, String ruleName, String description) {
+	}
+
+	/**
+	 * Every active THRESHOLD rule per code, sorted by AlertLevel descending
+	 * (unparseable level last), then Id ascending.
+	 */
+	@Cacheable(
+			cacheNames = UtilityCacheNames.ALERT_THRESHOLD,
+			key = RULES_KEY,
+			sync = true
+	)
+	public Map<String, List<AlertRule>> findActiveThresholdRulesByCode() {
+		Comparator<AlertRule> order = Comparator
+				.comparing(AlertRule::level, Comparator.nullsLast(Comparator.reverseOrder()))
+				.thenComparing(AlertRule::id, Comparator.nullsLast(Comparator.naturalOrder()));
+
+		Map<String, List<AlertRule>> result = alertMasterRepository
+				.findByIsActiveTrueOrderByIdAsc()
+				.stream()
+				.filter(rule -> "THRESHOLD".equals(normalize(rule.getRuleType())))
+				.filter(rule -> !normalize(rule.getParameterCode()).isEmpty())
+				.collect(Collectors.groupingBy(
+						rule -> normalize(rule.getParameterCode()),
+						Collectors.mapping(this::toAlertRule, Collectors.toList())
+				));
+
+		result.replaceAll((code, rules) -> rules.stream().sorted(order).toList());
+
+		return Map.copyOf(result);
+	}
+
+	private AlertRule toAlertRule(F2UtilityAlertMaster rule) {
+		String operator = normalize(rule.getCompareOperator());
+
+		return new AlertRule(
+				rule.getId(),
+				parseLevel(rule.getAlertLevel()),
+				LOW_OPERATORS.contains(operator) ? rule.getMinValue() : null,
+				HIGH_OPERATORS.contains(operator) ? rule.getMaxValue() : null,
+				rule.getRuleName(),
+				rule.getAlertDescription()
+		);
 	}
 
 	@Cacheable(

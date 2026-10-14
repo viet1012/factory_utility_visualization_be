@@ -9,6 +9,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
+
 @RestController
 @RequestMapping("/api/utility")
 @RequiredArgsConstructor
@@ -21,11 +23,11 @@ public class UtilitySeriesHistoryController {
 	// so they are all declared optional here to return one consistent error body.
 	@GetMapping("/series/history")
 	public ResponseEntity<SignalHistoryResponseDto> seriesHistory(
-			@RequestParam(required = false) String boxDeviceId,
+			@RequestParam(required = false) List<String> boxDeviceId, // repeated or CSV, max 30
 			@RequestParam(required = false) String plcAddress,   // CSV: D400,D402
 			@RequestParam(required = false) String from,         // ISO-8601, offset optional
 			@RequestParam(required = false) String to,
-			@RequestParam(required = false, defaultValue = "auto") String bucket
+			@RequestParam(required = false, defaultValue = "auto") String bucket // auto|1m|5m|15m|1h|1d
 	) {
 		return ResponseEntity.ok(
 				service.getHistory(boxDeviceId, plcAddress, from, to, bucket)

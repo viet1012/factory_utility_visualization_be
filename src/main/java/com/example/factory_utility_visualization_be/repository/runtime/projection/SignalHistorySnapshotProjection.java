@@ -8,5 +8,9 @@ public interface SignalHistorySnapshotProjection {
 
 	LocalDateTime getBucketAt();
 
+	// reading: COALESCE(cur_value, value)
 	BigDecimal getValue();
+
+	// raw History_Main.value: consumption of the hour ending at pick_at for COUNTER
+	BigDecimal getConsumption();
 }
