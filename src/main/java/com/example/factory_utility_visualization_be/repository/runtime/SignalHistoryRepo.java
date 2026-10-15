@@ -6,6 +6,9 @@ import com.example.factory_utility_visualization_be.repository.runtime.projectio
 import com.example.factory_utility_visualization_be.repository.runtime.projection.SignalHistoryOldestRawProjection;
 import com.example.factory_utility_visualization_be.repository.runtime.projection.SignalHistoryRawBucketProjection;
 import com.example.factory_utility_visualization_be.repository.runtime.projection.SignalHistorySnapshotProjection;
+import com.example.factory_utility_visualization_be.repository.runtime.projection.WaterCheckLastSeenProjection;
+import com.example.factory_utility_visualization_be.repository.runtime.projection.WaterCheckMetaProjection;
+import com.example.factory_utility_visualization_be.repository.runtime.projection.WaterCheckRawBucketProjection;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -205,5 +208,111 @@ public interface SignalHistoryRepo extends JpaRepository<DummyEntity, Long> {
 			@Param("fromTs") LocalDateTime fromTs,
 			@Param("toTs") LocalDateTime toTs,
 			@Param("shiftHours") int shiftHours
+	);
+
+	// GET /api/utility/water-check: every para row of the channels in :cate
+	// (same joins and cate filter as latestPerKey), with or without samples.
+	@Query(value = """
+			SELECT
+			    sc.fac           AS fac,
+			    ch.box_id        AS boxId,
+			    ch.box_device_id AS boxDeviceId,
+			    p.plc_address    AS plcAddress,
+			    p.cate_id        AS cateId,
+			    p.name_en        AS nameEn,
+			    p.unit           AS unit
+			FROM f2_utility_scada_channel ch
+			INNER JOIN f2_utility_scada sc
+			        ON sc.scada_id = ch.scada_id
+			INNER JOIN f2_utility_para p
+			        ON p.box_device_id = ch.box_device_id
+			WHERE ch.cate = :cate
+			ORDER BY ch.box_device_id, p.plc_address, p.id
+			""", nativeQuery = true)
+	List<WaterCheckMetaProjection> findWaterCheckMeta(
+			@Param("cate") String cate
+	);
+
+	// GET /api/utility/water-check: latest History_Main snapshot of the
+	// "box|plc" keys in :keys (signals without raw in the last 24h). The
+	// pairs come from F2_Utility_Para, then one TOP (1) seek per pair on
+	// (box_device_id, plc_address, pick_at). Reading = cur_value, value when
+	// cur_value is NULL (same as /series/history snapshots).
+	@Query(value = """
+			SELECT
+			    k.box_device_id AS boxDeviceId,
+			    k.plc_address   AS plcAddress,
+			    s.pick_at       AS pickAt,
+			    s.reading       AS lastValue
+			FROM (
+			    SELECT DISTINCT p.box_device_id, p.plc_address
+			    FROM dbo.F2_Utility_Para p
+			    WHERE p.box_device_id IN (:boxDeviceIds)
+			      AND p.plc_address IN (:plcAddresses)
+			      AND CONCAT(p.box_device_id, '|', p.plc_address) IN (:keys)
+			) k
+			CROSS APPLY (
+			    SELECT TOP (1)
+			        m.pick_at,
+			        COALESCE(m.cur_value, m.[value]) AS reading
+			    FROM dbo.F2_Utility_Para_History_Main m
+			    WHERE m.box_device_id = k.box_device_id
+			      AND m.plc_address = k.plc_address
+			    ORDER BY m.pick_at DESC
+			) s
+			""", nativeQuery = true)
+	List<WaterCheckLastSeenProjection> findWaterCheckLastSeen(
+			@Param("boxDeviceIds") List<String> boxDeviceIds,
+			@Param("plcAddresses") List<String> plcAddresses,
+			@Param("keys") List<String> keys
+	);
+
+	// GET /api/utility/water-check: last value per 1-minute bucket for a
+	// batch of water signals. Box/plc IN lists are a superset (the service
+	// keeps only real pairs); rows older than :recentFromTs are returned only
+	// for the "box|plc" keys in :longKeys (signals whose since is traced back
+	// to :fromTs), so the seek on (box_device_id, plc_address, recorded_at)
+	// is kept and the 24h rows of OK signals are not sent back.
+	@Query(value = """
+			SELECT
+			    r.box_device_id AS boxDeviceId,
+			    r.plc_address   AS plcAddress,
+			    r.bucket_at     AS bucketAt,
+			    r.[value]       AS lastValue
+			FROM (
+			    SELECT
+			        b.box_device_id,
+			        b.plc_address,
+			        b.bucket_at,
+			        b.[value],
+			        ROW_NUMBER() OVER (
+			            PARTITION BY b.box_device_id, b.plc_address, b.bucket_at
+			            ORDER BY b.recorded_at DESC
+			        ) AS rn
+			    FROM (
+			        SELECT
+			            h.box_device_id,
+			            h.plc_address,
+			            h.recorded_at,
+			            DATEADD(MINUTE, DATEDIFF(MINUTE, 0, h.recorded_at), 0) AS bucket_at,
+			            h.[value]
+			        FROM dbo.F2_Utility_Para_History h
+			        WHERE h.box_device_id IN (:boxDeviceIds)
+			          AND h.plc_address IN (:plcAddresses)
+			          AND h.recorded_at >= :fromTs
+			          AND (
+			              h.recorded_at >= :recentFromTs
+			              OR CONCAT(h.box_device_id, '|', h.plc_address) IN (:longKeys)
+			          )
+			    ) b
+			) r
+			WHERE r.rn = 1
+			""", nativeQuery = true)
+	List<WaterCheckRawBucketProjection> findWaterCheckRawBuckets(
+			@Param("boxDeviceIds") List<String> boxDeviceIds,
+			@Param("plcAddresses") List<String> plcAddresses,
+			@Param("fromTs") LocalDateTime fromTs,
+			@Param("recentFromTs") LocalDateTime recentFromTs,
+			@Param("longKeys") List<String> longKeys
 	);
 }

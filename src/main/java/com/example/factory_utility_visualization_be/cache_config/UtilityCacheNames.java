@@ -29,6 +29,9 @@ public final class UtilityCacheNames {
 	public static final String WEATHER_CURRENT =
 			"utilityWeatherCurrent";
 
+	public static final String WATER_CHECK =
+			"utilityWaterCheck";
+
 	private UtilityCacheNames() {
 	}
 }

@@ -86,6 +86,13 @@ public class UtilityCacheConfig {
 						buildNativeCache(100, Duration.ofMinutes(10))
 				);
 
+		// GET /api/utility/water-check, single 'all' entry
+		final Cache waterCheckCache =
+				new CaffeineCache(
+						UtilityCacheNames.WATER_CHECK,
+						buildNativeCache(1, Duration.ofSeconds(30))
+				);
+
 		final SimpleCacheManager cacheManager =
 				new SimpleCacheManager();
 
@@ -99,7 +106,8 @@ public class UtilityCacheConfig {
 						solarHourlyHistoryCache,
 						alertThresholdCache,
 						rawHistoryOldestCache,
-						weatherCurrentCache
+						weatherCurrentCache,
+						waterCheckCache
 				)
 		);
 
