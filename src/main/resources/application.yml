@@ -39,6 +39,10 @@ utility:
     monthly:
       exchange-rate: 25585
       sepzone: 1.0
+    # GET /api/utility/power-usage (same values as hourly for now)
+    power-usage:
+      exchange-rate: 26005
+      sepzone: 1.075
   # cate_id -> ANALOG | STATUS | COUNTER for GET /api/utility/series/history
   # (default ANALOG). Bracket keys that contain '_' or Spring strips it.
   signal-kind:
@@ -46,6 +50,12 @@ utility:
     codes:
       "[E_EneCon]": COUNTER
       # TODO: map remaining cate_id values (STATUS / COUNTER)
+
+  # GET /api/utility/water-check: pressure readings (kg/cm2, bar, code *PRES*)
+  # in [min, max] = STOPPED (pump stopped), below min = SENSOR_FAULT
+  water-check:
+    pump-stopped-min: -0.3
+    pump-stopped-max: 0.2
 
   history:
     # from up to this many minutes before the oldest raw sample still uses RAW

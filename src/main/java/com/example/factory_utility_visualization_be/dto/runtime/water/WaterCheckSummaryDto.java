@@ -6,5 +6,7 @@ public record WaterCheckSummaryDto(
 		long near,
 		long over,
 		long stale,
-		long noThreshold
+		long noThreshold,
+		long stopped,
+		long sensorFault
 ) {}

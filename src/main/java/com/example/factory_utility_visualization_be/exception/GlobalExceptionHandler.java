@@ -19,6 +19,8 @@ import java.util.Map;
  *
  * SolarHourlyBadRequestException is thrown only by /api/solar/hourly (same reason).
  *
+ * PowerUsageBadRequestException is thrown only by /power-usage (same reason).
+ *
  * WeatherProxyException is thrown only by /weather and carries its own status.
  */
 @RestControllerAdvice
@@ -36,6 +38,11 @@ public class GlobalExceptionHandler {
 
 	@ExceptionHandler(SolarHourlyBadRequestException.class)
 	public ResponseEntity<Map<String, Object>> handleSolarHourlyBadRequest(SolarHourlyBadRequestException ex) {
+		return badRequest(ex.getMessage());
+	}
+
+	@ExceptionHandler(PowerUsageBadRequestException.class)
+	public ResponseEntity<Map<String, Object>> handlePowerUsageBadRequest(PowerUsageBadRequestException ex) {
 		return badRequest(ex.getMessage());
 	}
 

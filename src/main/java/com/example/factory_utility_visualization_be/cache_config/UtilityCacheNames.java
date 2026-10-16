@@ -32,6 +32,12 @@ public final class UtilityCacheNames {
 	public static final String WATER_CHECK =
 			"utilityWaterCheck";
 
+	public static final String POWER_USAGE_CURRENT =
+			"utilityPowerUsageCurrent";
+
+	public static final String POWER_USAGE_CLOSED =
+			"utilityPowerUsageClosed";
+
 	private UtilityCacheNames() {
 	}
 }

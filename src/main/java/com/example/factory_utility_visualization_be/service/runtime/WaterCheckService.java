@@ -2,6 +2,7 @@ package com.example.factory_utility_visualization_be.service.runtime;
 
 import com.example.factory_utility_visualization_be.cache_config.UtilityCacheNames;
 import com.example.factory_utility_visualization_be.config.UtilitySignalKindProperties;
+import com.example.factory_utility_visualization_be.config.WaterCheckProperties;
 import com.example.factory_utility_visualization_be.dto.runtime.history.SignalKind;
 import com.example.factory_utility_visualization_be.dto.runtime.water.WaterCheckFacilityDto;
 import com.example.factory_utility_visualization_be.dto.runtime.water.WaterCheckGroupDto;
@@ -36,6 +37,7 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.NavigableMap;
 import java.util.Objects;
@@ -56,12 +58,16 @@ import java.util.regex.Pattern;
  *
  * Status (first match wins):
  *   STALE        no value, or latest sample older than 5 minutes
- *   NO_THRESHOLD no non-trivial THRESHOLD rule for the code
+ *   SENSOR_FAULT pressure signal below utility.water-check.pump-stopped-min
+ *   STOPPED      pressure signal in [pump-stopped-min, pump-stopped-max],
+ *                whatever the limits (also when min > pump-stopped-max)
  *   OVER         value outside a non-trivial limit (same strict compare as
  *                /series/history breach)
  *   NEAR         distance to the nearest limit < 10% of (high - low), or
  *                < 10% of |value| when only one side is set
- *   OK
+ *   OK / NO_THRESHOLD (no non-trivial THRESHOLD rule for the code)
+ * Pressure signal: unit kg/cm2 (any spelling) or bar, or code containing
+ * PRES. STOPPED is not an issue; SENSOR_FAULT is.
  *
  * Queries per (uncached) request: master + latestPerKey + raw buckets (one
  * per 500 signals) + History_Main last seen (one per 500 signals without
@@ -92,10 +98,17 @@ public class WaterCheckService {
 
 	private static final Pattern PLC_ADDRESS_PATTERN = Pattern.compile("^([A-Za-z]+)(\\d+)$");
 
+	// kg/cm2, kg/cm², kgf/cm2, ... (spaces removed, lower case)
+	private static final Pattern PRESSURE_UNIT_PATTERN = Pattern.compile("^kgf?/cm(2|²|\\^2)$|^bar$");
+
+	private static final String REASON_STOPPED = "Pump stopped";
+	private static final String REASON_SENSOR_FAULT = "Negative reading: sensor fault";
+
 	private final F2UtilityParaHistoryRepo latestRepo;
 	private final SignalHistoryRepo historyRepo;
 	private final UtilityAlertThresholdCacheService thresholdCache;
 	private final UtilitySignalKindProperties kindProperties;
+	private final WaterCheckProperties waterCheckProperties;
 
 	// code is null when the para row has no real category (NULL / blank / '0');
 	// value / recordedAt null when there is no raw sample in the last 24h
@@ -132,7 +145,7 @@ public class WaterCheckService {
 		}
 	}
 
-	private record Evaluated(Signal signal, Limits limits, Evaluation evaluation) {
+	private record Evaluated(Signal signal, Limits limits, boolean pressure, Evaluation evaluation) {
 	}
 
 	// issue row before formatting, so it can be sorted on since
@@ -178,10 +191,13 @@ public class WaterCheckService {
 					? List.of()
 					: rulesByCode.getOrDefault(groupKey.code(), List.of());
 
+			// pressure readings in the stopped / sensor-fault range do not
+			// make a low = 0 rule non-trivial
 			boolean nonNegative = groupSignals.stream()
-					.map(Signal::value)
-					.filter(Objects::nonNull)
-					.allMatch(value -> value.signum() >= 0);
+					.filter(signal -> signal.value() != null)
+					.filter(signal -> !isPressure(signal)
+							|| signal.value().compareTo(waterCheckProperties.getPumpStoppedMax()) > 0)
+					.allMatch(signal -> signal.value().signum() >= 0);
 
 			List<WaterCheckThresholdDto> thresholdDtos = new ArrayList<>(rules.size());
 			List<AlertRule> breachRules = new ArrayList<>(rules.size());
@@ -200,7 +216,9 @@ public class WaterCheckService {
 			Limits limits = limits(breachRules);
 
 			for (Signal signal : groupSignals) {
-				evaluatedByKey.put(signal.key(), new Evaluated(signal, limits, evaluateCurrent(signal, limits, now)));
+				boolean pressure = isPressure(signal);
+				evaluatedByKey.put(signal.key(), new Evaluated(
+						signal, limits, pressure, evaluateCurrent(signal, limits, pressure, now)));
 				breachRulesByKey.put(signal.key(), breachRules);
 			}
 		}));
@@ -250,6 +268,7 @@ public class WaterCheckService {
 							signal.lastValue(),
 							formatTs(signal.lastSeenAt()),
 							status,
+							reason(status),
 							item.evaluation().distance(),
 							trend,
 							formatTs(since)
@@ -284,7 +303,9 @@ public class WaterCheckService {
 						counts.getOrDefault(WaterCheckStatus.NEAR, 0L),
 						counts.getOrDefault(WaterCheckStatus.OVER, 0L),
 						counts.getOrDefault(WaterCheckStatus.STALE, 0L),
-						counts.getOrDefault(WaterCheckStatus.NO_THRESHOLD, 0L)
+						counts.getOrDefault(WaterCheckStatus.NO_THRESHOLD, 0L),
+						counts.getOrDefault(WaterCheckStatus.STOPPED, 0L),
+						counts.getOrDefault(WaterCheckStatus.SENSOR_FAULT, 0L)
 				),
 				facilities,
 				issues.stream().map(this::toIssueDto).toList()
@@ -422,7 +443,7 @@ public class WaterCheckService {
 
 	/**
 	 * 1-minute last values: from now - 65 min for every signal (trend1h),
-	 * from now - 24h for OVER / NEAR signals (since). Signals without a raw
+	 * from now - 24h for OVER / NEAR / SENSOR_FAULT signals (since). Signals without a raw
 	 * sample in the last 24h are skipped; one query per PAIRS_PER_QUERY.
 	 */
 	private Map<String, NavigableMap<LocalDateTime, BigDecimal>> loadRawBuckets(
@@ -452,9 +473,7 @@ public class WaterCheckService {
 				plcs.add(item.signal().plc());
 				batchKeys.add(key);
 
-				WaterCheckStatus status = item.evaluation().status();
-
-				if (status == WaterCheckStatus.OVER || status == WaterCheckStatus.NEAR) {
+				if (tracksSince(item.evaluation().status())) {
 					longKeys.add(key);
 				}
 			}
@@ -519,18 +538,35 @@ public class WaterCheckService {
 		return low == null && high == null ? Limits.NONE : new Limits(low, high);
 	}
 
-	private Evaluation evaluateCurrent(Signal signal, Limits limits, LocalDateTime now) {
+	private Evaluation evaluateCurrent(Signal signal, Limits limits, boolean pressure, LocalDateTime now) {
 		boolean stale = signal.value() == null
 				|| signal.recordedAt().isBefore(now.minusMinutes(STALE_MINUTES));
 
 		Evaluation byValue = signal.value() == null
 				? new Evaluation(limits.isEmpty() ? WaterCheckStatus.NO_THRESHOLD : WaterCheckStatus.OK, null)
-				: evaluate(signal.value(), limits);
+				: evaluate(signal.value(), limits, pressure);
 
 		return stale ? new Evaluation(WaterCheckStatus.STALE, byValue.distance()) : byValue;
 	}
 
-	private Evaluation evaluate(BigDecimal value, Limits limits) {
+	// SENSOR_FAULT > STOPPED > limits status (OVER > NEAR > OK / NO_THRESHOLD).
+	// A pressure value in the pump-stopped range is always STOPPED, even when
+	// the limit min lies above pump-stopped-max.
+	private Evaluation evaluate(BigDecimal value, Limits limits, boolean pressure) {
+		if (pressure && value.compareTo(waterCheckProperties.getPumpStoppedMin()) < 0) {
+			return new Evaluation(WaterCheckStatus.SENSOR_FAULT, null);
+		}
+
+		Evaluation byLimits = evaluateLimits(value, limits);
+
+		if (pressure && value.compareTo(waterCheckProperties.getPumpStoppedMax()) <= 0) {
+			return new Evaluation(WaterCheckStatus.STOPPED, byLimits.distance());
+		}
+
+		return byLimits;
+	}
+
+	private Evaluation evaluateLimits(BigDecimal value, Limits limits) {
 		if (limits.isEmpty()) {
 			return new Evaluation(WaterCheckStatus.NO_THRESHOLD, null);
 		}
@@ -580,7 +616,7 @@ public class WaterCheckService {
 	}
 
 	/**
-	 * OVER / NEAR: walk 1-minute buckets back from the latest sample while
+	 * OVER / NEAR / SENSOR_FAULT: walk 1-minute buckets back from the latest sample while
 	 * the bucket value has the same status; a gap longer than STALE_MINUTES
 	 * ends the run. A run reaching the 24h lookback returns its first bucket.
 	 * STALE: latest sample + STALE_MINUTES (no sample at all -> recordedAt).
@@ -598,7 +634,7 @@ public class WaterCheckService {
 			return signal.value() == null ? signal.recordedAt() : signal.recordedAt().plusMinutes(STALE_MINUTES);
 		}
 
-		if (status != WaterCheckStatus.OVER && status != WaterCheckStatus.NEAR) {
+		if (!tracksSince(status)) {
 			return null;
 		}
 
@@ -608,7 +644,7 @@ public class WaterCheckService {
 		for (Map.Entry<LocalDateTime, BigDecimal> bucket : buckets.headMap(since, true).descendingMap().entrySet()) {
 			if (ChronoUnit.MINUTES.between(bucket.getKey(), previous) > STALE_MINUTES
 					|| bucket.getValue() == null
-					|| evaluate(bucket.getValue(), item.limits()).status() != status) {
+					|| evaluate(bucket.getValue(), item.limits(), item.pressure()).status() != status) {
 				break;
 			}
 
@@ -619,10 +655,37 @@ public class WaterCheckService {
 		return since;
 	}
 
+	// STOPPED is not an issue
 	private boolean isIssue(WaterCheckStatus status) {
 		return status == WaterCheckStatus.OVER
 				|| status == WaterCheckStatus.NEAR
+				|| status == WaterCheckStatus.SENSOR_FAULT
 				|| status == WaterCheckStatus.STALE;
+	}
+
+	// statuses whose since is traced back through the raw buckets
+	private boolean tracksSince(WaterCheckStatus status) {
+		return status == WaterCheckStatus.OVER
+				|| status == WaterCheckStatus.NEAR
+				|| status == WaterCheckStatus.SENSOR_FAULT;
+	}
+
+	// unit kg/cm2 / bar, or code containing PRES (any case)
+	private boolean isPressure(Signal signal) {
+		String unit = signal.unit() == null
+				? ""
+				: signal.unit().replace(" ", "").toLowerCase(Locale.ROOT);
+
+		return PRESSURE_UNIT_PATTERN.matcher(unit).matches()
+				|| (signal.code() != null && signal.code().toUpperCase(Locale.ROOT).contains("PRES"));
+	}
+
+	private String reason(WaterCheckStatus status) {
+		return switch (status) {
+			case STOPPED -> REASON_STOPPED;
+			case SENSOR_FAULT -> REASON_SENSOR_FAULT;
+			default -> null;
+		};
 	}
 
 	// ---------------------------------------------------------------------
@@ -642,6 +705,7 @@ public class WaterCheckService {
 				signal.lastValue(),
 				formatTs(signal.lastSeenAt()),
 				issue.item().evaluation().status(),
+				reason(issue.item().evaluation().status()),
 				thresholdText(issue.item().limits(), signal.unit()),
 				formatTs(issue.since()),
 				issue.trend1h()

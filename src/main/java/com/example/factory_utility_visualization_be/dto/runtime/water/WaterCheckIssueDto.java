@@ -14,6 +14,8 @@ public record WaterCheckIssueDto(
 		BigDecimal lastValue,
 		String lastSeenAt,
 		WaterCheckStatus status,
+		// see WaterCheckSignalDto
+		String reason,
 		String thresholdText,
 		String since,
 		BigDecimal trend1h

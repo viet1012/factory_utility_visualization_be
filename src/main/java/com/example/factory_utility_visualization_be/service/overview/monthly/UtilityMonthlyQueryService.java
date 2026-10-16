@@ -3,17 +3,18 @@ package com.example.factory_utility_visualization_be.service.overview.monthly;
 import com.example.factory_utility_visualization_be.config.UtilityFinanceProperties;
 import com.example.factory_utility_visualization_be.dto.overview.monthly.MonthlyQueryRange;
 import com.example.factory_utility_visualization_be.dto.overview.monthly.MonthlySummaryDto;
-import com.example.factory_utility_visualization_be.repository.overview.monthly.projection.MonthlySummaryProjection;
-import com.example.factory_utility_visualization_be.repository.overview.monthly.UtilityMonthlyKvhJdbcRepository;
-import com.example.factory_utility_visualization_be.repository.overview.monthly.UtilityMonthlyRepo;
+import com.example.factory_utility_visualization_be.repository.overview.monthly.UtilityMonthlyJdbcRepository;
+import com.example.factory_utility_visualization_be.repository.overview.monthly.UtilityMonthlyJdbcRepository.RawRow;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
+import java.math.MathContext;
+import java.math.RoundingMode;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
-import java.util.ArrayList;
 import java.util.List;
 
 @Slf4j
@@ -25,9 +26,11 @@ public class UtilityMonthlyQueryService {
 			ZoneId.of("Asia/Ho_Chi_Minh");
 
 	private static final String KVH = "KVH";
+	private static final String ELECTRICITY = "Electricity";
 
-	private final UtilityMonthlyRepo repo;
-	private final UtilityMonthlyKvhJdbcRepository kvhJdbcRepository;
+	private static final BigDecimal HUNDRED = BigDecimal.valueOf(100);
+
+	private final UtilityMonthlyJdbcRepository repository;
 	private final UtilityFinanceProperties financeProperties;
 
 	@Transactional(readOnly = true)
@@ -48,111 +51,138 @@ public class UtilityMonthlyQueryService {
 				range.prevTo()
 		);
 
-		final List<MonthlySummaryProjection> projections =
-				loadProjections(
-						normalizedFac,
-						monthYyyyMm,
-						range
-				);
+		final List<RawRow> rows = repository.sumMonthly(
+				normalizedFac,
+				KVH.equalsIgnoreCase(normalizedFac),
+				range.from(),
+				range.currentTo(),
+				range.prevFrom(),
+				range.prevTo()
+		);
 
-		if (projections == null || projections.isEmpty()) {
+		if (rows.isEmpty()) {
 			return List.of();
 		}
 
 		final OffsetDateTime generatedAt =
 				OffsetDateTime.now(APP_ZONE);
 
-		final List<MonthlySummaryDto> result =
-				new ArrayList<>(projections.size());
+		final BigDecimal exchange = financeProperties.getMonthly().getExchangeRate();
+		final BigDecimal sepzone = financeProperties.getMonthly().getSepzone();
 
-		for (MonthlySummaryProjection row : projections) {
-			if (row == null) {
-				continue;
-			}
-
-			result.add(
-					mapToDto(
-							row,
-							generatedAt
-					)
-			);
-		}
-
-		return List.copyOf(result);
+		return rows.stream()
+				.map(row -> toDto(row, monthYyyyMm, exchange, sepzone, generatedAt))
+				.toList();
 	}
 
-	private List<MonthlySummaryProjection> loadProjections(
-			String fac,
-			String monthYyyyMm,
-			MonthlyQueryRange range
-	) {
-		if (KVH.equalsIgnoreCase(fac)) {
-			return kvhJdbcRepository.sumMonthlyKvhRaw(
-					monthYyyyMm,
-					range.from(),
-					range.currentTo(),
-					range.prevFrom(),
-					range.prevTo(),
-					financeProperties.getMonthly().getExchangeRate(),
-					financeProperties.getMonthly().getSepzone()
-			);
-		}
-
-		return repo.sumMonthlyByFacRaw(
-				fac,
-				monthYyyyMm,
-				range.from(),
-				range.currentTo(),
-				range.prevFrom(),
-				range.prevTo(),
-				financeProperties.getMonthly().getExchangeRate(),
-				financeProperties.getMonthly().getSepzone()
-		);
-	}
-
-	private MonthlySummaryDto mapToDto(
-			MonthlySummaryProjection row,
+	/*
+	 * Các trường dẫn xuất, giữ đúng scale và cách xử lý chia 0 của SQL cũ:
+	 *
+	 * - usdCost        = vndCost / exchange * sepzone, scale 2; exchange = 0/null -> null.
+	 * - deltaValue     = (value|avgValue|0) - (prevValue|prevAvgValue|0), scale 2.
+	 * - deltaPercent   = delta / prev * 100, scale 2; prev = 0 -> null.
+	 * - totalEnergy    = value + solarValue (null coi như 0), scale 2; chỉ dòng Electricity.
+	 * - solarShare     = solarValue / totalEnergy * 100, scale 2; chỉ khi total > 0.
+	 */
+	private MonthlySummaryDto toDto(
+			RawRow row,
+			String month,
+			BigDecimal exchange,
+			BigDecimal sepzone,
 			OffsetDateTime generatedAt
 	) {
+		final boolean electricity = ELECTRICITY.equals(row.cate());
+
+		final BigDecimal current = firstNonNullOrZero(row.value(), row.avgValue());
+		final BigDecimal prev = firstNonNullOrZero(row.prevValue(), row.prevAvgValue());
+		final BigDecimal delta = current.subtract(prev);
+
+		final BigDecimal totalEnergy = electricity
+				? sum(row.value(), row.solarValue())
+				: null;
+
+		final BigDecimal prevTotalEnergy = electricity
+				? sum(row.prevValue(), row.prevSolarValue())
+				: null;
+
+		final BigDecimal solarShare = electricity && totalEnergy.signum() > 0
+				? percent(orZero(row.solarValue()), totalEnergy)
+				: null;
+
 		return new MonthlySummaryDto(
-				row.getCate(),
-				row.getName(),
-				row.getMonth(),
+				row.cate(),
+				row.name(),
+				month,
 
-				row.getMinValue(),
-				row.getMaxValue(),
-				row.getPrevMinValue(),
-				row.getPrevMaxValue(),
+				row.minValue(),
+				row.maxValue(),
+				row.prevMinValue(),
+				row.prevMaxValue(),
 
-				row.getValue(),
-				row.getAvgValue(),
+				row.value(),
+				row.avgValue(),
 
-				row.getVndCost(),
-				row.getUsdCost(),
+				row.vndCost(),
+				toUsd(row.vndCost(), exchange, sepzone),
 
-				row.getPrevValue(),
-				row.getPrevAvgValue(),
+				row.prevValue(),
+				row.prevAvgValue(),
 
-				row.getPrevVndCost(),
-				row.getPrevUsdCost(),
+				row.prevVndCost(),
+				toUsd(row.prevVndCost(), exchange, sepzone),
 
-				row.getDeltaValue(),
-				row.getDeltaPercent(),
+				delta.setScale(2, RoundingMode.HALF_UP),
+				percent(delta, prev),
 
-				row.getUnit(),
-				row.getPickAt(),
+				row.unit(),
+				row.pickAt(),
 
 				// ============================
 				// Solar monthly information
 				// ============================
-				row.getSolarValue(),
-				row.getPrevSolarValue(),
-				row.getTotalEnergyValue(),
-				row.getPrevTotalEnergyValue(),
-				row.getSolarSharePercent(),
+				row.solarValue(),
+				row.prevSolarValue(),
+				totalEnergy,
+				prevTotalEnergy,
+				solarShare,
 
 				generatedAt
 		);
+	}
+
+	private static BigDecimal toUsd(
+			BigDecimal vnd,
+			BigDecimal exchange,
+			BigDecimal sepzone
+	) {
+		if (vnd == null || exchange == null || exchange.signum() == 0 || sepzone == null) {
+			return null;
+		}
+
+		return vnd.divide(exchange, MathContext.DECIMAL128)
+				.multiply(sepzone)
+				.setScale(2, RoundingMode.HALF_UP);
+	}
+
+	private static BigDecimal percent(BigDecimal numerator, BigDecimal denominator) {
+		if (denominator.signum() == 0) {
+			return null;
+		}
+
+		return numerator.multiply(HUNDRED)
+				.divide(denominator, 2, RoundingMode.HALF_UP);
+	}
+
+	private static BigDecimal sum(BigDecimal a, BigDecimal b) {
+		return orZero(a).add(orZero(b)).setScale(2, RoundingMode.HALF_UP);
+	}
+
+	private static BigDecimal firstNonNullOrZero(BigDecimal a, BigDecimal b) {
+		return a != null ? a : orZero(b);
+	}
+
+	private static BigDecimal orZero(BigDecimal value) {
+		return value == null ? BigDecimal.ZERO : value;
 	}
 
 	private String normalizeFac(String fac) {

@@ -24,6 +24,7 @@ public class UtilityFinanceProperties {
 	private Policy hourly = new Policy();
 	private Policy solar = new Policy();
 	private Policy monthly = new Policy();
+	private Policy powerUsage = new Policy();
 
 	@Getter
 	@Setter

@@ -93,6 +93,20 @@ public class UtilityCacheConfig {
 						buildNativeCache(1, Duration.ofSeconds(30))
 				);
 
+		// GET /api/utility/power-usage, keyed by period + date: the period
+		// that is still running (60s) / periods that already ended (long TTL)
+		final Cache powerUsageCurrentCache =
+				new CaffeineCache(
+						UtilityCacheNames.POWER_USAGE_CURRENT,
+						buildNativeCache(50, Duration.ofSeconds(60))
+				);
+
+		final Cache powerUsageClosedCache =
+				new CaffeineCache(
+						UtilityCacheNames.POWER_USAGE_CLOSED,
+						buildNativeCache(500, Duration.ofHours(12))
+				);
+
 		final SimpleCacheManager cacheManager =
 				new SimpleCacheManager();
 
@@ -107,7 +121,9 @@ public class UtilityCacheConfig {
 						alertThresholdCache,
 						rawHistoryOldestCache,
 						weatherCurrentCache,
-						waterCheckCache
+						waterCheckCache,
+						powerUsageCurrentCache,
+						powerUsageClosedCache
 				)
 		);
 
