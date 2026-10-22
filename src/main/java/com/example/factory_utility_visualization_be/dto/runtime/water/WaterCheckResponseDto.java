@@ -8,6 +8,8 @@ import java.util.List;
  */
 public record WaterCheckResponseDto(
 		String generatedAt,
+		// median window of level signals (FE: "N-min median")
+		int levelMedianMinutes,
 		WaterCheckSummaryDto summary,
 		List<WaterCheckFacilityDto> facilities,
 		// OVER, NEAR, STALE signals: severity first, then oldest since first

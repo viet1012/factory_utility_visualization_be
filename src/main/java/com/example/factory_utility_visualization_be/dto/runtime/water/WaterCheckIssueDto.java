@@ -9,11 +9,15 @@ public record WaterCheckIssueDto(
 		String plcAddress,
 		String name,
 		String unit,
+		// value / medianValue / recordedAt: see WaterCheckSignalDto
 		BigDecimal value,
+		BigDecimal medianValue,
+		String recordedAt,
 		// last known reading, see WaterCheckSignalDto
 		BigDecimal lastValue,
 		String lastSeenAt,
 		WaterCheckStatus status,
+		WaterCheckStatusBasis statusBasis,
 		// see WaterCheckSignalDto
 		String reason,
 		String thresholdText,

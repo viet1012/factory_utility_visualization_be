@@ -10,6 +10,7 @@ import com.example.factory_utility_visualization_be.dto.runtime.water.WaterCheck
 import com.example.factory_utility_visualization_be.dto.runtime.water.WaterCheckResponseDto;
 import com.example.factory_utility_visualization_be.dto.runtime.water.WaterCheckSignalDto;
 import com.example.factory_utility_visualization_be.dto.runtime.water.WaterCheckStatus;
+import com.example.factory_utility_visualization_be.dto.runtime.water.WaterCheckStatusBasis;
 import com.example.factory_utility_visualization_be.dto.runtime.water.WaterCheckSummaryDto;
 import com.example.factory_utility_visualization_be.dto.runtime.water.WaterCheckThresholdDto;
 import com.example.factory_utility_visualization_be.repository.F2UtilityParaHistoryRepo;
@@ -56,7 +57,14 @@ import java.util.regex.Pattern;
  * A signal without a raw sample in the last 24h has value = null and is
  * STALE; its lastValue / lastSeenAt come from F2_Utility_Para_History_Main.
  *
- * Status (first match wins):
+ * Value: the latest raw sample for every signal (realtime). Level signals
+ * (unit m or code W_LevCool) also get medianValue = median of the 1-minute
+ * bucket last values of the last utility.water-check.level-median-minutes
+ * (default 10); only their status (statusBasis MEDIAN_CONFIRMED), OVER /
+ * NEAR confirmation and trend1h use it, which damps sensor noise. distance
+ * is always from value.
+ *
+ * Status of the value (medianValue when there is one; first match wins):
  *   STALE        no value, or latest sample older than 5 minutes
  *   SENSOR_FAULT pressure signal below utility.water-check.pump-stopped-min
  *   STOPPED      pressure signal in [pump-stopped-min, pump-stopped-max],
@@ -66,13 +74,17 @@ import java.util.regex.Pattern;
  *   NEAR         distance to the nearest limit < 10% of (high - low), or
  *                < 10% of |value| when only one side is set
  *   OK / NO_THRESHOLD (no non-trivial THRESHOLD rule for the code)
+ * OVER / NEAR is then kept only when the last 3 1-minute buckets (last
+ * value each, rolling median on MEDIAN_CONFIRMED) all reach it; otherwise
+ * the weakest of them wins (NEAR / OK),
+ * and fewer than 3 buckets gives OK, so a single noisy sample cannot flip it.
  * Pressure signal: unit kg/cm2 (any spelling) or bar, or code containing
  * PRES. STOPPED is not an issue; SENSOR_FAULT is.
  *
  * Queries per (uncached) request: master + latestPerKey + raw buckets (one
  * per 500 signals) + History_Main last seen (one per 500 signals without
  * raw, none when every signal has raw); thresholds come from the 60s alert
- * cache. Whole response cached 30s.
+ * cache. Whole response cached 5s.
  */
 @Service
 @RequiredArgsConstructor
@@ -88,6 +100,13 @@ public class WaterCheckService {
 	private static final int TREND_MINUTES = 60;
 	private static final int SINCE_LOOKBACK_HOURS = 24;
 	private static final BigDecimal NEAR_RATIO = new BigDecimal("0.1");
+
+	// OVER / NEAR needs this many latest 1-minute buckets reaching it
+	private static final int CONFIRM_BUCKETS = 3;
+
+	// level signals: status on the median of the last levelMedianMinutes buckets
+	private static final String LEVEL_UNIT = "m";
+	private static final String LEVEL_CODE = "W_LevCool";
 
 	// SQL Server IN (:list) does not accept an empty list
 	private static final String NO_KEY = "__NO_KEY__";
@@ -111,7 +130,7 @@ public class WaterCheckService {
 	private final WaterCheckProperties waterCheckProperties;
 
 	// code is null when the para row has no real category (NULL / blank / '0');
-	// value / recordedAt null when there is no raw sample in the last 24h
+	// rawValue / recordedAt null when there is no raw sample in the last 24h
 	private record Signal(
 			String fac,
 			String box,
@@ -120,7 +139,7 @@ public class WaterCheckService {
 			String code,
 			String name,
 			String unit,
-			BigDecimal value,
+			BigDecimal rawValue,
 			LocalDateTime recordedAt,
 			BigDecimal lastValue,
 			LocalDateTime lastSeenAt
@@ -145,7 +164,19 @@ public class WaterCheckService {
 		}
 	}
 
-	private record Evaluated(Signal signal, Limits limits, boolean pressure, Evaluation evaluation) {
+	// median: level median (null for other signals / no bucket); evaluation
+	// on median for MEDIAN_CONFIRMED, else on rawValue; distance from rawValue
+	private record Evaluated(
+			Signal signal,
+			BigDecimal median,
+			Limits limits,
+			boolean pressure,
+			Evaluation evaluation,
+			WaterCheckStatusBasis basis
+	) {
+		boolean byMedian() {
+			return basis == WaterCheckStatusBasis.MEDIAN_CONFIRMED;
+		}
 	}
 
 	// issue row before formatting, so it can be sorted on since
@@ -194,10 +225,10 @@ public class WaterCheckService {
 			// pressure readings in the stopped / sensor-fault range do not
 			// make a low = 0 rule non-trivial
 			boolean nonNegative = groupSignals.stream()
-					.filter(signal -> signal.value() != null)
+					.filter(signal -> signal.rawValue() != null)
 					.filter(signal -> !isPressure(signal)
-							|| signal.value().compareTo(waterCheckProperties.getPumpStoppedMax()) > 0)
-					.allMatch(signal -> signal.value().signum() >= 0);
+							|| signal.rawValue().compareTo(waterCheckProperties.getPumpStoppedMax()) > 0)
+					.allMatch(signal -> signal.rawValue().signum() >= 0);
 
 			List<WaterCheckThresholdDto> thresholdDtos = new ArrayList<>(rules.size());
 			List<AlertRule> breachRules = new ArrayList<>(rules.size());
@@ -218,21 +249,46 @@ public class WaterCheckService {
 			for (Signal signal : groupSignals) {
 				boolean pressure = isPressure(signal);
 				evaluatedByKey.put(signal.key(), new Evaluated(
-						signal, limits, pressure, evaluateCurrent(signal, limits, pressure, now)));
+						signal,
+						null,
+						limits,
+						pressure,
+						evaluateCurrent(signal, signal.rawValue(), limits, pressure, now),
+						WaterCheckStatusBasis.LATEST));
 				breachRulesByKey.put(signal.key(), breachRules);
 			}
 		}));
 
-		// pass 2: one raw query for trend1h (all) and since (OVER / NEAR)
+		// pass 2: one raw query for the level median, the OVER / NEAR
+		// confirmation, trend1h (all) and since (OVER / NEAR)
 		Map<String, NavigableMap<LocalDateTime, BigDecimal>> bucketsByKey = loadRawBuckets(evaluatedByKey, now);
 
 		Map<String, BigDecimal> trendByKey = new HashMap<>();
 		Map<String, LocalDateTime> sinceByKey = new HashMap<>();
 
-		evaluatedByKey.forEach((key, item) -> {
+		evaluatedByKey.replaceAll((key, latest) -> {
 			NavigableMap<LocalDateTime, BigDecimal> buckets = bucketsByKey.getOrDefault(key, new TreeMap<>());
-			trendByKey.put(key, trend1h(item.signal(), buckets, now));
+			BigDecimal median = medianValue(latest.signal(), buckets, now);
+			Evaluated current = median == null
+					? latest
+					: new Evaluated(
+							latest.signal(),
+							median,
+							latest.limits(),
+							latest.pressure(),
+							evaluateCurrent(latest.signal(), median, latest.limits(), latest.pressure(), now),
+							WaterCheckStatusBasis.MEDIAN_CONFIRMED);
+			Evaluated item = new Evaluated(
+					current.signal(),
+					median,
+					current.limits(),
+					current.pressure(),
+					new Evaluation(confirm(current, buckets), latest.evaluation().distance()),
+					current.basis());
+
+			trendByKey.put(key, trend1h(item, buckets, now));
 			sinceByKey.put(key, since(item, buckets));
+			return item;
 		});
 
 		// response
@@ -263,11 +319,13 @@ public class WaterCheckService {
 							signal.deviceName(),
 							signal.plc(),
 							signal.name(),
-							signal.value(),
+							signal.rawValue(),
+							item.median(),
 							formatTs(signal.recordedAt()),
 							signal.lastValue(),
 							formatTs(signal.lastSeenAt()),
 							status,
+							item.basis(),
 							reason(status),
 							item.evaluation().distance(),
 							trend,
@@ -298,6 +356,7 @@ public class WaterCheckService {
 
 		return new WaterCheckResponseDto(
 				formatTs(now),
+				levelMedianMinutes(),
 				new WaterCheckSummaryDto(
 						counts.getOrDefault(WaterCheckStatus.OK, 0L),
 						counts.getOrDefault(WaterCheckStatus.NEAR, 0L),
@@ -442,8 +501,13 @@ public class WaterCheckService {
 	}
 
 	/**
-	 * 1-minute last values: from now - 65 min for every signal (trend1h),
-	 * from now - 24h for OVER / NEAR / SENSOR_FAULT signals (since). Signals without a raw
+	 * 1-minute last values: from now - 65 min for every signal (level median,
+	 * confirmation, trend1h), from now - 24h for OVER / NEAR / SENSOR_FAULT
+	 * signals (since). A batch with level signals starts levelMedianMinutes
+	 * earlier, so the median 60 minutes ago (trend1h) has its full window.
+	 * The status here is still the one of the latest raw
+	 * sample, so level signals with limits get the 24h too: their median may
+	 * be OVER / NEAR when the latest sample is not. Signals without a raw
 	 * sample in the last 24h are skipped; one query per PAIRS_PER_QUERY.
 	 */
 	private Map<String, NavigableMap<LocalDateTime, BigDecimal>> loadRawBuckets(
@@ -457,6 +521,7 @@ public class WaterCheckService {
 
 		LocalDateTime fromTs = floorMinute(now.minusHours(SINCE_LOOKBACK_HOURS));
 		LocalDateTime recentFromTs = floorMinute(now.minusMinutes(TREND_MINUTES + STALE_MINUTES));
+		LocalDateTime levelRecentFromTs = recentFromTs.minusMinutes(levelMedianMinutes());
 
 		Map<String, NavigableMap<LocalDateTime, BigDecimal>> result = new HashMap<>();
 
@@ -465,15 +530,21 @@ public class WaterCheckService {
 			Set<String> plcs = new LinkedHashSet<>();
 			Set<String> batchKeys = new HashSet<>();
 			List<String> longKeys = new ArrayList<>();
+			boolean hasLevel = false;
 
 			for (Evaluated item : batch) {
 				String key = item.signal().key();
+				boolean level = isLevel(item.signal());
 
 				boxes.add(item.signal().box());
 				plcs.add(item.signal().plc());
 				batchKeys.add(key);
+				hasLevel |= level;
 
-				if (tracksSince(item.evaluation().status())) {
+				WaterCheckStatus status = item.evaluation().status();
+
+				if (tracksSince(status)
+						|| (level && !item.limits().isEmpty() && status != WaterCheckStatus.STALE)) {
 					longKeys.add(key);
 				}
 			}
@@ -482,7 +553,7 @@ public class WaterCheckService {
 					new ArrayList<>(boxes),
 					new ArrayList<>(plcs),
 					fromTs,
-					recentFromTs,
+					hasLevel ? levelRecentFromTs : recentFromTs,
 					longKeys.isEmpty() ? List.of(NO_KEY) : longKeys
 			)) {
 				String key = row.getBoxDeviceId() + "|" + row.getPlcAddress();
@@ -538,15 +609,121 @@ public class WaterCheckService {
 		return low == null && high == null ? Limits.NONE : new Limits(low, high);
 	}
 
-	private Evaluation evaluateCurrent(Signal signal, Limits limits, boolean pressure, LocalDateTime now) {
-		boolean stale = signal.value() == null
+	// value: rawValue, or the level median (null exactly when rawValue is)
+	private Evaluation evaluateCurrent(
+			Signal signal,
+			BigDecimal value,
+			Limits limits,
+			boolean pressure,
+			LocalDateTime now
+	) {
+		boolean stale = value == null
 				|| signal.recordedAt().isBefore(now.minusMinutes(STALE_MINUTES));
 
-		Evaluation byValue = signal.value() == null
+		Evaluation byValue = value == null
 				? new Evaluation(limits.isEmpty() ? WaterCheckStatus.NO_THRESHOLD : WaterCheckStatus.OK, null)
-				: evaluate(signal.value(), limits, pressure);
+				: evaluate(value, limits, pressure);
 
 		return stale ? new Evaluation(WaterCheckStatus.STALE, byValue.distance()) : byValue;
+	}
+
+	/**
+	 * Level signals: median of the last levelMedianMinutes buckets (inside
+	 * the range already loaded for trend1h). Other signals, no raw sample or
+	 * no bucket in that range: null.
+	 */
+	private BigDecimal medianValue(
+			Signal signal,
+			NavigableMap<LocalDateTime, BigDecimal> buckets,
+			LocalDateTime now
+	) {
+		return signal.rawValue() == null || !isLevel(signal) ? null : levelMedian(buckets, now);
+	}
+
+	// value a bucket is evaluated on: rolling median on MEDIAN_CONFIRMED,
+	// else the bucket last value
+	private BigDecimal bucketValue(
+			Evaluated item,
+			NavigableMap<LocalDateTime, BigDecimal> buckets,
+			Map.Entry<LocalDateTime, BigDecimal> bucket
+	) {
+		return item.byMedian() ? levelMedian(buckets, bucket.getKey()) : bucket.getValue();
+	}
+
+	/**
+	 * Median of the bucket last values of the levelMedianMinutes 1-minute
+	 * buckets ending at the bucket of end (the current, partial minute for
+	 * end = now); null when there is no value in that window.
+	 */
+	private BigDecimal levelMedian(NavigableMap<LocalDateTime, BigDecimal> buckets, LocalDateTime end) {
+		LocalDateTime endBucket = floorMinute(end);
+
+		List<BigDecimal> values = buckets.subMap(endBucket.minusMinutes(levelMedianMinutes() - 1L), true, endBucket, true)
+				.values()
+				.stream()
+				.filter(Objects::nonNull)
+				.sorted()
+				.toList();
+
+		if (values.isEmpty()) {
+			return null;
+		}
+
+		int middle = values.size() / 2;
+
+		// x / 2 always has a finite decimal expansion
+		return values.size() % 2 == 1
+				? values.get(middle)
+				: values.get(middle - 1).add(values.get(middle)).divide(BigDecimal.valueOf(2));
+	}
+
+	/**
+	 * OVER / NEAR of the current value is kept only when the latest
+	 * CONFIRM_BUCKETS 1-minute buckets up to the latest sample (last value
+	 * each, MEDIAN_CONFIRMED the rolling median up to that bucket; no gap
+	 * longer than STALE_MINUTES, same rule as since) all reach it; otherwise the
+	 * weakest of them wins (an OVER bucket also counts as NEAR). Fewer than
+	 * CONFIRM_BUCKETS buckets: OK. Other statuses as is.
+	 */
+	private WaterCheckStatus confirm(Evaluated item, NavigableMap<LocalDateTime, BigDecimal> buckets) {
+		WaterCheckStatus status = item.evaluation().status();
+
+		if (status != WaterCheckStatus.OVER && status != WaterCheckStatus.NEAR) {
+			return status;
+		}
+
+		int confirmed = severity(status);
+		int count = 0;
+		LocalDateTime previous = floorMinute(item.signal().recordedAt());
+
+		for (Map.Entry<LocalDateTime, BigDecimal> bucket : buckets.headMap(previous, true).descendingMap().entrySet()) {
+			BigDecimal value = bucketValue(item, buckets, bucket);
+
+			if (count == CONFIRM_BUCKETS
+					|| ChronoUnit.MINUTES.between(bucket.getKey(), previous) > STALE_MINUTES
+					|| value == null) {
+				break;
+			}
+
+			confirmed = Math.min(confirmed, severity(evaluate(value, item.limits(), item.pressure()).status()));
+			previous = bucket.getKey();
+			count++;
+		}
+
+		if (count < CONFIRM_BUCKETS || confirmed == 0) {
+			return WaterCheckStatus.OK;
+		}
+
+		return confirmed == severity(WaterCheckStatus.OVER) ? WaterCheckStatus.OVER : WaterCheckStatus.NEAR;
+	}
+
+	// OVER 2, NEAR 1, anything else 0
+	private int severity(WaterCheckStatus status) {
+		return switch (status) {
+			case OVER -> 2;
+			case NEAR -> 1;
+			default -> 0;
+		};
 	}
 
 	// SENSOR_FAULT > STOPPED > limits status (OVER > NEAR > OK / NO_THRESHOLD).
@@ -593,13 +770,16 @@ public class WaterCheckService {
 	}
 
 	// value now - last value of the latest bucket at or before now - 60 min
-	// (bucket no older than STALE_MINUTES before that)
+	// (bucket no older than STALE_MINUTES before that); MEDIAN_CONFIRMED:
+	// medianValue now - median of the window ending at that bucket
 	private BigDecimal trend1h(
-			Signal signal,
+			Evaluated item,
 			NavigableMap<LocalDateTime, BigDecimal> buckets,
 			LocalDateTime now
 	) {
-		if (signal.value() == null) {
+		BigDecimal value = item.byMedian() ? item.median() : item.signal().rawValue();
+
+		if (value == null) {
 			return null;
 		}
 
@@ -612,13 +792,15 @@ public class WaterCheckService {
 			return null;
 		}
 
-		return signal.value().subtract(past.getValue());
+		return value.subtract(bucketValue(item, buckets, past));
 	}
 
 	/**
 	 * OVER / NEAR / SENSOR_FAULT: walk 1-minute buckets back from the latest sample while
-	 * the bucket value has the same status; a gap longer than STALE_MINUTES
-	 * ends the run. A run reaching the 24h lookback returns its first bucket.
+	 * the bucket value (rolling median on MEDIAN_CONFIRMED, as in confirm)
+	 * has the same status (NEAR: NEAR or OVER, as in confirm); a gap longer
+	 * than STALE_MINUTES ends the run. A run reaching
+	 * the 24h lookback returns its first bucket.
 	 * STALE: latest sample + STALE_MINUTES (no sample at all -> recordedAt).
 	 */
 	private LocalDateTime since(Evaluated item, NavigableMap<LocalDateTime, BigDecimal> buckets) {
@@ -631,7 +813,7 @@ public class WaterCheckService {
 				return signal.lastSeenAt() == null ? null : signal.lastSeenAt().plusMinutes(STALE_MINUTES);
 			}
 
-			return signal.value() == null ? signal.recordedAt() : signal.recordedAt().plusMinutes(STALE_MINUTES);
+			return signal.rawValue() == null ? signal.recordedAt() : signal.recordedAt().plusMinutes(STALE_MINUTES);
 		}
 
 		if (!tracksSince(status)) {
@@ -642,9 +824,11 @@ public class WaterCheckService {
 		LocalDateTime previous = since;
 
 		for (Map.Entry<LocalDateTime, BigDecimal> bucket : buckets.headMap(since, true).descendingMap().entrySet()) {
+			BigDecimal value = bucketValue(item, buckets, bucket);
+
 			if (ChronoUnit.MINUTES.between(bucket.getKey(), previous) > STALE_MINUTES
-					|| bucket.getValue() == null
-					|| evaluate(bucket.getValue(), item.limits(), item.pressure()).status() != status) {
+					|| value == null
+					|| !reaches(evaluate(value, item.limits(), item.pressure()).status(), status)) {
 				break;
 			}
 
@@ -653,6 +837,13 @@ public class WaterCheckService {
 		}
 
 		return since;
+	}
+
+	// bucket status continues a run of status: OVER also continues NEAR
+	private boolean reaches(WaterCheckStatus bucketStatus, WaterCheckStatus status) {
+		return status == WaterCheckStatus.SENSOR_FAULT
+				? bucketStatus == status
+				: severity(bucketStatus) >= severity(status);
 	}
 
 	// STOPPED is not an issue
@@ -680,6 +871,17 @@ public class WaterCheckService {
 				|| (signal.code() != null && signal.code().toUpperCase(Locale.ROOT).contains("PRES"));
 	}
 
+	// utility.water-check.level-median-minutes, at least 1
+	private int levelMedianMinutes() {
+		return Math.max(1, waterCheckProperties.getLevelMedianMinutes());
+	}
+
+	// unit m or code W_LevCool (any case)
+	private boolean isLevel(Signal signal) {
+		return LEVEL_UNIT.equalsIgnoreCase(signal.unit())
+				|| LEVEL_CODE.equalsIgnoreCase(signal.code());
+	}
+
 	private String reason(WaterCheckStatus status) {
 		return switch (status) {
 			case STOPPED -> REASON_STOPPED;
@@ -701,10 +903,13 @@ public class WaterCheckService {
 				signal.plc(),
 				signal.name(),
 				signal.unit(),
-				signal.value(),
+				signal.rawValue(),
+				issue.item().median(),
+				formatTs(signal.recordedAt()),
 				signal.lastValue(),
 				formatTs(signal.lastSeenAt()),
 				issue.item().evaluation().status(),
+				issue.item().basis(),
 				reason(issue.item().evaluation().status()),
 				thresholdText(issue.item().limits(), signal.unit()),
 				formatTs(issue.since()),

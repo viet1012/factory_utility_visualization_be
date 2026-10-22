@@ -20,4 +20,8 @@ public class WaterCheckProperties {
 	// below pumpStoppedMin = sensor fault.
 	private BigDecimal pumpStoppedMin = new BigDecimal("-0.3");
 	private BigDecimal pumpStoppedMax = new BigDecimal("0.2");
+
+	// Level signals (unit m / code W_LevCool): value, OVER / NEAR confirmation
+	// and trend1h use the median of this many 1-minute buckets (min 1).
+	private int levelMedianMinutes = 10;
 }

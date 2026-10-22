@@ -52,10 +52,13 @@ utility:
       # TODO: map remaining cate_id values (STATUS / COUNTER)
 
   # GET /api/utility/water-check: pressure readings (kg/cm2, bar, code *PRES*)
-  # in [min, max] = STOPPED (pump stopped), below min = SENSOR_FAULT
+  # in [min, max] = STOPPED (pump stopped), below min = SENSOR_FAULT.
+  # Level signals (unit m / code W_LevCool): value = median of the last
+  # level-median-minutes 1-minute buckets
   water-check:
     pump-stopped-min: -0.3
     pump-stopped-max: 0.2
+    level-median-minutes: 10
 
   history:
     # from up to this many minutes before the oldest raw sample still uses RAW

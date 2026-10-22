@@ -90,7 +90,7 @@ public class UtilityCacheConfig {
 		final Cache waterCheckCache =
 				new CaffeineCache(
 						UtilityCacheNames.WATER_CHECK,
-						buildNativeCache(1, Duration.ofSeconds(30))
+						buildNativeCache(1, Duration.ofSeconds(5))
 				);
 
 		// GET /api/utility/power-usage, keyed by period + date: the period
