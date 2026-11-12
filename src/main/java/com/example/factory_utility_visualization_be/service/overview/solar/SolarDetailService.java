@@ -303,7 +303,8 @@ public class SolarDetailService {
 	}
 
 
-	// zeros when the tariff / pricing is not usable (as before)
+	// money null when no tariff version is usable at all; hours without a
+	// tariff version are left out of the money and flagged (priceMissing)
 	private SolarCostImpactDto costImpact(
 			List<SolarHourEnergyProjection> rows
 	) {
@@ -313,6 +314,7 @@ public class SolarDetailService {
 		BigDecimal solarVnd = BigDecimal.ZERO;
 		BigDecimal normalUsd = BigDecimal.ZERO;
 		BigDecimal solarUsd = BigDecimal.ZERO;
+		boolean priceMissing = false;
 
 		final Optional<Pricing> pricing =
 				pricingService.load();
@@ -325,11 +327,16 @@ public class SolarDetailService {
 
 			kwh = kwh.add(row.getKwh());
 
-			if (pricing.isEmpty()) {
+			final List<TouShare> shares = pricing
+					.map(p -> p.shares(row.getHourAt()))
+					.orElse(List.of());
+
+			if (shares.isEmpty()) {
+				priceMissing |= row.getKwh().signum() != 0;
 				continue;
 			}
 
-			for (TouShare share : pricing.get().shares(row.getHourAt())) {
+			for (TouShare share : shares) {
 				normalVnd = normalVnd.add(pricing.get().gridVnd(row.getKwh(), share));
 				solarVnd = solarVnd.add(pricing.get().solarVnd(row.getKwh(), share));
 				normalUsd = normalUsd.add(pricing.get().gridUsd(row.getKwh(), share));
@@ -339,6 +346,13 @@ public class SolarDetailService {
 
 		final BigDecimal savingUsd =
 				normalUsd.subtract(solarUsd);
+
+		if (pricing.isEmpty()) {
+			return new SolarCostImpactDto(
+					money(kwh), null, null, null, null, null, null, null,
+					kwh.signum() != 0
+			);
+		}
 
 		return new SolarCostImpactDto(
 				money(kwh),
@@ -351,7 +365,8 @@ public class SolarDetailService {
 				normalUsd.signum() == 0
 						? BigDecimal.ZERO.setScale(1)
 						: savingUsd.multiply(BigDecimal.valueOf(100))
-								.divide(normalUsd, 1, RoundingMode.HALF_UP)
+								.divide(normalUsd, 1, RoundingMode.HALF_UP),
+				priceMissing
 		);
 	}
 

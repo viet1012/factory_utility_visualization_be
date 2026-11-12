@@ -1,6 +1,7 @@
 package com.example.factory_utility_visualization_be.repository.overview.monthly;
 
 import lombok.RequiredArgsConstructor;
+import org.springframework.jdbc.core.PreparedStatementCallback;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Repository;
@@ -10,6 +11,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 
 /*
@@ -23,7 +25,8 @@ import java.util.List;
  * History_Main chỉ được đọc một lần (một khoảng liên tục prevFrom -> currentTo),
  * gom ngay thành #Agg (vài trăm dòng), các bước sau chỉ đọc #Agg.
  *
- * SQL chỉ trả số gốc; usd/delta/total/solarShare tính ở UtilityMonthlyQueryService.
+ * SQL chỉ trả số gốc (kWh, không có tiền); VND/USD/delta/total/solarShare
+ * tính ở UtilityMonthlyQueryService (tiền qua ElectricityPricingService).
  */
 @Repository
 @RequiredArgsConstructor
@@ -43,17 +46,28 @@ public class UtilityMonthlyJdbcRepository {
 
 			BigDecimal value,
 			BigDecimal avgValue,
-			BigDecimal vndCost,
 
 			BigDecimal prevValue,
 			BigDecimal prevAvgValue,
-			BigDecimal prevVndCost,
 
 			LocalDateTime pickAt,
 
 			BigDecimal solarValue,
 			BigDecimal prevSolarValue
 	) {
+	}
+
+	/**
+	 * kWh điện lưới của một giờ.
+	 *
+	 * @param period 'CURRENT' | 'PREV'
+	 * @param hourAt EnergyDay + HourNumber (giờ bắt đầu, = pick_at - 1h)
+	 * @param unit   unit của dòng summary Electricity tương ứng
+	 */
+	public record EnergyHour(String period, LocalDateTime hourAt, String unit, BigDecimal kwh) {
+	}
+
+	public record MonthlyResult(List<RawRow> rows, List<EnergyHour> energyHours) {
 	}
 
 	/*
@@ -217,15 +231,13 @@ public class UtilityMonthlyJdbcRepository {
 	 * Meter trong :excludedMeters (trùng, vd P-3.1 = P-3) không tính điện.
 	 *
 	 * #Agg: một lần đọc History_Main, gom theo
-	 * - ENERGY: period, unit, WD, HourNumber
-	 * - SOLAR : period, WD, HourNumber
+	 * - ENERGY: period, unit, EnergyDay, HourNumber (giờ để định giá ở Java)
+	 * - SOLAR : period
 	 * - COOLING / PIPELINE / AIR: period
 	 *
 	 * ENERGY / SOLAR: dòng History_Main là điện của giờ KẾT THÚC tại pick_at,
 	 * nên giờ / ngày / kỳ tính theo ts = pick_at - 1h (giống power-usage,
 	 * electric-consumption); môi trường giữ ts = pick_at.
-	 *
-	 * WD: '1' = Chủ nhật (19000101 là thứ Hai), không phụ thuộc SET DATEFIRST.
 	 */
 	private static final String PREPARE = """
           SET NOCOUNT ON;
@@ -253,8 +265,8 @@ public class UtilityMonthlyJdbcRepository {
               d.kind,
               g.period,
               g.unit_key,
-              g.WD,
               g.HourNumber,
+              g.EnergyDay,
 
               SUM(CASE WHEN d.kind = 'ENERGY'
                        THEN {ENERGY_VALUE} END) AS energy_sum,
@@ -291,16 +303,13 @@ public class UtilityMonthlyJdbcRepository {
 
                   CASE WHEN d.kind = 'ENERGY' THEN d.unit END AS unit_key,
 
-                  CASE WHEN d.kind IN ('ENERGY', 'SOLAR') THEN
-                      CASE
-                          WHEN DATEDIFF(DAY, CAST('19000101' AS DATE), CAST(t.ts AS DATE)) % 7 = 6
-                              THEN '1'
-                          ELSE '2-7'
-                      END
-                  END AS WD,
+                  -- hour of the energy (ENERGY only): priced in Java
+                  -- (ElectricityPricingService) at EnergyDay + HourNumber
+                  CASE WHEN d.kind = 'ENERGY'
+                       THEN DATEPART(HOUR, t.ts) END AS HourNumber,
 
-                  CASE WHEN d.kind IN ('ENERGY', 'SOLAR')
-                       THEN DATEPART(HOUR, t.ts) END AS HourNumber
+                  CASE WHEN d.kind = 'ENERGY'
+                       THEN CAST(t.ts AS DATE) END AS EnergyDay
           ) g
           WHERE h.pick_at >= :prevFrom
             AND h.pick_at < DATEADD(HOUR, 1, :currentTo)
@@ -313,8 +322,8 @@ public class UtilityMonthlyJdbcRepository {
               d.kind,
               g.period,
               g.unit_key,
-              g.WD,
-              g.HourNumber;
+              g.HourNumber,
+              g.EnergyDay;
 
           DROP TABLE IF EXISTS #Dev;
           """;
@@ -322,70 +331,15 @@ public class UtilityMonthlyJdbcRepository {
 	/*
 	 * Electricity (FAC và KVH như nhau, giống mọi API điện khác):
 	 * - value   = điện lưới (meter không có channel SOLAR), không trừ Solar.
-	 * - vndCost = điện lưới x đơn giá F2_Utility_Cost_Master theo từng khung giờ;
-	 *             USD tính ở service bằng ElectricityPricingService.
-	 *
-	 * Tariff hỗ trợ khung giờ qua nửa đêm.
+	 * - Tiền (VND/USD) KHÔNG tính ở SQL: ENERGY_HOURS_QUERY trả kWh theo
+	 *   (period, EnergyDay, HourNumber, unit), UtilityMonthlyQueryService
+	 *   định giá bằng ElectricityPricingService.
 	 *
 	 * Water/Air: FAC luôn trả đủ 3 dòng (kể cả không có dữ liệu),
 	 * KVH chỉ trả dòng có dữ liệu.
 	 */
 	private static final String FINAL_QUERY = """
-          ;WITH Hours AS (
-              SELECT v.n
-              FROM (
-                  VALUES
-                      (0),(1),(2),(3),(4),(5),
-                      (6),(7),(8),(9),(10),(11),
-                      (12),(13),(14),(15),(16),(17),
-                      (18),(19),(20),(21),(22),(23)
-              ) v(n)
-          ),
-
-          HourCost AS (
-              SELECT
-                  c.WD,
-                  h.n AS HourNumber,
-                  SUM(o.overlap * c.vnd) AS weighted_vnd_sum,
-                  SUM(o.overlap) AS total_hours
-              FROM dbo.F2_Utility_Cost_Master c
-              CROSS JOIN Hours h
-              CROSS APPLY (
-                  SELECT
-                      CASE
-                          WHEN c.frTime < c.toTime
-                              THEN IIF(c.toTime < h.n + 1, c.toTime, h.n + 1)
-                                 - IIF(c.frTime > h.n, c.frTime, h.n)
-                          WHEN h.n >= FLOOR(c.frTime)
-                              THEN IIF(24.0 < h.n + 1, 24.0, h.n + 1)
-                                 - IIF(c.frTime > h.n, c.frTime, h.n)
-                          ELSE IIF(c.toTime < h.n + 1, c.toTime, h.n + 1)
-                             - IIF(0.0 > h.n, 0.0, h.n)
-                      END AS overlap
-              ) o
-              WHERE (
-                      c.frTime < c.toTime
-                      AND h.n < c.toTime
-                      AND h.n + 1 > c.frTime
-                    )
-                 OR (
-                      c.frTime > c.toTime
-                      AND (h.n + 1 > c.frTime OR h.n < c.toTime)
-                    )
-              GROUP BY
-                  c.WD,
-                  h.n
-          ),
-
-          Rate AS (
-              SELECT
-                  WD,
-                  HourNumber,
-                  weighted_vnd_sum / NULLIF(total_hours, 0) AS vnd_rate
-              FROM HourCost
-          ),
-
-          SolarMonthly AS (
+          ;WITH SolarMonthly AS (
               SELECT
                   CAST(COALESCE(SUM(CASE WHEN period = 'CURRENT' THEN solar_sum END), 0)
                        AS DECIMAL(18,2)) AS solarValue,
@@ -395,19 +349,12 @@ public class UtilityMonthlyJdbcRepository {
               WHERE kind = 'SOLAR'
           ),
 
-          EnergyMonthly AS (
+          EnergyTotal AS (
               SELECT
                   e.unit_key AS unit,
-
                   COALESCE(SUM(CASE WHEN e.period = 'CURRENT' THEN e.energy_sum END), 0) AS gross,
-                  COALESCE(SUM(CASE WHEN e.period = 'PREV' THEN e.energy_sum END), 0) AS prevGross,
-
-                  COALESCE(SUM(CASE WHEN e.period = 'CURRENT' THEN e.energy_sum * r.vnd_rate END), 0) AS grossCost,
-                  COALESCE(SUM(CASE WHEN e.period = 'PREV' THEN e.energy_sum * r.vnd_rate END), 0) AS prevGrossCost
+                  COALESCE(SUM(CASE WHEN e.period = 'PREV' THEN e.energy_sum END), 0) AS prevGross
               FROM #Agg e
-              INNER JOIN Rate r
-                  ON r.WD = e.WD
-                 AND r.HourNumber = e.HourNumber
               WHERE e.kind = 'ENERGY'
               GROUP BY e.unit_key
           ),
@@ -417,11 +364,9 @@ public class UtilityMonthlyJdbcRepository {
                   e.unit,
                   CAST(e.gross AS DECIMAL(18,2)) AS value,
                   CAST(e.prevGross AS DECIMAL(18,2)) AS prevValue,
-                  CAST(e.grossCost AS DECIMAL(18,2)) AS vndCost,
-                  CAST(e.prevGrossCost AS DECIMAL(18,2)) AS prevVndCost,
                   sm.solarValue,
                   sm.prevSolarValue
-              FROM EnergyMonthly e
+              FROM EnergyTotal e
               CROSS JOIN SolarMonthly sm
           ),
 
@@ -481,11 +426,9 @@ public class UtilityMonthlyJdbcRepository {
 
                   e.value,
                   CAST(NULL AS DECIMAL(18,1)) AS avgValue,
-                  e.vndCost,
 
                   e.prevValue,
                   CAST(NULL AS DECIMAL(18,1)) AS prevAvgValue,
-                  e.prevVndCost,
 
                   e.solarValue,
                   e.prevSolarValue
@@ -506,11 +449,9 @@ public class UtilityMonthlyJdbcRepository {
 
                   CAST(NULL AS DECIMAL(18,2)),
                   env.avgValue,
-                  CAST(NULL AS DECIMAL(18,2)),
 
                   CAST(NULL AS DECIMAL(18,2)),
                   env.prevAvgValue,
-                  CAST(NULL AS DECIMAL(18,2)),
 
                   CAST(NULL AS DECIMAL(18,2)),
                   CAST(NULL AS DECIMAL(18,2))
@@ -527,10 +468,8 @@ public class UtilityMonthlyJdbcRepository {
               f.prevMaxValue,
               f.value,
               f.avgValue,
-              f.vndCost,
               f.prevValue,
               f.prevAvgValue,
-              f.prevVndCost,
               lp.pickAt,
               f.solarValue,
               f.prevSolarValue
@@ -538,6 +477,36 @@ public class UtilityMonthlyJdbcRepository {
           CROSS JOIN LastPick lp
           ORDER BY f.ord
           OPTION (RECOMPILE);
+          """;
+
+	/*
+	 * Result set thứ 2 của batch: kWh điện lưới theo
+	 * (period, EnergyDay, HourNumber, unit) để định giá ở Java.
+	 */
+	private static final String ENERGY_HOURS_QUERY = """
+          ;WITH EnergyMonthly AS (
+              SELECT
+                  e.period,
+                  e.EnergyDay,
+                  e.HourNumber,
+                  e.unit_key AS unit,
+                  SUM(e.energy_sum) AS kwh
+              FROM #Agg e
+              WHERE e.kind = 'ENERGY'
+              GROUP BY
+                  e.period,
+                  e.EnergyDay,
+                  e.HourNumber,
+                  e.unit_key
+          )
+          SELECT
+              period,
+              CAST(EnergyDay AS DATETIME) AS energyDay,
+              HourNumber AS hourNumber,
+              unit,
+              kwh
+          FROM EnergyMonthly
+          ORDER BY period, EnergyDay, HourNumber;
 
           DROP TABLE IF EXISTS #Agg;
           """;
@@ -551,14 +520,17 @@ public class UtilityMonthlyJdbcRepository {
 				.replace("{ENERGY_VALUE}", energyValue)
 				.replace("{ENV_VALUE}", envValue)
 				+ "\n"
-				+ FINAL_QUERY;
+				+ FINAL_QUERY
+				+ "\n"
+				+ ENERGY_HOURS_QUERY;
 	}
 
 	/*
-	 * Toàn bộ batch (#Dev, #Agg, final SELECT) chạy trong một lần gọi JDBC
-	 * nên bảng tạm luôn nằm trên cùng session.
+	 * Toàn bộ batch (#Dev, #Agg, 2 SELECT) chạy trong một lần gọi JDBC
+	 * nên bảng tạm luôn nằm trên cùng session. Result set 1 = các dòng
+	 * summary, result set 2 = kWh điện lưới theo giờ (EnergyHour).
 	 */
-	public List<RawRow> sumMonthly(
+	public MonthlyResult sumMonthly(
 			String fac,
 			boolean kvh,
 			LocalDateTime from,
@@ -577,8 +549,44 @@ public class UtilityMonthlyJdbcRepository {
 				.addValue("prevFrom", Timestamp.valueOf(prevFrom))
 				.addValue("prevTo", Timestamp.valueOf(prevTo));
 
-		return List.copyOf(
-				jdbc.query(kvh ? KVH_SQL : FAC_SQL, params, (rs, rowNum) -> mapRow(rs))
+		return jdbc.execute(kvh ? KVH_SQL : FAC_SQL, params, (PreparedStatementCallback<MonthlyResult>) ps -> {
+			List<RawRow> rows = new ArrayList<>();
+			List<EnergyHour> hours = new ArrayList<>();
+			int resultIndex = 0;
+			boolean isResultSet = ps.execute();
+
+			while (true) {
+				if (isResultSet) {
+					try (ResultSet rs = ps.getResultSet()) {
+						while (rs.next()) {
+							if (resultIndex == 0) {
+								rows.add(mapRow(rs));
+							} else if (resultIndex == 1) {
+								hours.add(mapHour(rs));
+							}
+						}
+					}
+					resultIndex++;
+				} else if (ps.getUpdateCount() == -1) {
+					break;
+				}
+
+				isResultSet = ps.getMoreResults();
+			}
+
+			return new MonthlyResult(List.copyOf(rows), List.copyOf(hours));
+		});
+	}
+
+	private static EnergyHour mapHour(ResultSet rs) throws SQLException {
+		Timestamp day = rs.getTimestamp("energyDay");
+		int hour = rs.getInt("hourNumber");
+
+		return new EnergyHour(
+				rs.getString("period"),
+				day == null ? null : day.toLocalDateTime().toLocalDate().atTime(hour, 0),
+				rs.getString("unit"),
+				rs.getBigDecimal("kwh")
 		);
 	}
 
@@ -597,11 +605,9 @@ public class UtilityMonthlyJdbcRepository {
 
 				rs.getBigDecimal("value"),
 				rs.getBigDecimal("avgValue"),
-				rs.getBigDecimal("vndCost"),
 
 				rs.getBigDecimal("prevValue"),
 				rs.getBigDecimal("prevAvgValue"),
-				rs.getBigDecimal("prevVndCost"),
 
 				pickAt == null ? null : pickAt.toLocalDateTime(),
 

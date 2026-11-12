@@ -32,6 +32,7 @@ class ElectricConsumptionCalculatorTest {
 	private PowerUsageRepo repo;
 	private ElectricConsumptionRepo energyRepo;
 	private ElectricConsumptionProperties props;
+	private ElectricityProperties electricity;
 	private ElectricConsumptionCalculator calculator;
 
 	@BeforeEach
@@ -43,9 +44,14 @@ class ElectricConsumptionCalculatorTest {
 		// single-hour fixtures count as complete days unless a test says otherwise
 		props.setMinCoveragePct(BigDecimal.ONE);
 
-		ElectricityProperties electricity = new ElectricityProperties();
+		electricity = new ElectricityProperties();
 		electricity.setGrid(policy("26005", "1.075"));
 		electricity.setSolar(policy("26316", "1.0"));
+		// no Java defaults any more: the factors come from application.yml only
+		electricity.getSolarPriceFactor().setNormal(new BigDecimal("0.9"));
+		electricity.getSolarPriceFactor().setHighPeak(new BigDecimal("0.9"));
+		electricity.getSolarPriceFactor().setLowPeak(BigDecimal.ZERO);
+		electricity.setHourOffset(0);
 
 		calculator = new ElectricConsumptionCalculator(
 				energyRepo,
@@ -282,7 +288,7 @@ class ElectricConsumptionCalculatorTest {
 
 	@Test
 	void hourOffsetMovesHoursIntoTheNextBand() {
-		props.setHourOffset(1);
+		electricity.setHourOffset(1);
 
 		// Fri 21:00 is normal; +1 h -> 22:00 low peak
 		when(energyRepo.findHourlyEnergy(anyString(), any(), any(), any(), any(), any(), anyList(), anyList(), anyList())).thenReturn(List.of(
@@ -359,6 +365,8 @@ class ElectricConsumptionCalculatorTest {
 			public BigDecimal getFrTime() { return new BigDecimal(fr); }
 			public BigDecimal getToTime() { return new BigDecimal(to); }
 			public BigDecimal getVnd() { return new BigDecimal(vnd); }
+			public java.time.LocalDateTime getEffectiveFrom() { return null; }
+			public java.time.LocalDateTime getEffectiveTo() { return null; }
 		};
 	}
 

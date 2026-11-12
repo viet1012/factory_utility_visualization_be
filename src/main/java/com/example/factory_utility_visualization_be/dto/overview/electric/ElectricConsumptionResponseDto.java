@@ -18,14 +18,17 @@ import java.util.List;
  *   day not started / no complete day for an average)
  * - Values.solar is null when no SOLAR meter reported in that day / period
  *   (total is then totalElectricity only)
- * - bands and every K$ value are null when the tariff schedule of
- *   F2_Utility_Cost_Master cannot be mapped to 3 bands
+ * - bands and every K$ value are null when no tariff is usable, and per day
+ *   when that day has no tariff version (Scope / MonthPoint.priceMissing)
  *
  * A day is complete when it is over and its meter-hour coverage (meter-hours
- * with grid data / expected meters x 24) is >= minCoveragePct, expected
- * meters = most grid meters seen in one hour within +/- meterWindowDays; so a
- * day where some meters stopped reporting is partial. Partial days are
- * returned with partial = true but are left out of every average.
+ * with grid data / expected meter-hours) is >= minCoveragePct; so a day where
+ * some meters stopped reporting is partial. Partial days are returned with
+ * partial = true but are left out of every average. Expected meter-hours:
+ * - selected period (daily, Scope.meters): configured grid meters of the
+ *   scope x hours of the day up to dataUntil
+ * - monthly history: most grid meters seen in one hour within
+ *   +/- meterWindowDays x 24
  *
  * Meter-hours far above the meter's usual kWh/hour (cumulative register or
  * catch-up values after a gap) are dropped and treated as missing; the
@@ -56,14 +59,17 @@ public record ElectricConsumptionResponseDto(
 			int days
 	) {}
 
-	// $/kWh, null when tariff unavailable
+	// $/kWh of the tariff version of the last hour with data (dataUntil - 1h),
+	// null when tariff unavailable or no version covers that day
 	public record UnitPrices(
 			BigDecimal gridNormal,
 			BigDecimal gridHighPeak,
 			BigDecimal gridLowPeak,
 			BigDecimal solarNormal,
 			BigDecimal solarHighPeak,
-			BigDecimal solarLowPeak
+			BigDecimal solarLowPeak,
+			// effective_from (yyyy-MM-dd) of that version, null = no lower bound
+			String effectiveFrom
 	) {}
 
 	public record Scope(
@@ -72,7 +78,7 @@ public record ElectricConsumptionResponseDto(
 			String name,
 			List<MonthPoint> monthly,
 			List<DayPoint> daily,
-			// most grid meters seen in one hour of the selected period
+			// configured grid meters of the scope
 			int meters,
 			// days of the selected period already started
 			int elapsedDays,
@@ -84,7 +90,36 @@ public record ElectricConsumptionResponseDto(
 			Values dailyTotalKusd,
 			// average of the complete days, null = no complete day
 			Values dailyAverageMwh,
-			Values dailyAverageKusd
+			Values dailyAverageKusd,
+			// meters with missing hours in the selected period (up to dataUntil),
+			// most missing hours first
+			List<MeterIssue> meterIssues,
+			// some day with data has no tariff version: its bands / K$ are null
+			// in daily[] and left out of dailyTotal / dailyAverage bands and K$
+			boolean priceMissing
+	) {}
+
+	public record MeterIssue(
+			// box_device_id
+			String meter,
+			String fac,
+			// expected hours of the period up to dataUntil - hours with valid data
+			int missingHours,
+			// end of the last hour with valid data (ISO-8601 +07:00), null = never
+			String lastDataAt
+	) {}
+
+	public record MissingMeter(
+			// box_device_id
+			String meter,
+			String fac,
+			// hours with valid data on that day
+			int hours,
+			// NO_DATA = no row at all, OUTLIER = some hours dropped as outliers,
+			// PARTIAL = some hours without data
+			String reason,
+			// end of the last hour with valid data (ISO-8601 +07:00), null = never
+			String lastDataAt
 	) {}
 
 	public record MonthPoint(
@@ -104,7 +139,10 @@ public record ElectricConsumptionResponseDto(
 			BigDecimal excludedMwh,
 			// average per complete day, null = no complete day
 			Values perDayMwh,
-			Values perDayKusd
+			Values perDayKusd,
+			// some complete day has no tariff version (its bands / K$ are not
+			// in the averages)
+			boolean priceMissing
 	) {}
 
 	public record DayPoint(
@@ -113,9 +151,10 @@ public record ElectricConsumptionResponseDto(
 			String weekday,
 			// hours with grid data (0..24)
 			int hoursWithData,
-			// expected grid meters (most seen in one hour within +/- meterWindowDays)
+			// configured grid meters of the scope
 			int meters,
-			// meter-hours with grid data / (meters x 24) in %, null = no data
+			// meter-hours with grid data / (meters x hours of the day up to
+			// dataUntil) in %, null = no data
 			BigDecimal coveragePct,
 			// has data but is still running or coveragePct < minCoveragePct
 			boolean partial,
@@ -123,7 +162,12 @@ public record ElectricConsumptionResponseDto(
 			BigDecimal excludedMwh,
 			// null when the day has no data or is after dataUntil
 			Values mwh,
-			Values kusd
+			Values kusd,
+			// configured meters with at least one valid hour on that day
+			int reportingMeters,
+			// configured meters with fewer valid hours than expected for the day
+			// (NO_DATA first, then fewest hours, then name); [] after dataUntil
+			List<MissingMeter> missingMeters
 	) {}
 
 	public record Values(

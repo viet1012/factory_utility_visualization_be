@@ -35,7 +35,7 @@ public class ElectricConsumptionService {
 		LocalDateTime now = LocalDateTime.now(APP_ZONE);
 		YearMonth billMonth = parseMonth(month, calculator.billMonthOf(now.toLocalDate()));
 		int monthCount = months == null ? properties.getDefaultMonths() : months;
-		int offset = hourOffset == null ? properties.getHourOffset() : hourOffset;
+		int offset = hourOffset == null ? calculator.defaultHourOffset() : hourOffset;
 
 		if (monthCount < 0 || monthCount > properties.getMaxMonths()) {
 			throw new ElectricConsumptionBadRequestException(

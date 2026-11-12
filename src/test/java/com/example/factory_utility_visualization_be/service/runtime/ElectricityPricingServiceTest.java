@@ -45,6 +45,11 @@ class ElectricityPricingServiceTest {
 		properties = new ElectricityProperties();
 		properties.setGrid(policy("26005", "1.075"));
 		properties.setSolar(policy("26316", "1.0"));
+		// no Java defaults any more: the factors come from application.yml only
+		properties.getSolarPriceFactor().setNormal(new BigDecimal("0.9"));
+		properties.getSolarPriceFactor().setHighPeak(new BigDecimal("0.9"));
+		properties.getSolarPriceFactor().setLowPeak(BigDecimal.ZERO);
+		properties.setHourOffset(0);
 
 		service = new ElectricityPricingService(new TouTariffService(repo), properties);
 	}
@@ -72,30 +77,12 @@ class ElectricityPricingServiceTest {
 	}
 
 	@Test
-	void sqlPricedEndpointsGetTheSameGridConversion() {
-		// monthly-summary converts its SQL VND with this
-		assertThat(service.gridVndToUsd(new BigDecimal("1000000")).setScale(4, RoundingMode.HALF_UP))
-				.isEqualByComparingTo("41.3382");
-		// hourly-dashboard passes these to its SQL
-		assertThat(service.gridExchangeRate()).isEqualByComparingTo("26005");
-		assertThat(service.gridSepzone()).isEqualByComparingTo("1.075");
-	}
-
-	@Test
 	void excludedMetersAreUpperCaseAndNeverEmpty() {
 		assertThat(service.excludedMeterKeys()).containsExactly("");
 
 		properties.setExcludedMeters(List.of(" p-3.1_mfm384 "));
 
 		assertThat(service.excludedMeterKeys()).containsExactly("P-3.1_MFM384");
-	}
-
-	@Test
-	void noPricingWithoutExchangeRate() {
-		properties.getGrid().setExchangeRate(null);
-
-		assertThat(service.load()).isEmpty();
-		assertThat(service.gridVndToUsd(BigDecimal.TEN)).isNull();
 	}
 
 	private static BigDecimal sum(
@@ -130,6 +117,8 @@ class ElectricityPricingServiceTest {
 			public BigDecimal getFrTime() { return new BigDecimal(fr); }
 			public BigDecimal getToTime() { return new BigDecimal(to); }
 			public BigDecimal getVnd() { return new BigDecimal(vnd); }
+			public java.time.LocalDateTime getEffectiveFrom() { return null; }
+			public java.time.LocalDateTime getEffectiveTo() { return null; }
 		};
 	}
 }

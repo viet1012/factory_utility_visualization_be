@@ -92,13 +92,17 @@ public interface PowerUsageRepo extends JpaRepository<DummyEntity, Long> {
 
 	// Tariff rows (same table as the monthly / hourly cost queries):
 	// WD '1' = Sunday, '2-7' = Monday..Saturday; frTime/toTime in hours of
-	// day (frTime > toTime = overnight); vnd = VND/kWh.
+	// day (frTime > toTime = overnight); vnd = VND/kWh. Every version:
+	// rows with the same [effective_from, effective_to) form one tariff
+	// (effective_to NULL = still in effect); DATE returned as DATETIME.
 	@Query(value = """
 			SELECT
-			    LTRIM(RTRIM(c.WD))              AS wd,
-			    CAST(c.frTime AS DECIMAL(9, 4)) AS frTime,
-			    CAST(c.toTime AS DECIMAL(9, 4)) AS toTime,
-			    CAST(c.vnd AS DECIMAL(19, 4))   AS vnd
+			    LTRIM(RTRIM(c.WD))                  AS wd,
+			    CAST(c.frTime AS DECIMAL(9, 4))     AS frTime,
+			    CAST(c.toTime AS DECIMAL(9, 4))     AS toTime,
+			    CAST(c.vnd AS DECIMAL(19, 4))       AS vnd,
+			    CAST(c.effective_from AS DATETIME)  AS effectiveFrom,
+			    CAST(c.effective_to AS DATETIME)    AS effectiveTo
 			FROM dbo.F2_Utility_Cost_Master c
 			""", nativeQuery = true)
 	List<PowerUsageTariffProjection> findTariffs();

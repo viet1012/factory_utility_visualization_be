@@ -37,16 +37,13 @@ public class ElectricConsumptionProperties {
 	private int maxMonths = 36;
 
 	// a finished day is complete when meter-hours with grid data >=
-	// minCoveragePct % of (expected meters x 24); expected meters = most grid
-	// meters seen in one hour within +/- meterWindowDays of that day, so meters
-	// added mid-period do not make the earlier days partial
+	// minCoveragePct % of (expected meters x 24); expected meters = configured
+	// grid meters of the scope for the selected period
 	private BigDecimal minCoveragePct = BigDecimal.valueOf(98);
 
+	// monthly history only: expected meters = most grid meters seen in one
+	// hour within +/- meterWindowDays of that day
 	private int meterWindowDays = 3;
-
-	// hours added to History_Main hourAt (pick_at - 1h) before the day / tariff
-	// band is chosen; for testing the hour stamp against the EVN TOU registers
-	private int hourOffset = 0;
 
 	// meter-hour dropped when kWh > outlierMinKwh AND kWh > outlierRatio x
 	// median kWh/hour of that meter (cumulative / catch-up values)

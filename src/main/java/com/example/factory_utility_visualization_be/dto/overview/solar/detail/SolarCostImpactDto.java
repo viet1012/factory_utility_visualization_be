@@ -19,7 +19,11 @@ public record SolarCostImpactDto(
 
 		BigDecimal savingUsd,
 
-		BigDecimal savingPercent
+		BigDecimal savingPercent,
+
+		// true = some hour with kWh has no tariff version (money above covers
+		// priced hours only); every money field is null when no tariff at all
+		boolean priceMissing
 
 ) {
 }

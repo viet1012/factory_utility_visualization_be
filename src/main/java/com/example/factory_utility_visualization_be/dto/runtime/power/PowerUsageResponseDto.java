@@ -24,12 +24,18 @@ public record PowerUsageResponseDto(
 		// compressed air cabinets (grid kWh)
 		List<Purpose> byPurpose,
 		boolean purposeConfigured,
-		// empty when the tariff schedule / exchange rate is not usable
+		// kWh of every hour with data; grid of hours without a tariff version
+		// in band UNPRICED (rate / usd null), see priceMissing
 		List<Supply> supplyMix,
-		List<DayTotal> last7Total
+		List<DayTotal> last7Total,
+		// true = some hour of the period with kWh has no tariff version: its kWh
+		// is in supplyMix (grid as band UNPRICED, solar in SOLAR) but its money
+		// is not in total.usd / supplyMix.usd (priced hours only)
+		boolean priceMissing
 ) {
 
-	// usd / blendedRate are null when supplyMix is empty
+	// usd = priced hours only, null when no hour is priced; blendedRate =
+	// usd / kWh of the priced hours
 	public record Total(
 			BigDecimal kwh,
 			BigDecimal prevKwh,

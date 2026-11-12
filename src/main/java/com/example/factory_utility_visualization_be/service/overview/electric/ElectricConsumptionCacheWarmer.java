@@ -46,7 +46,7 @@ public class ElectricConsumptionCacheWarmer {
 	public void warmUp() {
 		YearMonth month = calculator.billMonthOf(LocalDate.now(APP_ZONE));
 		int months = properties.getDefaultMonths();
-		int offset = properties.getHourOffset();
+		int offset = calculator.defaultHourOffset();
 		long started = System.nanoTime();
 
 		try {

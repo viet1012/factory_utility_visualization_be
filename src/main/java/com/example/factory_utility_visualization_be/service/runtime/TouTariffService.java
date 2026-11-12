@@ -8,25 +8,35 @@ import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.DayOfWeek;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.TreeSet;
 
 /**
  * Time-of-use tariff from F2_Utility_Cost_Master, shared by
- * /api/utility/power-usage and /api/utility/electric-consumption.
+ * /api/utility/power-usage, /api/utility/electric-consumption and solar.
  *
- * Per WD ('1' = Sunday, '2-7' = Monday..Saturday) and hour of day, the tariff
- * rows covering that hour, weighted by overlap (overnight rows: frTime >
- * toTime), like the FinalRate CTE of the monthly / hourly cost queries. The
- * table has no band column, so bands come from the 3 distinct VND rates
- * (highest = HIGH_PEAK, lowest = LOW_PEAK). Empty when the rates cannot be
- * mapped to 3 bands or an hour has no rate.
+ * The table holds several versions: rows with the same
+ * [effective_from, effective_to) (DATE, to exclusive, NULL = still in effect)
+ * form one tariff, and an hour is priced with the version in effect on the
+ * date of that hour. A date without a version (or whose version cannot be
+ * mapped, see below) has no price: shares() is empty for it.
+ *
+ * Per version, WD ('1' = Sunday, '2-7' = Monday..Saturday) and hour of day,
+ * the tariff rows covering that hour, weighted by overlap (overnight rows:
+ * frTime > toTime). This is the only reader of the table (via
+ * PowerUsageRepo.findTariffs); no SQL query prices energy. The table has no band column, so bands come from the 3 distinct
+ * VND rates of the version (highest = HIGH_PEAK, lowest = LOW_PEAK). A
+ * version is unusable when its rates cannot be mapped to 3 bands or an hour
+ * has no rate.
  */
 @Service
 @RequiredArgsConstructor
@@ -50,11 +60,20 @@ public class TouTariffService {
 	public record TouShare(TouBand band, BigDecimal vnd, BigDecimal fraction) {
 	}
 
-	public static final class TouTariff {
-		private final Map<String, List<List<TouShare>>> byWd;
-
-		private TouTariff(Map<String, List<List<TouShare>>> byWd) {
-			this.byWd = byWd;
+	/**
+	 * One tariff version, valid on [effectiveFrom, effectiveTo).
+	 *
+	 * @param effectiveFrom inclusive, null = no lower bound
+	 * @param effectiveTo   exclusive, null = still in effect
+	 */
+	public record TouVersion(
+			LocalDate effectiveFrom,
+			LocalDate effectiveTo,
+			Map<String, List<List<TouShare>>> byWd
+	) {
+		public boolean covers(LocalDate day) {
+			return (effectiveFrom == null || !day.isBefore(effectiveFrom))
+					&& (effectiveTo == null || day.isBefore(effectiveTo));
 		}
 
 		// shares of the hour starting at hourAt
@@ -73,14 +92,69 @@ public class TouTariffService {
 		}
 	}
 
-	public Optional<TouTariff> load() {
-		List<PowerUsageTariffProjection> rows = repo.findTariffs().stream()
-				.filter(row -> row.getWd() != null && row.getFrTime() != null
-						&& row.getToTime() != null && row.getVnd() != null)
-				.toList();
+	public static final class TouTariff {
+		// usable versions, latest effectiveFrom first
+		private final List<TouVersion> versions;
 
+		private TouTariff(List<TouVersion> versions) {
+			this.versions = versions;
+		}
+
+		// version in effect on day (latest effectiveFrom when versions overlap)
+		public Optional<TouVersion> version(LocalDate day) {
+			return versions.stream().filter(v -> v.covers(day)).findFirst();
+		}
+
+		// shares of the hour starting at hourAt; empty = no price for that day
+		public List<TouShare> shares(LocalDateTime hourAt) {
+			return version(hourAt.toLocalDate()).map(v -> v.shares(hourAt)).orElse(List.of());
+		}
+
+		// VND/kWh of a band on a Monday..Saturday of the version in effect on day
+		public Optional<BigDecimal> weekdayRate(TouBand band, LocalDate day) {
+			return version(day).flatMap(v -> v.weekdayRate(band));
+		}
+	}
+
+	private record VersionKey(LocalDate from, LocalDate to) {
+	}
+
+	// empty when no version is usable
+	public Optional<TouTariff> load() {
+		Map<VersionKey, List<PowerUsageTariffProjection>> byVersion = new LinkedHashMap<>();
+
+		for (PowerUsageTariffProjection row : repo.findTariffs()) {
+			if (row.getWd() == null || row.getFrTime() == null || row.getToTime() == null || row.getVnd() == null) {
+				continue;
+			}
+
+			VersionKey key = new VersionKey(
+					row.getEffectiveFrom() == null ? null : row.getEffectiveFrom().toLocalDate(),
+					row.getEffectiveTo() == null ? null : row.getEffectiveTo().toLocalDate());
+			byVersion.computeIfAbsent(key, k -> new ArrayList<>()).add(row);
+		}
+
+		List<TouVersion> versions = new ArrayList<>();
+
+		byVersion.forEach((key, rows) -> version(rows)
+				.map(byWd -> new TouVersion(key.from(), key.to(), byWd))
+				.ifPresent(versions::add));
+
+		if (versions.isEmpty()) {
+			return Optional.empty();
+		}
+
+		// latest effectiveFrom first (null = oldest)
+		versions.sort(Comparator.comparing(TouVersion::effectiveFrom,
+				Comparator.nullsFirst(Comparator.<LocalDate>naturalOrder())).reversed());
+
+		return Optional.of(new TouTariff(List.copyOf(versions)));
+	}
+
+	// WD -> hour -> shares of one version; empty when not mappable
+	private Optional<Map<String, List<List<TouShare>>>> version(List<PowerUsageTariffProjection> rows) {
 		TreeSet<BigDecimal> rates = new TreeSet<>(Comparator.naturalOrder());
-		rows.forEach(row -> rates.add(row.getVnd()));
+		rows.stream().map(PowerUsageTariffProjection::getVnd).filter(Objects::nonNull).forEach(rates::add);
 
 		if (rates.size() != 3) {
 			return Optional.empty();
@@ -124,7 +198,7 @@ public class TouTariffService {
 			tariff.put(wd, byHour);
 		}
 
-		return Optional.of(new TouTariff(tariff));
+		return Optional.of(tariff);
 	}
 
 	// hours of [frTime, toTime) inside [hour, hour + 1)

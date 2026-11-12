@@ -3,8 +3,12 @@ package com.example.factory_utility_visualization_be.service.overview.monthly;
 import com.example.factory_utility_visualization_be.dto.overview.monthly.MonthlyQueryRange;
 import com.example.factory_utility_visualization_be.dto.overview.monthly.MonthlySummaryDto;
 import com.example.factory_utility_visualization_be.repository.overview.monthly.UtilityMonthlyJdbcRepository;
+import com.example.factory_utility_visualization_be.repository.overview.monthly.UtilityMonthlyJdbcRepository.EnergyHour;
+import com.example.factory_utility_visualization_be.repository.overview.monthly.UtilityMonthlyJdbcRepository.MonthlyResult;
 import com.example.factory_utility_visualization_be.repository.overview.monthly.UtilityMonthlyJdbcRepository.RawRow;
 import com.example.factory_utility_visualization_be.service.runtime.ElectricityPricingService;
+import com.example.factory_utility_visualization_be.service.runtime.ElectricityPricingService.Money;
+import com.example.factory_utility_visualization_be.service.runtime.ElectricityPricingService.Pricing;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -14,7 +18,10 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 
 @Slf4j
 @Service
@@ -28,6 +35,12 @@ public class UtilityMonthlyQueryService {
 	private static final String ELECTRICITY = "Electricity";
 
 	private static final BigDecimal HUNDRED = BigDecimal.valueOf(100);
+
+	private static final BigDecimal ZERO_2 = BigDecimal.ZERO.setScale(2);
+
+	// EnergyHour.period of UtilityMonthlyJdbcRepository
+	private static final String PERIOD_CURRENT = "CURRENT";
+	private static final String PERIOD_PREV = "PREV";
 
 	private final UtilityMonthlyJdbcRepository repository;
 	private final ElectricityPricingService pricingService;
@@ -50,7 +63,7 @@ public class UtilityMonthlyQueryService {
 				range.prevTo()
 		);
 
-		final List<RawRow> rows = repository.sumMonthly(
+		final MonthlyResult result = repository.sumMonthly(
 				normalizedFac,
 				KVH.equalsIgnoreCase(normalizedFac),
 				range.from(),
@@ -60,23 +73,69 @@ public class UtilityMonthlyQueryService {
 				pricingService.excludedMeterKeys()
 		);
 
-		if (rows.isEmpty()) {
+		if (result.rows().isEmpty()) {
 			return List.of();
 		}
+
+		final Map<String, PeriodCost> costs = price(result.energyHours());
 
 		final OffsetDateTime generatedAt =
 				OffsetDateTime.now(APP_ZONE);
 
-		return rows.stream()
-				.map(row -> toDto(row, monthYyyyMm, generatedAt))
+		return result.rows().stream()
+				.map(row -> toDto(row, monthYyyyMm, generatedAt, costs))
 				.toList();
+	}
+
+	// VND / USD of one (period, unit); missing = some hour with kWh had no price
+	private static final class PeriodCost {
+		private Money money = new Money(BigDecimal.ZERO, BigDecimal.ZERO);
+		private boolean missing;
+	}
+
+	private static String costKey(String period, String unit) {
+		return period + "|" + (unit == null ? "" : unit);
+	}
+
+	/*
+	 * Định giá từng giờ bằng ElectricityPricingService (nơi duy nhất tính tiền
+	 * điện): version giá theo ngày của giờ. Giờ không có giá -> không cộng
+	 * tiền và đánh dấu missing (vndCost/usdCost của kỳ đó vẫn là tổng các giờ
+	 * có giá, priceMissing = true). Không có tariff/policy -> tiền null.
+	 */
+	private Map<String, PeriodCost> price(List<EnergyHour> hours) {
+		final Optional<Pricing> pricing = pricingService.load();
+		final Map<String, PeriodCost> costs = new HashMap<>();
+
+		for (EnergyHour hour : hours) {
+			if (hour.period() == null || hour.hourAt() == null || hour.kwh() == null) {
+				continue;
+			}
+
+			final PeriodCost cost = costs.computeIfAbsent(costKey(hour.period(), hour.unit()), key -> new PeriodCost());
+			final Optional<Money> money = pricing.flatMap(p -> p.gridCost(hour.hourAt(), hour.kwh()));
+
+			if (money.isPresent()) {
+				cost.money = cost.money.add(money.get());
+			} else if (hour.kwh().signum() != 0) {
+				cost.missing = true;
+			}
+		}
+
+		if (pricing.isEmpty()) {
+			// no usable tariff version at all (every hour lacks a version): money unknown
+			costs.values().forEach(cost -> cost.money = null);
+		}
+
+		return costs;
 	}
 
 	/*
 	 * Các trường dẫn xuất, giữ đúng scale và cách xử lý chia 0 của SQL cũ:
 	 *
-	 * - usdCost        = vndCost x grid sepzone / grid exchange
-	 *                    (ElectricityPricingService, chung cho mọi API điện), scale 2.
+	 * - vndCost/usdCost = tổng tiền các giờ của kỳ (ElectricityPricingService,
+	 *                    chung cho mọi API điện), scale 2; null khi không có
+	 *                    tariff; priceMissing = có giờ không có version giá.
 	 * - deltaValue     = (value|avgValue|0) - (prevValue|prevAvgValue|0), scale 2.
 	 * - deltaPercent   = delta / prev * 100, scale 2; prev = 0 -> null.
 	 * - totalEnergy    = value + solarValue (null coi như 0), scale 2; chỉ dòng Electricity.
@@ -85,9 +144,13 @@ public class UtilityMonthlyQueryService {
 	private MonthlySummaryDto toDto(
 			RawRow row,
 			String month,
-			OffsetDateTime generatedAt
+			OffsetDateTime generatedAt,
+			Map<String, PeriodCost> costs
 	) {
 		final boolean electricity = ELECTRICITY.equals(row.cate());
+
+		final PeriodCost cost = electricity ? costs.get(costKey(PERIOD_CURRENT, row.unit())) : null;
+		final PeriodCost prevCost = electricity ? costs.get(costKey(PERIOD_PREV, row.unit())) : null;
 
 		final BigDecimal current = firstNonNullOrZero(row.value(), row.avgValue());
 		final BigDecimal prev = firstNonNullOrZero(row.prevValue(), row.prevAvgValue());
@@ -118,14 +181,14 @@ public class UtilityMonthlyQueryService {
 				row.value(),
 				row.avgValue(),
 
-				row.vndCost(),
-				toUsd(row.vndCost()),
+				vnd(electricity, cost),
+				usd(electricity, cost),
 
 				row.prevValue(),
 				row.prevAvgValue(),
 
-				row.prevVndCost(),
-				toUsd(row.prevVndCost()),
+				vnd(electricity, prevCost),
+				usd(electricity, prevCost),
 
 				delta.setScale(2, RoundingMode.HALF_UP),
 				percent(delta, prev),
@@ -142,14 +205,40 @@ public class UtilityMonthlyQueryService {
 				prevTotalEnergy,
 				solarShare,
 
-				generatedAt
+				generatedAt,
+
+				electricity ? priceMissing(cost) : null,
+				electricity ? priceMissing(prevCost) : null
 		);
 	}
 
-	// null when vnd is null or the grid policy is missing
-	private BigDecimal toUsd(BigDecimal vnd) {
-		BigDecimal usd = pricingService.gridVndToUsd(vnd);
-		return usd == null ? null : usd.setScale(2, RoundingMode.HALF_UP);
+	// no energy hour in the period -> 0 (as before); no tariff -> null
+	private static BigDecimal vnd(boolean electricity, PeriodCost cost) {
+		if (!electricity) {
+			return null;
+		}
+
+		if (cost == null) {
+			return ZERO_2;
+		}
+
+		return cost.money == null ? null : cost.money.vnd().setScale(2, RoundingMode.HALF_UP);
+	}
+
+	private static BigDecimal usd(boolean electricity, PeriodCost cost) {
+		if (!electricity) {
+			return null;
+		}
+
+		if (cost == null) {
+			return ZERO_2;
+		}
+
+		return cost.money == null ? null : cost.money.usd().setScale(2, RoundingMode.HALF_UP);
+	}
+
+	private static boolean priceMissing(PeriodCost cost) {
+		return cost != null && (cost.missing || cost.money == null);
 	}
 
 	private static BigDecimal percent(BigDecimal numerator, BigDecimal denominator) {

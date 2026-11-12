@@ -24,7 +24,7 @@ public class ElectricConsumptionController {
 	public ResponseEntity<ElectricConsumptionResponseDto> electricConsumption(
 			@RequestParam(required = false) String month,   // bill month yyyy-MM, default = current bill month
 			@RequestParam(required = false) Integer months,  // previous bill periods in "monthly", default 12
-			@RequestParam(required = false) Integer hourOffset // -3..3, default utility.electric-consumption.hour-offset
+			@RequestParam(required = false) Integer hourOffset // -3..3, default utility.electricity.hour-offset
 	) {
 		return ResponseEntity.ok(service.getElectricConsumption(month, months, hourOffset));
 	}

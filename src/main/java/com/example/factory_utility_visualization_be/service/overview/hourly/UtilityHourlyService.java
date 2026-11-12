@@ -1,22 +1,29 @@
 package com.example.factory_utility_visualization_be.service.overview.hourly;
 
 import com.example.factory_utility_visualization_be.dto.overview.hourly.*;
-import com.example.factory_utility_visualization_be.repository.overview.hourly.projection.HourlyEnergyCompareProjection;
+import com.example.factory_utility_visualization_be.repository.overview.hourly.projection.HourlyEnergyProjection;
 import com.example.factory_utility_visualization_be.repository.overview.hourly.projection.HourlySensorCompareProjection;
 import com.example.factory_utility_visualization_be.repository.overview.hourly.UtilityHourlyRepo;
 import com.example.factory_utility_visualization_be.service.runtime.ElectricityPricingService;
+import com.example.factory_utility_visualization_be.service.runtime.ElectricityPricingService.Money;
+import com.example.factory_utility_visualization_be.service.runtime.ElectricityPricingService.Pricing;
 import com.example.factory_utility_visualization_be.service.util.FacilityValidator;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Optional;
+import java.util.TreeMap;
 
 @Service
 @RequiredArgsConstructor
@@ -27,6 +34,9 @@ public class UtilityHourlyService {
 
 	private static final ZoneId APP_ZONE =
 			ZoneId.of("Asia/Ho_Chi_Minh");
+
+	// kWh / USD scale of the old SQL (DECIMAL(19,4))
+	private static final int MONEY_SCALE = 4;
 
 	private final UtilityHourlyRepo repo;
 	private final ElectricityPricingService pricingService;
@@ -85,22 +95,19 @@ public class UtilityHourlyService {
 		// ========================================================
 		// 1. ELECTRICITY
 		//
-		// Không bao gồm Solar. Giá: ElectricityPricingService (chung
-		// cho mọi API điện). Dòng History_Main ghi điện của giờ KẾT
-		// THÚC tại pick_at -> cửa sổ query dịch +1h.
+		// Không bao gồm Solar. SQL chỉ trả kWh theo ngày x giờ; tiền
+		// tính ở đây bằng ElectricityPricingService (nơi duy nhất tính
+		// tiền điện). Dòng History_Main ghi điện của giờ KẾT THÚC tại
+		// pick_at -> cửa sổ query dịch +1h.
 		// ========================================================
 
-		final List<HourlyEnergyCompareProjection>
+		final List<HourlyEnergyProjection>
 				electricityRows =
-				repo.findHourlyElectricityCompare(
+				repo.findHourlyElectricity(
 						fac,
 						fromTime.plusHours(1),
 						toTime.plusHours(1),
-						todayDate,
-						yesterdayDate,
 						metric,
-						pricingService.gridExchangeRate(),
-						pricingService.gridSepzone(),
 						pricingService.excludedMeterKeys()
 				);
 
@@ -124,8 +131,8 @@ public class UtilityHourlyService {
 		// MAPPING ELECTRICITY
 		// ========================================================
 
-		final List<HourlyCompareDto> electricity =
-				mapEnergy(electricityRows);
+		final EnergyCompare electricity =
+				mapEnergy(electricityRows, yesterday, today);
 
 
 		// ========================================================
@@ -144,10 +151,12 @@ public class UtilityHourlyService {
 				fac,
 				LocalDateTime.now(),
 
-				List.copyOf(electricity),
+				List.copyOf(electricity.rows()),
 
 				List.copyOf(sensorSplit.water()),
-				List.copyOf(sensorSplit.air())
+				List.copyOf(sensorSplit.air()),
+
+				electricity.priceMissing()
 		);
 	}
 
@@ -224,45 +233,110 @@ public class UtilityHourlyService {
 	// MAPPING ENERGY
 	// ============================================================
 
-	private List<HourlyCompareDto> mapEnergy(
-			List<HourlyEnergyCompareProjection> rows
+	private record EnergyCompare(
+			List<HourlyCompareDto> rows,
+			// some hour with kWh had no tariff version (its USD is null)
+			boolean priceMissing
+	) {
+	}
+
+	// kWh + USD of one day-hour; usd null = no price for that hour
+	private record HourValue(BigDecimal kwh, BigDecimal usd) {
+	}
+
+	/*
+	 * Một dòng cho mỗi giờ có dữ liệu ở hôm qua hoặc hôm nay (như SQL cũ).
+	 * kWh thiếu = 0. USD = kWh x giá của version hiệu lực vào ngày đó
+	 * (ElectricityPricingService); ngày không có version / không có tariff
+	 * -> USD = null (không phải 0) và priceMissing = true nếu giờ đó có kWh.
+	 */
+	private EnergyCompare mapEnergy(
+			List<HourlyEnergyProjection> rows,
+			LocalDate yesterday,
+			LocalDate today
 	) {
 
 		if (rows == null || rows.isEmpty()) {
-			return List.of();
+			return new EnergyCompare(List.of(), false);
 		}
 
-		return rows.stream()
+		final Optional<Pricing> pricing =
+				pricingService.load();
 
-				.filter(row ->
-						row != null
-								&& row.getScaleHour() != null
+		// hour -> day -> value
+		final Map<Integer, Map<LocalDate, HourValue>> byHour =
+				new TreeMap<>();
+
+		boolean priceMissing = false;
+
+		for (HourlyEnergyProjection row : rows) {
+
+			if (row == null
+					|| row.getHourNumber() == null
+					|| row.getRecordDate() == null) {
+				continue;
+			}
+
+			final LocalDate day =
+					row.getRecordDate().toLocalDate();
+
+			if (!day.equals(yesterday) && !day.equals(today)) {
+				continue;
+			}
+
+			final BigDecimal kwh =
+					zeroIfNull(row.getKwh());
+
+			final LocalDateTime hourAt =
+					day.atTime(row.getHourNumber(), 0);
+
+			final BigDecimal usd = pricing
+					.flatMap(p -> p.gridCost(hourAt, kwh))
+					.map(Money::usd)
+					.orElse(null);
+
+			if (usd == null && kwh.signum() != 0) {
+				priceMissing = true;
+			}
+
+			byHour
+					.computeIfAbsent(row.getHourNumber(), key -> new HashMap<>())
+					.put(day, new HourValue(kwh, usd));
+		}
+
+		final List<HourlyCompareDto> result =
+				new ArrayList<>(byHour.size());
+
+		byHour.forEach((hour, days) -> result.add(
+				new HourlyCompareDto(
+						hour,
+						kwh(days.get(yesterday)),
+						kwh(days.get(today)),
+						usd(days.get(yesterday), pricing, yesterday),
+						usd(days.get(today), pricing, today)
 				)
+		));
 
-				.map(row ->
-						new HourlyCompareDto(
+		return new EnergyCompare(result, priceMissing);
+	}
 
-								row.getScaleHour(),
+	private BigDecimal kwh(HourValue value) {
+		return value == null
+				? BigDecimal.ZERO.setScale(MONEY_SCALE)
+				: value.kwh().setScale(MONEY_SCALE, RoundingMode.HALF_UP);
+	}
 
-								zeroIfNull(
-										row.getYesterday()
-								),
+	// no kWh row for that day-hour -> 0 when the day is priced, else null
+	private BigDecimal usd(HourValue value, Optional<Pricing> pricing, LocalDate day) {
+		if (value == null) {
+			return pricing.isPresent() && pricing.get().priced(day)
+					? BigDecimal.ZERO.setScale(MONEY_SCALE)
+					: null;
+		}
 
-								zeroIfNull(
-										row.getToday()
-								),
-
-								zeroIfNull(
-										row.getYesterdayUsd()
-								),
-
-								zeroIfNull(
-										row.getTodayUsd()
-								)
-						)
-				)
-
-				.toList();
+		return value.usd() == null
+				? null
+				: value.usd().setScale(MONEY_SCALE, RoundingMode.HALF_UP);
 	}
 
 

@@ -30,6 +30,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.TreeMap;
 import java.util.TreeSet;
@@ -37,16 +38,16 @@ import java.util.function.Function;
 
 /**
  * Builds GET /api/utility/power-usage from one hourly History_Main query
- * (fac x SOLAR flag x hour) plus F2_Utility_Cost_Master.
+ * (fac x SOLAR flag x hour), priced by ElectricityPricingService.
  *
  * Same meter split as the KVH daily data: grid = devices without any SOLAR
  * channel, solar = SOLAR devices, MTD rows with value > 0. Every kWh figure
  * (total, byFactory, last7Total, forecast) is grid + solar. Supply mix: grid
  * kWh by tariff band (no solar deduction) and SOLAR, both priced by
  * ElectricityPricingService (same rules as every other electricity
- * endpoint). Bands come from the 3 distinct VND rates of
- * F2_Utility_Cost_Master (highest = HIGH_PEAK, lowest = LOW_PEAK), since the
- * table has no band column; anything else leaves supplyMix empty.
+ * endpoint). Bands come from the 3 distinct VND rates of the tariff version
+ * of that day (TouTariffService); no usable tariff leaves supplyMix empty,
+ * hours without a version are left out and flagged with priceMissing.
  *
  * Current period runs up to the last complete hour; the previous period
  * gets the same length (capped at the current period start).
@@ -82,7 +83,9 @@ public class PowerUsageCalculator {
 		HIGH_PEAK,
 		NORMAL,
 		LOW_PEAK,
-		SOLAR
+		SOLAR,
+		// grid kWh of hours without a tariff version (see supplyMix)
+		UNPRICED
 	}
 
 	// [from, to)
@@ -157,15 +160,20 @@ public class PowerUsageCalculator {
 		BigDecimal kwh = totalKwh(hours, current);
 		BigDecimal prevKwh = totalKwh(hours, previous);
 
-		List<Supply> supplyMix = supplyMix(hours, current);
-		BigDecimal usd = supplyMix.isEmpty() ? null : sum(supplyMix.stream().map(Supply::usd).toList());
+		Optional<Pricing> pricing = pricingService.load();
+		List<Supply> supplyMix = supplyMix(hours, current, pricing);
+		boolean priceMissing = priceMissing(hours, current, pricing);
+		// USD of the priced hours only; null when no hour is priced
+		List<BigDecimal> bandUsd = supplyMix.stream().map(Supply::usd).filter(Objects::nonNull).toList();
+		BigDecimal usd = bandUsd.isEmpty() ? null : sum(bandUsd);
 
 		Total total = new Total(
 				kwh(kwh),
 				kwh(prevKwh),
 				changePct(kwh, prevKwh),
 				usd,
-				usd == null ? null : rate(usd, kwh)
+				// over the priced kWh, so unpriced hours do not dilute the rate
+				usd == null ? null : rate(usd, pricedKwh(hours, current, pricing))
 		);
 
 		return new PowerUsageResponseDto(
@@ -182,7 +190,8 @@ public class PowerUsageCalculator {
 				byPurpose(hours, current, previous, last7First),
 				true,
 				supplyMix,
-				last7(hours, last7First)
+				last7(hours, last7First),
+				priceMissing
 		);
 	}
 
@@ -230,20 +239,43 @@ public class PowerUsageCalculator {
 	// Sections
 	// ---------------------------------------------------------------------
 
-	private List<Supply> supplyMix(Map<LocalDateTime, HourUsage> hours, Window window) {
-		Optional<Pricing> pricing = pricingService.load();
-
+	// grid + solar kWh of the hours of the window that have a tariff version
+	private BigDecimal pricedKwh(Map<LocalDateTime, HourUsage> hours, Window window, Optional<Pricing> pricing) {
 		if (pricing.isEmpty()) {
-			return List.of();
+			return BigDecimal.ZERO;
 		}
 
-		Pricing p = pricing.get();
+		return sum(hours.entrySet().stream()
+				.filter(entry -> window.contains(entry.getKey()) && !pricing.get().shares(entry.getKey()).isEmpty())
+				.map(entry -> entry.getValue().total())
+				.toList());
+	}
+
+	// some hour of the window with kWh has no price (no version that day)
+	private boolean priceMissing(Map<LocalDateTime, HourUsage> hours, Window window, Optional<Pricing> pricing) {
+		return hours.entrySet().stream()
+				.filter(entry -> window.contains(entry.getKey()) && entry.getValue().total().signum() != 0)
+				.anyMatch(entry -> pricing.isEmpty() || pricing.get().shares(entry.getKey()).isEmpty());
+	}
+
+	/*
+	 * kWh of EVERY hour with data, priced or not:
+	 * - SOLAR: all solar kWh
+	 * - HIGH_PEAK / NORMAL / LOW_PEAK: grid kWh of hours with a tariff version,
+	 *   split by that version's time windows
+	 * - UNPRICED: grid kWh of hours without a version (no band can be known);
+	 *   only listed when such hours exist, rate / usd null
+	 * USD (and rate = usd / priced kWh) only from priced hours; a band with no
+	 * priced hour has usd / rate null. Hours without price -> priceMissing.
+	 */
+	private List<Supply> supplyMix(Map<LocalDateTime, HourUsage> hours, Window window, Optional<Pricing> pricing) {
 		Map<Band, BigDecimal> kwhByBand = new EnumMap<>(Band.class);
+		// kWh of priced hours / their USD, per band (rate base)
+		Map<Band, BigDecimal> pricedKwhByBand = new EnumMap<>(Band.class);
 		Map<Band, BigDecimal> usdByBand = new EnumMap<>(Band.class);
 
 		for (Band band : Band.values()) {
 			kwhByBand.put(band, BigDecimal.ZERO);
-			usdByBand.put(band, BigDecimal.ZERO);
 		}
 
 		hours.forEach((hourAt, usage) -> {
@@ -253,10 +285,22 @@ public class PowerUsageCalculator {
 
 			kwhByBand.merge(Band.SOLAR, usage.solar, BigDecimal::add);
 
-			for (TouShare share : p.shares(hourAt)) {
-				Band band = Band.valueOf(share.band().name());
+			List<TouShare> shares = pricing.map(p -> p.shares(hourAt)).orElse(List.of());
 
-				kwhByBand.merge(band, usage.grid.multiply(share.fraction()), BigDecimal::add);
+			if (shares.isEmpty()) {
+				kwhByBand.merge(Band.UNPRICED, usage.grid, BigDecimal::add);
+				return;
+			}
+
+			Pricing p = pricing.get();
+			pricedKwhByBand.merge(Band.SOLAR, usage.solar, BigDecimal::add);
+
+			for (TouShare share : shares) {
+				Band band = Band.valueOf(share.band().name());
+				BigDecimal gridKwh = usage.grid.multiply(share.fraction());
+
+				kwhByBand.merge(band, gridKwh, BigDecimal::add);
+				pricedKwhByBand.merge(band, gridKwh, BigDecimal::add);
 				usdByBand.merge(band, p.gridUsd(usage.grid, share), BigDecimal::add);
 				usdByBand.merge(Band.SOLAR, p.solarUsd(usage.solar, share), BigDecimal::add);
 			}
@@ -267,14 +311,19 @@ public class PowerUsageCalculator {
 
 		for (Band band : Band.values()) {
 			BigDecimal bandKwh = kwhByBand.get(band);
+
+			if (band == Band.UNPRICED && bandKwh.signum() == 0) {
+				continue;
+			}
+
 			BigDecimal bandUsd = usdByBand.get(band);
 
 			mix.add(new Supply(
 					band.name(),
 					kwh(bandKwh),
 					sharePct(bandKwh, totalKwh),
-					rate(bandUsd, bandKwh),
-					usd(bandUsd)
+					bandUsd == null ? null : rate(bandUsd, pricedKwhByBand.get(band)),
+					bandUsd == null ? null : usd(bandUsd)
 			));
 		}
 

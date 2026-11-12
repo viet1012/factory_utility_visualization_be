@@ -1,6 +1,6 @@
 package com.example.factory_utility_visualization_be.repository.overview.hourly;
 
-import com.example.factory_utility_visualization_be.repository.overview.hourly.projection.HourlyEnergyCompareProjection;
+import com.example.factory_utility_visualization_be.repository.overview.hourly.projection.HourlyEnergyProjection;
 import com.example.factory_utility_visualization_be.repository.overview.hourly.projection.HourlySensorCompareProjection;
 import com.example.factory_utility_visualization_be.model.DummyEntity;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -8,7 +8,6 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
-import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -17,401 +16,81 @@ public interface UtilityHourlyRepo
 		extends JpaRepository<DummyEntity, Long> {
 
 	// ============================================================
-	// SHARED TARIFF-RATE CTE
-	//
-	// Used by findHourlyElectricityCompare. Produces FinalRate(wd, hour_number,
-	// vnd_rate): the VND/kWh rate for each weekday-bucket/hour-of-day,
-	// weighted by how many minutes of that hour each F2_Utility_Cost_Master
-	// tariff row overlaps, including overnight (frTime > toTime) tariffs.
-	// ============================================================
-
-	// ============================================================
-	// SHARED HOUR-GENERATOR CTE
-	//
-	// Used by findHourlyElectricityCompare — generates the fixed
-	// hour_number 0..23 axis used to join against tariff rows.
-	// ============================================================
-
-	String HOURS_0_23_CTE = """
-            WITH Hours AS (
-                SELECT hour_number
-                FROM (
-                    VALUES
-                        (0), (1), (2), (3), (4), (5),
-                        (6), (7), (8), (9), (10), (11),
-                        (12), (13), (14), (15), (16), (17),
-                        (18), (19), (20), (21), (22), (23)
-                ) AS H(hour_number)
-            ),
-
-            """;
-
-	String HOUR_TARIFF_RATE_CTE = """
-            HourRate AS (
-                SELECT
-                    c.WD AS wd,
-                    h.hour_number,
-
-                    SUM(
-                        CASE
-                            WHEN c.frTime < c.toTime
-                            THEN
-                                CASE
-                                    WHEN h.hour_number < c.toTime
-                                     AND h.hour_number + 1 > c.frTime
-                                    THEN
-                                        (
-                                            CASE
-                                                WHEN c.toTime < h.hour_number + 1
-                                                THEN c.toTime
-                                                ELSE h.hour_number + 1
-                                            END
-                                        )
-                                        -
-                                        (
-                                            CASE
-                                                WHEN c.frTime > h.hour_number
-                                                THEN c.frTime
-                                                ELSE h.hour_number
-                                            END
-                                        )
-
-                                    ELSE 0
-                                END
-
-                            ELSE
-                                CASE
-                                    WHEN h.hour_number + 1 > c.frTime
-                                    THEN
-                                        (
-                                            CASE
-                                                WHEN 24.0 < h.hour_number + 1
-                                                THEN 24.0
-                                                ELSE h.hour_number + 1
-                                            END
-                                        )
-                                        -
-                                        (
-                                            CASE
-                                                WHEN c.frTime > h.hour_number
-                                                THEN c.frTime
-                                                ELSE h.hour_number
-                                            END
-                                        )
-
-                                    WHEN h.hour_number < c.toTime
-                                    THEN
-                                        (
-                                            CASE
-                                                WHEN c.toTime < h.hour_number + 1
-                                                THEN c.toTime
-                                                ELSE h.hour_number + 1
-                                            END
-                                        )
-                                        -
-                                        h.hour_number
-
-                                    ELSE 0
-                                END
-                        END
-                        * c.vnd
-                    ) AS weighted_vnd,
-
-                    SUM(
-                        CASE
-                            WHEN c.frTime < c.toTime
-                            THEN
-                                CASE
-                                    WHEN h.hour_number < c.toTime
-                                     AND h.hour_number + 1 > c.frTime
-                                    THEN
-                                        (
-                                            CASE
-                                                WHEN c.toTime < h.hour_number + 1
-                                                THEN c.toTime
-                                                ELSE h.hour_number + 1
-                                            END
-                                        )
-                                        -
-                                        (
-                                            CASE
-                                                WHEN c.frTime > h.hour_number
-                                                THEN c.frTime
-                                                ELSE h.hour_number
-                                            END
-                                        )
-
-                                    ELSE 0
-                                END
-
-                            ELSE
-                                CASE
-                                    WHEN h.hour_number + 1 > c.frTime
-                                    THEN
-                                        (
-                                            CASE
-                                                WHEN 24.0 < h.hour_number + 1
-                                                THEN 24.0
-                                                ELSE h.hour_number + 1
-                                            END
-                                        )
-                                        -
-                                        (
-                                            CASE
-                                                WHEN c.frTime > h.hour_number
-                                                THEN c.frTime
-                                                ELSE h.hour_number
-                                            END
-                                        )
-
-                                    WHEN h.hour_number < c.toTime
-                                    THEN
-                                        (
-                                            CASE
-                                                WHEN c.toTime < h.hour_number + 1
-                                                THEN c.toTime
-                                                ELSE h.hour_number + 1
-                                            END
-                                        )
-                                        -
-                                        h.hour_number
-
-                                    ELSE 0
-                                END
-                        END
-                    ) AS total_hours
-
-                FROM dbo.F2_Utility_Cost_Master c
-
-                CROSS JOIN Hours h
-
-                GROUP BY
-                    c.WD,
-                    h.hour_number
-            ),
-
-            FinalRate AS (
-                SELECT
-                    wd,
-                    hour_number,
-
-                    weighted_vnd
-                    /
-                    NULLIF(total_hours, 0) AS vnd_rate
-
-                FROM HourRate
-
-                WHERE total_hours > 0
-            ),
-
-            """;
-
-	// ============================================================
 	// 1. ELECTRICITY
-	// Không lấy Solar
+	//
+	// Grid kWh (no Solar) per day x hour, NO money: UtilityHourlyService
+	// prices every hour with ElectricityPricingService (the only place
+	// electricity money is computed). A row holds the energy of the hour
+	// ENDING at pick_at, so the hour is pick_at - 1h; the caller shifts the
+	// window by +1h (same as power-usage / electric-consumption).
 	// ============================================================
 
-	@Query(value = HOURS_0_23_CTE + """
-    DeviceMap AS (
+	@Query(value = """
+    WITH DeviceMap AS (
         SELECT
             ch.box_device_id,
-
             MAX(sc.fac) AS fac,
-
             MAX(
                 CASE
-                    WHEN UPPER(
-                        LTRIM(
-                            RTRIM(
-                                ISNULL(ch.box_id, '')
-                            )
-                        )
-                    ) = 'SOLAR'
+                    WHEN UPPER(LTRIM(RTRIM(ISNULL(ch.box_id, '')))) = 'SOLAR'
                     THEN 1
                     ELSE 0
                 END
             ) AS is_solar
-
         FROM dbo.F2_Utility_Scada_Channel ch
-
         INNER JOIN dbo.F2_Utility_Scada sc
             ON sc.scada_id = ch.scada_id
-
         GROUP BY
             ch.box_device_id
-    ),
-
-    EnergyBase AS (
-        -- a row holds the energy of the hour ENDING at pick_at, so the hour
-        -- (and its tariff band) is pick_at - 1h; the caller shifts the
-        -- window by +1h (same as power-usage / electric-consumption)
-        SELECT
-            DATEPART(
-                HOUR,
-                DATEADD(HOUR, -1, hi.pick_at)
-            ) AS hour_number,
-
-            CAST(
-                DATEADD(HOUR, -1, hi.pick_at) AS DATE
-            ) AS record_date,
-
-            CAST(
-                hi.[value]
-                AS DECIMAL(19,6)
-            ) AS energy_value
-
-        FROM dbo.F2_Utility_Para_History_Main hi
-
-        INNER JOIN dbo.F2_Utility_Para pa
-            ON pa.box_device_id = hi.box_device_id
-           AND pa.plc_address = hi.plc_address
-
-        INNER JOIN DeviceMap dm
-            ON dm.box_device_id = hi.box_device_id
-
-        WHERE
-            hi.pick_at >= :fromTime
-            AND hi.pick_at < :toTime
-
-            AND hi.[value] > 0
-
-            AND pa.name_en = :nameEn
-
-            -- GRID / điện thường
-            AND dm.is_solar = 0
-
-            AND (
-                UPPER(:fac) = 'KVH'
-                OR UPPER(dm.fac) = UPPER(:fac)
-            )
-
-            AND UPPER(LTRIM(RTRIM(dm.box_device_id))) NOT IN (:excludedMeters)
-
-            AND hi.MTD = 'MTD'
-    ),
-
-    HourlyEnergy AS (
-        SELECT
-            hour_number,
-            record_date,
-
-            CASE
-                WHEN (
-                    DATEDIFF(
-                        DAY,
-                        CAST('19000101' AS DATE),
-                        record_date
-                    ) % 7
-                ) = 6
-                THEN '1'
-
-                ELSE '2-7'
-            END AS wd,
-
-            SUM(
-                energy_value
-            ) AS hour_value
-
-        FROM EnergyBase
-
-        GROUP BY
-            hour_number,
-            record_date
-    ),
-
-    """ + HOUR_TARIFF_RATE_CTE + """
-    CostMapped AS (
-        SELECT
-            e.hour_number,
-            e.record_date,
-            e.hour_value,
-            r.vnd_rate
-
-        FROM HourlyEnergy e
-
-        LEFT JOIN FinalRate r
-            ON r.wd = e.wd
-           AND r.hour_number = e.hour_number
     )
 
     SELECT
-        hour_number AS scaleHour,
+        CAST(CAST(DATEADD(HOUR, -1, hi.pick_at) AS DATE) AS DATETIME) AS recordDate,
+        DATEPART(HOUR, DATEADD(HOUR, -1, hi.pick_at))                  AS hourNumber,
+        CAST(SUM(CAST(hi.[value] AS DECIMAL(19,6))) AS DECIMAL(19,6))  AS kwh
 
-        CAST(
-            SUM(
-                CASE
-                    WHEN record_date =
-                         CAST(:yesterdayDate AS DATE)
-                    THEN hour_value
-                END
-            )
-            AS DECIMAL(19,4)
-        ) AS yesterday,
+    FROM dbo.F2_Utility_Para_History_Main hi
 
-        CAST(
-            SUM(
-                CASE
-                    WHEN record_date =
-                         CAST(:todayDate AS DATE)
-                    THEN hour_value
-                END
-            )
-            AS DECIMAL(19,4)
-        ) AS today,
+    INNER JOIN dbo.F2_Utility_Para pa
+        ON pa.box_device_id = hi.box_device_id
+       AND pa.plc_address = hi.plc_address
 
-        CAST(
-            SUM(
-                CASE
-                    WHEN record_date =
-                         CAST(:yesterdayDate AS DATE)
-                    THEN
-                        hour_value
-                        * ISNULL(vnd_rate, 0)
-                END
-            )
-            /
-            NULLIF(:exchange, 0)
-            *
-            :sepzone
+    INNER JOIN DeviceMap dm
+        ON dm.box_device_id = hi.box_device_id
 
-            AS DECIMAL(19,4)
-        ) AS yesterdayUsd,
+    WHERE
+        hi.pick_at >= :fromTime
+        AND hi.pick_at < :toTime
 
-        CAST(
-            SUM(
-                CASE
-                    WHEN record_date =
-                         CAST(:todayDate AS DATE)
-                    THEN
-                        hour_value
-                        * ISNULL(vnd_rate, 0)
-                END
-            )
-            /
-            NULLIF(:exchange, 0)
-            *
-            :sepzone
+        AND hi.[value] > 0
 
-            AS DECIMAL(19,4)
-        ) AS todayUsd
+        AND pa.name_en = :nameEn
 
-    FROM CostMapped
+        -- GRID / điện thường
+        AND dm.is_solar = 0
+
+        AND (
+            UPPER(:fac) = 'KVH'
+            OR UPPER(dm.fac) = UPPER(:fac)
+        )
+
+        AND UPPER(LTRIM(RTRIM(dm.box_device_id))) NOT IN (:excludedMeters)
+
+        AND hi.MTD = 'MTD'
 
     GROUP BY
-        hour_number
+        CAST(DATEADD(HOUR, -1, hi.pick_at) AS DATE),
+        DATEPART(HOUR, DATEADD(HOUR, -1, hi.pick_at))
 
     ORDER BY
-        hour_number
+        recordDate,
+        hourNumber
     """, nativeQuery = true)
-	List<HourlyEnergyCompareProjection> findHourlyElectricityCompare(
+	List<HourlyEnergyProjection> findHourlyElectricity(
 			@Param("fac") String fac,
 			@Param("fromTime") LocalDateTime fromTime,
 			@Param("toTime") LocalDateTime toTime,
-			@Param("todayDate") LocalDateTime todayDate,
-			@Param("yesterdayDate") LocalDateTime yesterdayDate,
 			@Param("nameEn") String nameEn,
-			@Param("exchange") BigDecimal exchange,
-			@Param("sepzone") BigDecimal sepzone,
 			// upper-case box_device_id, never empty
 			@Param("excludedMeters") List<String> excludedMeters
 	);

@@ -74,7 +74,19 @@ public record MonthlySummaryDto(
 		 */
 		BigDecimal solarSharePercent,
 
-		OffsetDateTime serverTime
+		OffsetDateTime serverTime,
+
+		/**
+		 * Electricity: true khi kỳ hiện tại có giờ không có version giá
+		 * (vndCost/usdCost chỉ gồm các giờ có giá) hoặc không có tariff
+		 * (vndCost/usdCost = null). Water/Air: null.
+		 */
+		Boolean priceMissing,
+
+		/**
+		 * Như priceMissing, cho kỳ trước.
+		 */
+		Boolean prevPriceMissing
 
 ) {
 }

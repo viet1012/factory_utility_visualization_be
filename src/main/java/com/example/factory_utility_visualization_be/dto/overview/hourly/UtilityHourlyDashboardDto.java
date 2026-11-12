@@ -17,6 +17,10 @@ public record UtilityHourlyDashboardDto(
 		List<HourlyTempCompareDto> water,
 
 		// Air
-		List<HourlyTempCompareDto> air
+		List<HourlyTempCompareDto> air,
+
+		// true = some electricity hour has kWh but no tariff version
+		// (its yesterdayUsd / todayUsd is null, not 0)
+		boolean priceMissing
 ) {
 }
