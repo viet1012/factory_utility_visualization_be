@@ -18,6 +18,10 @@ public interface UtilityPeriodRepo
 		extends JpaRepository<DummyEntity, Long> {
 
 	// ============================================================
+	// ELECTRICITY: same energy rules as every electricity API (README
+	// "Tính tiền điện"): day of pick_at - 1h (window shifted +1h), MTD = 'MTD',
+	// a meter with any SOLAR channel is solar (not grid), :excludedMeters skipped.
+	//
 	// 1. ELECTRICITY - TOTAL TREND THEO NGÀY
 	//
 	// - Total Energy Consumption
@@ -60,6 +64,16 @@ public interface UtilityPeriodRepo
                     AND ch.box_id IS NOT NULL
                     AND ch.box_id <> ''
                     AND ch.box_id <> 'SOLAR'
+
+                    -- a meter with any SOLAR channel is solar, never grid
+                    AND NOT EXISTS (
+                        SELECT 1
+                        FROM dbo.F2_Utility_Scada_Channel chs
+                        WHERE chs.box_device_id = ch.box_device_id
+                          AND UPPER(LTRIM(RTRIM(ISNULL(chs.box_id, '')))) = 'SOLAR'
+                    )
+
+                    AND UPPER(LTRIM(RTRIM(ch.box_device_id))) NOT IN (:excludedMeters)
             
                 GROUP BY
                     ch.box_device_id
@@ -67,7 +81,7 @@ public interface UtilityPeriodRepo
             
             SELECT
                 CAST(
-                    hi.pick_at AS DATE
+                    DATEADD(HOUR, -1, hi.pick_at) AS DATE
                 ) AS recordDate,
             
                 CAST(
@@ -92,14 +106,16 @@ public interface UtilityPeriodRepo
                 ON vd.box_device_id = hi.box_device_id
             
             WHERE
-                hi.pick_at >= :fromTime
-                AND hi.pick_at < :toTime
+                hi.pick_at >= DATEADD(HOUR, 1, :fromTime)
+                AND hi.pick_at < DATEADD(HOUR, 1, :toTime)
             
                 AND hi.[value] > 0
+
+                AND hi.MTD = 'MTD'
             
             GROUP BY
                 CAST(
-                    hi.pick_at AS DATE
+                    DATEADD(HOUR, -1, hi.pick_at) AS DATE
                 )
             
             ORDER BY
@@ -108,7 +124,9 @@ public interface UtilityPeriodRepo
 	List<UtilityPeriodTrendProjection> getElectricityTrend(
 			@Param("fac") String fac,
 			@Param("fromTime") LocalDateTime fromTime,
-			@Param("toTime") LocalDateTime toTime
+			@Param("toTime") LocalDateTime toTime,
+			// upper-case box_device_id, never empty
+			@Param("excludedMeters") List<String> excludedMeters
 	);
 
 
@@ -155,6 +173,16 @@ public interface UtilityPeriodRepo
                     AND ch.box_id IS NOT NULL
                     AND ch.box_id <> ''
                     AND ch.box_id <> 'SOLAR'
+
+                    -- a meter with any SOLAR channel is solar, never grid
+                    AND NOT EXISTS (
+                        SELECT 1
+                        FROM dbo.F2_Utility_Scada_Channel chs
+                        WHERE chs.box_device_id = ch.box_device_id
+                          AND UPPER(LTRIM(RTRIM(ISNULL(chs.box_id, '')))) = 'SOLAR'
+                    )
+
+                    AND UPPER(LTRIM(RTRIM(ch.box_device_id))) NOT IN (:excludedMeters)
             
                 GROUP BY
                     ch.box_device_id
@@ -166,7 +194,7 @@ public interface UtilityPeriodRepo
                 MAX(dm.box_id) AS boxId,
             
                 CAST(
-                    hi.pick_at AS DATE
+                    DATEADD(HOUR, -1, hi.pick_at) AS DATE
                 ) AS recordDate,
             
                 CAST(
@@ -189,15 +217,17 @@ public interface UtilityPeriodRepo
                 ON dm.box_device_id = hi.box_device_id
             
             WHERE
-                hi.pick_at >= :fromTime
-                AND hi.pick_at < :toTime
+                hi.pick_at >= DATEADD(HOUR, 1, :fromTime)
+                AND hi.pick_at < DATEADD(HOUR, 1, :toTime)
             
                 AND hi.[value] > 0
+
+                AND hi.MTD = 'MTD'
             
             GROUP BY
                 hi.box_device_id,
                 CAST(
-                    hi.pick_at AS DATE
+                    DATEADD(HOUR, -1, hi.pick_at) AS DATE
                 )
             
             ORDER BY
@@ -207,7 +237,9 @@ public interface UtilityPeriodRepo
 	List<UtilityPeriodBoxDailyProjection> getElectricityBoxDaily(
 			@Param("fac") String fac,
 			@Param("fromTime") LocalDateTime fromTime,
-			@Param("toTime") LocalDateTime toTime
+			@Param("toTime") LocalDateTime toTime,
+			// upper-case box_device_id, never empty
+			@Param("excludedMeters") List<String> excludedMeters
 	);
 
 

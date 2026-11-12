@@ -1,7 +1,7 @@
 package com.example.factory_utility_visualization_be.service.overview.electric;
 
 import com.example.factory_utility_visualization_be.config.ElectricConsumptionProperties;
-import com.example.factory_utility_visualization_be.config.UtilityFinanceProperties;
+import com.example.factory_utility_visualization_be.config.ElectricityProperties;
 import com.example.factory_utility_visualization_be.dto.overview.electric.ElectricConsumptionResponseDto;
 import com.example.factory_utility_visualization_be.dto.overview.electric.ElectricConsumptionResponseDto.DayPoint;
 import com.example.factory_utility_visualization_be.dto.overview.electric.ElectricConsumptionResponseDto.Scope;
@@ -9,6 +9,7 @@ import com.example.factory_utility_visualization_be.repository.overview.electric
 import com.example.factory_utility_visualization_be.repository.overview.electric.projection.ElectricConsumptionHourProjection;
 import com.example.factory_utility_visualization_be.repository.runtime.PowerUsageRepo;
 import com.example.factory_utility_visualization_be.repository.runtime.projection.PowerUsageTariffProjection;
+import com.example.factory_utility_visualization_be.service.runtime.ElectricityPricingService;
 import com.example.factory_utility_visualization_be.service.runtime.TouTariffService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -41,10 +42,15 @@ class ElectricConsumptionCalculatorTest {
 		props = new ElectricConsumptionProperties();
 		// single-hour fixtures count as complete days unless a test says otherwise
 		props.setMinCoveragePct(BigDecimal.ONE);
-		props.setGrid(policy("26005", "1.075"));
-		props.setSolar(policy("26316", "1.0"));
 
-		calculator = new ElectricConsumptionCalculator(energyRepo, new TouTariffService(repo), props);
+		ElectricityProperties electricity = new ElectricityProperties();
+		electricity.setGrid(policy("26005", "1.075"));
+		electricity.setSolar(policy("26316", "1.0"));
+
+		calculator = new ElectricConsumptionCalculator(
+				energyRepo,
+				new ElectricityPricingService(new TouTariffService(repo), electricity),
+				props);
 
 		when(repo.findTariffs()).thenReturn(List.of(
 				tariff("2-7", "4", "9.5", "1833"),
@@ -197,24 +203,20 @@ class ElectricConsumptionCalculatorTest {
 	}
 
 	@Test
-	void configuredBandPricesOverrideCostMaster() {
-		ElectricConsumptionProperties.BandPrices prices = new ElectricConsumptionProperties.BandPrices();
-		prices.setNormal(new BigDecimal("2000"));
-		props.setBandPrices(prices);
-
+	void pricesComeFromCostMaster() {
 		when(energyRepo.findHourlyEnergy(anyString(), any(), any(), any(), any(), any(), anyList(), anyList(), anyList())).thenReturn(List.of(
-				// Sat 12:00 normal: 1000 kWh * 2000 * 1.075 / 26005 = 82.68 $
+				// Sat 12:00 normal: 1000 kWh * 1833 * 1.075 / 26005 = 75.77 $
 				hour("Fac_C", 0, "2026-08-22T12:00", "1000"),
-				// Fri 10:00 high peak keeps the Cost_Master rate 3398
+				// Fri 10:00 high peak: 1000 kWh * 3398 * 1.075 / 26005 = 140.47 $
 				hour("Fac_C", 0, "2026-08-21T10:00", "1000")
 		));
 
 		ElectricConsumptionResponseDto res = calculator.calculate(YearMonth.of(2026, 9), 0);
 		Scope c = scope(res, "FAC_C");
 
-		assertThat(res.unitPrices().gridNormal()).isEqualByComparingTo("0.0827");
+		assertThat(res.unitPrices().gridNormal()).isEqualByComparingTo("0.0758");
 		assertThat(res.unitPrices().gridHighPeak()).isEqualByComparingTo("0.1405");
-		assertThat(c.daily().get(1).kusd().normal()).isEqualByComparingTo("0.083");
+		assertThat(c.daily().get(1).kusd().normal()).isEqualByComparingTo("0.076");
 		assertThat(c.daily().get(0).kusd().highPeak()).isEqualByComparingTo("0.140");
 	}
 
@@ -308,9 +310,9 @@ class ElectricConsumptionCalculatorTest {
 
 	@Test
 	void meterKeysAreUpperCaseAndNeverEmpty() {
-		assertThat(ElectricConsumptionCalculator.meterKeys(null)).containsExactly("");
-		assertThat(ElectricConsumptionCalculator.meterKeys(List.of(" ", ""))).containsExactly("");
-		assertThat(ElectricConsumptionCalculator.meterKeys(List.of(" p-3.1_mfm384 ", "P-3.1_MFM384")))
+		assertThat(ElectricityPricingService.meterKeys(null)).containsExactly("");
+		assertThat(ElectricityPricingService.meterKeys(List.of(" ", ""))).containsExactly("");
+		assertThat(ElectricityPricingService.meterKeys(List.of(" p-3.1_mfm384 ", "P-3.1_MFM384")))
 				.containsExactly("P-3.1_MFM384");
 	}
 
@@ -344,8 +346,8 @@ class ElectricConsumptionCalculatorTest {
 		return res.scopes().stream().filter(s -> s.code().equals(code)).findFirst().orElseThrow();
 	}
 
-	private static UtilityFinanceProperties.Policy policy(String rate, String sepzone) {
-		UtilityFinanceProperties.Policy policy = new UtilityFinanceProperties.Policy();
+	private static ElectricityProperties.Policy policy(String rate, String sepzone) {
+		ElectricityProperties.Policy policy = new ElectricityProperties.Policy();
 		policy.setExchangeRate(new BigDecimal(rate));
 		policy.setSepzone(new BigDecimal(sepzone));
 		return policy;

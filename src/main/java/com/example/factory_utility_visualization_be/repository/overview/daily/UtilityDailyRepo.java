@@ -45,10 +45,22 @@ public interface UtilityDailyRepo extends JpaRepository<DummyEntity, Long> {
                 ch.box_device_id
         ),
 
+        -- Same energy rules as every electricity API (README "Tính tiền điện"):
+        -- a row holds the energy of the hour ENDING at pick_at -> day of
+        -- pick_at - 1h; MTD = 'MTD'; Para rows deduplicated; a meter with any
+        -- SOLAR channel is solar; :excludedMeters are skipped
+        EnergyPara AS (
+            SELECT DISTINCT
+                pa.box_device_id,
+                pa.plc_address
+            FROM dbo.F2_Utility_Para pa
+            WHERE pa.name_en = 'Total Energy Consumption'
+        ),
+
         EnergyRaw AS (
             SELECT
                 CAST(
-                    hi.pick_at AS DATE
+                    DATEADD(HOUR, -1, hi.pick_at) AS DATE
                 ) AS record_date,
 
                 hi.box_device_id,
@@ -62,7 +74,7 @@ public interface UtilityDailyRepo extends JpaRepository<DummyEntity, Long> {
 
             FROM dbo.F2_Utility_Para_History_Main hi
 
-            INNER JOIN dbo.F2_Utility_Para pa
+            INNER JOIN EnergyPara pa
                 ON pa.box_device_id = hi.box_device_id
                AND pa.plc_address = hi.plc_address
 
@@ -70,12 +82,14 @@ public interface UtilityDailyRepo extends JpaRepository<DummyEntity, Long> {
                 ON dm.box_device_id = hi.box_device_id
 
             WHERE
-                pa.name_en = 'Total Energy Consumption'
-
-                AND hi.pick_at >= :fromTime
-                AND hi.pick_at < :toTime
+                hi.pick_at >= DATEADD(HOUR, 1, :fromTime)
+                AND hi.pick_at < DATEADD(HOUR, 1, :toTime)
 
                 AND hi.[value] > 0
+
+                AND hi.MTD = 'MTD'
+
+                AND UPPER(LTRIM(RTRIM(dm.box_device_id))) NOT IN (:excludedMeters)
 
                 AND (
                     UPPER(:fac) = 'KVH'
@@ -156,7 +170,11 @@ public interface UtilityDailyRepo extends JpaRepository<DummyEntity, Long> {
 			LocalDateTime fromTime,
 
 			@Param("toTime")
-			LocalDateTime toTime
+			LocalDateTime toTime,
+
+			// upper-case box_device_id, never empty
+			@Param("excludedMeters")
+			List<String> excludedMeters
 	);
 
 

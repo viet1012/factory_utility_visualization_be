@@ -1,17 +1,16 @@
 package com.example.factory_utility_visualization_be.service.overview.monthly;
 
-import com.example.factory_utility_visualization_be.config.UtilityFinanceProperties;
 import com.example.factory_utility_visualization_be.dto.overview.monthly.MonthlyQueryRange;
 import com.example.factory_utility_visualization_be.dto.overview.monthly.MonthlySummaryDto;
 import com.example.factory_utility_visualization_be.repository.overview.monthly.UtilityMonthlyJdbcRepository;
 import com.example.factory_utility_visualization_be.repository.overview.monthly.UtilityMonthlyJdbcRepository.RawRow;
+import com.example.factory_utility_visualization_be.service.runtime.ElectricityPricingService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
-import java.math.MathContext;
 import java.math.RoundingMode;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
@@ -31,7 +30,7 @@ public class UtilityMonthlyQueryService {
 	private static final BigDecimal HUNDRED = BigDecimal.valueOf(100);
 
 	private final UtilityMonthlyJdbcRepository repository;
-	private final UtilityFinanceProperties financeProperties;
+	private final ElectricityPricingService pricingService;
 
 	@Transactional(readOnly = true)
 	public List<MonthlySummaryDto> query(
@@ -57,7 +56,8 @@ public class UtilityMonthlyQueryService {
 				range.from(),
 				range.currentTo(),
 				range.prevFrom(),
-				range.prevTo()
+				range.prevTo(),
+				pricingService.excludedMeterKeys()
 		);
 
 		if (rows.isEmpty()) {
@@ -67,18 +67,16 @@ public class UtilityMonthlyQueryService {
 		final OffsetDateTime generatedAt =
 				OffsetDateTime.now(APP_ZONE);
 
-		final BigDecimal exchange = financeProperties.getMonthly().getExchangeRate();
-		final BigDecimal sepzone = financeProperties.getMonthly().getSepzone();
-
 		return rows.stream()
-				.map(row -> toDto(row, monthYyyyMm, exchange, sepzone, generatedAt))
+				.map(row -> toDto(row, monthYyyyMm, generatedAt))
 				.toList();
 	}
 
 	/*
 	 * Các trường dẫn xuất, giữ đúng scale và cách xử lý chia 0 của SQL cũ:
 	 *
-	 * - usdCost        = vndCost / exchange * sepzone, scale 2; exchange = 0/null -> null.
+	 * - usdCost        = vndCost x grid sepzone / grid exchange
+	 *                    (ElectricityPricingService, chung cho mọi API điện), scale 2.
 	 * - deltaValue     = (value|avgValue|0) - (prevValue|prevAvgValue|0), scale 2.
 	 * - deltaPercent   = delta / prev * 100, scale 2; prev = 0 -> null.
 	 * - totalEnergy    = value + solarValue (null coi như 0), scale 2; chỉ dòng Electricity.
@@ -87,8 +85,6 @@ public class UtilityMonthlyQueryService {
 	private MonthlySummaryDto toDto(
 			RawRow row,
 			String month,
-			BigDecimal exchange,
-			BigDecimal sepzone,
 			OffsetDateTime generatedAt
 	) {
 		final boolean electricity = ELECTRICITY.equals(row.cate());
@@ -123,13 +119,13 @@ public class UtilityMonthlyQueryService {
 				row.avgValue(),
 
 				row.vndCost(),
-				toUsd(row.vndCost(), exchange, sepzone),
+				toUsd(row.vndCost()),
 
 				row.prevValue(),
 				row.prevAvgValue(),
 
 				row.prevVndCost(),
-				toUsd(row.prevVndCost(), exchange, sepzone),
+				toUsd(row.prevVndCost()),
 
 				delta.setScale(2, RoundingMode.HALF_UP),
 				percent(delta, prev),
@@ -150,18 +146,10 @@ public class UtilityMonthlyQueryService {
 		);
 	}
 
-	private static BigDecimal toUsd(
-			BigDecimal vnd,
-			BigDecimal exchange,
-			BigDecimal sepzone
-	) {
-		if (vnd == null || exchange == null || exchange.signum() == 0 || sepzone == null) {
-			return null;
-		}
-
-		return vnd.divide(exchange, MathContext.DECIMAL128)
-				.multiply(sepzone)
-				.setScale(2, RoundingMode.HALF_UP);
+	// null when vnd is null or the grid policy is missing
+	private BigDecimal toUsd(BigDecimal vnd) {
+		BigDecimal usd = pricingService.gridVndToUsd(vnd);
+		return usd == null ? null : usd.setScale(2, RoundingMode.HALF_UP);
 	}
 
 	private static BigDecimal percent(BigDecimal numerator, BigDecimal denominator) {

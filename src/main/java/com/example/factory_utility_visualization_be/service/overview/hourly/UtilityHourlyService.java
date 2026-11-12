@@ -3,8 +3,8 @@ package com.example.factory_utility_visualization_be.service.overview.hourly;
 import com.example.factory_utility_visualization_be.dto.overview.hourly.*;
 import com.example.factory_utility_visualization_be.repository.overview.hourly.projection.HourlyEnergyCompareProjection;
 import com.example.factory_utility_visualization_be.repository.overview.hourly.projection.HourlySensorCompareProjection;
-import com.example.factory_utility_visualization_be.config.UtilityFinanceProperties;
 import com.example.factory_utility_visualization_be.repository.overview.hourly.UtilityHourlyRepo;
+import com.example.factory_utility_visualization_be.service.runtime.ElectricityPricingService;
 import com.example.factory_utility_visualization_be.service.util.FacilityValidator;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -13,6 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -24,8 +25,11 @@ public class UtilityHourlyService {
 	private static final String DEFAULT_METRIC =
 			"Total Energy Consumption";
 
+	private static final ZoneId APP_ZONE =
+			ZoneId.of("Asia/Ho_Chi_Minh");
+
 	private final UtilityHourlyRepo repo;
-	private final UtilityFinanceProperties financeProperties;
+	private final ElectricityPricingService pricingService;
 
 
 	// ============================================================
@@ -35,9 +39,7 @@ public class UtilityHourlyService {
 	@Transactional(readOnly = true)
 	public UtilityHourlyDashboardDto getHourlyDashboard(
 			String facId,
-			String nameEn,
-			BigDecimal exchange,
-			BigDecimal sepzone
+			String nameEn
 	) {
 
 		// ========================================================
@@ -50,12 +52,6 @@ public class UtilityHourlyService {
 		final String metric =
 				normalizeMetric(nameEn);
 
-		final BigDecimal safeExchange =
-				normalizeExchange(exchange);
-
-		final BigDecimal safeSepzone =
-				normalizeSepzone(sepzone);
-
 
 		// ========================================================
 		// DATE RANGE
@@ -66,7 +62,7 @@ public class UtilityHourlyService {
 		// ========================================================
 
 		final LocalDate today =
-				LocalDate.now();
+				LocalDate.now(APP_ZONE);
 
 		final LocalDate yesterday =
 				today.minusDays(1);
@@ -89,20 +85,23 @@ public class UtilityHourlyService {
 		// ========================================================
 		// 1. ELECTRICITY
 		//
-		// Không bao gồm Solar
+		// Không bao gồm Solar. Giá: ElectricityPricingService (chung
+		// cho mọi API điện). Dòng History_Main ghi điện của giờ KẾT
+		// THÚC tại pick_at -> cửa sổ query dịch +1h.
 		// ========================================================
 
 		final List<HourlyEnergyCompareProjection>
 				electricityRows =
 				repo.findHourlyElectricityCompare(
 						fac,
-						fromTime,
-						toTime,
+						fromTime.plusHours(1),
+						toTime.plusHours(1),
 						todayDate,
 						yesterdayDate,
 						metric,
-						safeExchange,
-						safeSepzone
+						pricingService.gridExchangeRate(),
+						pricingService.gridSepzone(),
+						pricingService.excludedMeterKeys()
 				);
 
 
@@ -305,45 +304,5 @@ public class UtilityHourlyService {
 		}
 
 		return nameEn.trim();
-	}
-
-
-	// ============================================================
-	// EXCHANGE
-	// ============================================================
-
-	private BigDecimal normalizeExchange(
-			BigDecimal exchange
-	) {
-
-		if (exchange == null
-				|| exchange.compareTo(
-				BigDecimal.ZERO
-		) <= 0) {
-
-			return financeProperties.getHourly().getExchangeRate();
-		}
-
-		return exchange;
-	}
-
-
-	// ============================================================
-	// SEPZONE
-	// ============================================================
-
-	private BigDecimal normalizeSepzone(
-			BigDecimal sepzone
-	) {
-
-		if (sepzone == null
-				|| sepzone.compareTo(
-				BigDecimal.ZERO
-		) <= 0) {
-
-			return financeProperties.getHourly().getSepzone();
-		}
-
-		return sepzone;
 	}
 }

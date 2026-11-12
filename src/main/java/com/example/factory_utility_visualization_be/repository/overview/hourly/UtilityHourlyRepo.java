@@ -242,14 +242,17 @@ public interface UtilityHourlyRepo
     ),
 
     EnergyBase AS (
+        -- a row holds the energy of the hour ENDING at pick_at, so the hour
+        -- (and its tariff band) is pick_at - 1h; the caller shifts the
+        -- window by +1h (same as power-usage / electric-consumption)
         SELECT
             DATEPART(
                 HOUR,
-                hi.pick_at
+                DATEADD(HOUR, -1, hi.pick_at)
             ) AS hour_number,
 
             CAST(
-                hi.pick_at AS DATE
+                DATEADD(HOUR, -1, hi.pick_at) AS DATE
             ) AS record_date,
 
             CAST(
@@ -282,7 +285,9 @@ public interface UtilityHourlyRepo
                 OR UPPER(dm.fac) = UPPER(:fac)
             )
 
-            AND ISNULL(hi.MTD, '') = 'MTD'
+            AND UPPER(LTRIM(RTRIM(dm.box_device_id))) NOT IN (:excludedMeters)
+
+            AND hi.MTD = 'MTD'
     ),
 
     HourlyEnergy AS (
@@ -406,7 +411,9 @@ public interface UtilityHourlyRepo
 			@Param("yesterdayDate") LocalDateTime yesterdayDate,
 			@Param("nameEn") String nameEn,
 			@Param("exchange") BigDecimal exchange,
-			@Param("sepzone") BigDecimal sepzone
+			@Param("sepzone") BigDecimal sepzone,
+			// upper-case box_device_id, never empty
+			@Param("excludedMeters") List<String> excludedMeters
 	);
 
 	// ============================================================

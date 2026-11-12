@@ -6,6 +6,7 @@ import com.example.factory_utility_visualization_be.dto.overview.daily.UtilityDa
 import com.example.factory_utility_visualization_be.repository.overview.daily.projection.UtilityDailyDashboardProjection;
 import com.example.factory_utility_visualization_be.repository.overview.daily.projection.UtilityDailyElectricityStackProjection;
 import com.example.factory_utility_visualization_be.repository.overview.daily.UtilityDailyRepo;
+import com.example.factory_utility_visualization_be.service.runtime.ElectricityPricingService;
 import com.example.factory_utility_visualization_be.service.util.FacilityValidator;
 import com.example.factory_utility_visualization_be.service.util.YearMonthParser;
 import lombok.RequiredArgsConstructor;
@@ -28,6 +29,7 @@ public class UtilityEnergyDailyService {
 			DateTimeFormatter.ofPattern("yyyyMM");
 
 	private final UtilityDailyRepo repo;
+	private final ElectricityPricingService pricingService;
 
 	@Transactional(readOnly = true)
 	public UtilityDailyDashboardDto getDailyDashboard(
@@ -78,7 +80,8 @@ public class UtilityEnergyDailyService {
 				repo.getDailyElectricityByDateRange(
 						fac,
 						from,
-						to
+						to,
+						pricingService.excludedMeterKeys()
 				);
 
 		final List<DailyElectricityStackDto> electricity =

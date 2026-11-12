@@ -29,25 +29,32 @@ server:
     include-stacktrace: never
 
 utility:
-  finance:
-    hourly:
+  # ONE electricity pricing / meter policy for every endpoint that shows
+  # electricity money or kWh: hourly-dashboard, monthly-summary, solar/detail,
+  # power-usage, electric-consumption (rules of F2 electric consumption.xlsx)
+  # - VND/kWh per hour: F2_Utility_Cost_Master (time-of-use, the only rate source)
+  # - grid  $/kWh = VND * grid.sepzone / grid.exchange-rate (sheet C40: 1833*1.075/26005)
+  # - solar $/kWh = VND * solar-price-factor * solar.sepzone / solar.exchange-rate
+  #   (sheet JI36 = 1649.7/26316, JI37 = 3058.2/26316, C61 low peak = 0)
+  # - hour of a History_Main row = pick_at - 1h (row = energy of the hour ending at pick_at)
+  electricity:
+    grid:
       exchange-rate: 26005
       sepzone: 1.075
     solar:
-      exchange-rate: 26005
-      sepzone: 1.075
-    monthly:
-      exchange-rate: 25585
+      exchange-rate: 26316
       sepzone: 1.0
-    # GET /api/utility/power-usage (same values as hourly for now)
-    power-usage:
-      exchange-rate: 26005
-      sepzone: 1.075
+    solar-price-factor:
+      normal: 0.9
+      high-peak: 0.9
+      low-peak: 0
+    # meters not counted at all: P-3.1 reports the same kWh as P-3
+    # (Aug 0.719416 vs 0.719441, Sep 0.756735 vs 0.756770 MWh/day)
+    excluded-meters:
+      - P-3.1_MFM384
   # GET /api/utility/electric-consumption (F2 electric consumption.xlsx):
   # bill period = [day billing-cutoff-day of M-1, same day of M)
-  # grid $/kWh = VND * sepzone / exchange-rate (sheet C40: 1833*1.075/26005)
-  # solar $/kWh = VND * solar-price-factor * sepzone / exchange-rate
-  #   (sheet JI36 = 1649.7/26316, JI37 = 3058.2/26316, C61 low peak = 0)
+  # prices / excluded meters: utility.electricity
   # averages only use complete days (see min-coverage-pct)
   electric-consumption:
     billing-cutoff-day: 21
@@ -75,30 +82,11 @@ utility:
     # SOLAR meters: kWh > solar-outlier-ratio x P90 kWh/hour of that meter
     # (median is too low: SOLAR_A_588 reports small values at night too)
     solar-outlier-ratio: 3
-    # meters not counted at all: P-3.1 reports the same kWh as P-3
-    # (Aug 0.719416 vs 0.719441, Sep 0.756735 vs 0.756770 MWh/day)
-    excluded-meters:
-      - P-3.1_MFM384
     # move meters to the scope of their transformer (Trans No.2 = A&B,
     # Trans No.1 = C) when the SCADA fac differs; box_device_id, any case
     meter-scope:
       fac-ab: []
       fac-c: []
-    # VND/kWh like the sheet; remove a line to use F2_Utility_Cost_Master
-    band-prices:
-      normal: 1833
-      high-peak: 3398
-      low-peak: 1190
-    solar-price-factor:
-      normal: 0.9
-      high-peak: 0.9
-      low-peak: 0
-    grid:
-      exchange-rate: 26005
-      sepzone: 1.075
-    solar:
-      exchange-rate: 26316
-      sepzone: 1.0
   # cate_id -> ANALOG | STATUS | COUNTER for GET /api/utility/series/history
   # (default ANALOG). Bracket keys that contain '_' or Spring strips it.
   signal-kind:

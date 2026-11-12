@@ -1,7 +1,6 @@
 package com.example.factory_utility_visualization_be.service.overview.electric;
 
 import com.example.factory_utility_visualization_be.config.ElectricConsumptionProperties;
-import com.example.factory_utility_visualization_be.config.UtilityFinanceProperties;
 import com.example.factory_utility_visualization_be.dto.overview.electric.ElectricConsumptionResponseDto;
 import com.example.factory_utility_visualization_be.dto.overview.electric.ElectricConsumptionResponseDto.BillPeriod;
 import com.example.factory_utility_visualization_be.dto.overview.electric.ElectricConsumptionResponseDto.DayPoint;
@@ -11,10 +10,10 @@ import com.example.factory_utility_visualization_be.dto.overview.electric.Electr
 import com.example.factory_utility_visualization_be.dto.overview.electric.ElectricConsumptionResponseDto.Values;
 import com.example.factory_utility_visualization_be.repository.overview.electric.ElectricConsumptionRepo;
 import com.example.factory_utility_visualization_be.repository.overview.electric.projection.ElectricConsumptionHourProjection;
-import com.example.factory_utility_visualization_be.service.runtime.TouTariffService;
+import com.example.factory_utility_visualization_be.service.runtime.ElectricityPricingService;
+import com.example.factory_utility_visualization_be.service.runtime.ElectricityPricingService.Pricing;
 import com.example.factory_utility_visualization_be.service.runtime.TouTariffService.TouBand;
 import com.example.factory_utility_visualization_be.service.runtime.TouTariffService.TouShare;
-import com.example.factory_utility_visualization_be.service.runtime.TouTariffService.TouTariff;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -69,7 +68,7 @@ public class ElectricConsumptionCalculator {
 	private static final int HOURS_PER_DAY = 24;
 
 	private final ElectricConsumptionRepo repo;
-	private final TouTariffService tariffService;
+	private final ElectricityPricingService pricingService;
 	private final ElectricConsumptionProperties properties;
 
 	// the 3 charts of the sheet: TTL KVH, Fac A&B (Trans No.2), Fac C (Trans No.1)
@@ -157,24 +156,6 @@ public class ElectricConsumptionCalculator {
 		}
 	}
 
-	// USD per (kWh x VND of tariff); vndOverride = configured VND/kWh per band
-	private record Pricing(
-			TouTariff tariff,
-			BigDecimal gridFactor,
-			Map<TouBand, BigDecimal> solarFactor,
-			Map<TouBand, BigDecimal> vndOverride
-	) {
-		BigDecimal vnd(TouShare share) {
-			return vndOverride.getOrDefault(share.band(), share.vnd());
-		}
-
-		Optional<BigDecimal> weekdayVnd(TouBand band) {
-			return vndOverride.containsKey(band)
-					? Optional.of(vndOverride.get(band))
-					: tariff.weekdayRate(band);
-		}
-	}
-
 	public Period period(YearMonth month) {
 		int cutoff = properties.getBillingCutoffDay();
 		return new Period(month, month.minusMonths(1).atDay(cutoff), month.atDay(cutoff));
@@ -212,7 +193,7 @@ public class ElectricConsumptionCalculator {
 		LocalDateTime currentEnd = current.to().atStartOfDay();
 		LocalDateTime dataUntil = currentEnd.isAfter(lastFullHour) ? lastFullHour : currentEnd;
 
-		Optional<Pricing> pricing = pricing();
+		Optional<Pricing> pricing = pricingService.load();
 		Map<ScopeDef, Map<LocalDate, Acc>> days = loadDays(queryFrom, dataUntil, hourOffset, pricing);
 
 		List<Scope> scopes = new ArrayList<>(ScopeDef.values().length);
@@ -229,7 +210,7 @@ public class ElectricConsumptionCalculator {
 				properties.getMinCoveragePct(),
 				hourOffset,
 				historyStart == null ? null : historyStart.toString(),
-				meterKeys(properties.getExcludedMeters()).stream().filter(key -> !key.isEmpty()).toList(),
+				pricingService.excludedMeterKeys().stream().filter(key -> !key.isEmpty()).toList(),
 				unitPrices(pricing),
 				scopes
 		);
@@ -261,9 +242,9 @@ public class ElectricConsumptionCalculator {
 		List<ElectricConsumptionHourProjection> rows = repo.findHourlyEnergy(
 				ENERGY_NAME, from.plusHours(1L - offset), to.plusHours(1L - offset),
 				properties.getOutlierRatio(), properties.getSolarOutlierRatio(), properties.getOutlierMinKwh(),
-				meterKeys(properties.getExcludedMeters()),
-				meterKeys(meterScope == null ? null : meterScope.getFacAb()),
-				meterKeys(meterScope == null ? null : meterScope.getFacC()));
+				pricingService.excludedMeterKeys(),
+				ElectricityPricingService.meterKeys(meterScope == null ? null : meterScope.getFacAb()),
+				ElectricityPricingService.meterKeys(meterScope == null ? null : meterScope.getFacC()));
 
 		for (ElectricConsumptionHourProjection row : rows) {
 			if (row.getHourAt() == null || row.getKwh() == null) {
@@ -288,22 +269,6 @@ public class ElectricConsumptionCalculator {
 		}
 
 		return days;
-	}
-
-	// trimmed upper-case box_device_id for the SQL IN lists; List.of("") when
-	// empty (an empty IN list is invalid SQL, '' matches no meter)
-	static List<String> meterKeys(List<String> meters) {
-		if (meters == null) {
-			return List.of("");
-		}
-
-		List<String> keys = meters.stream()
-				.filter(meter -> meter != null && !meter.isBlank())
-				.map(meter -> meter.trim().toUpperCase(Locale.ROOT))
-				.distinct()
-				.toList();
-
-		return keys.isEmpty() ? List.of("") : keys;
 	}
 
 	// one History_Main row split into tariff bands
@@ -331,64 +296,18 @@ public class ElectricConsumptionCalculator {
 			return acc;
 		}
 
-		for (TouShare share : pricing.get().tariff().shares(hourAt)) {
-			BigDecimal part = kwh.multiply(share.fraction());
-			BigDecimal vnd = part.multiply(pricing.get().vnd(share));
+		Pricing p = pricing.get();
 
+		for (TouShare share : p.shares(hourAt)) {
 			if (solar) {
-				acc.solarUsd = acc.solarUsd.add(vnd.multiply(pricing.get().solarFactor().get(share.band())));
+				acc.solarUsd = acc.solarUsd.add(p.solarUsd(kwh, share));
 			} else {
-				acc.bandKwh.merge(share.band(), part, BigDecimal::add);
-				acc.bandUsd.merge(share.band(), vnd.multiply(pricing.get().gridFactor()), BigDecimal::add);
+				acc.bandKwh.merge(share.band(), kwh.multiply(share.fraction()), BigDecimal::add);
+				acc.bandUsd.merge(share.band(), p.gridUsd(kwh, share), BigDecimal::add);
 			}
 		}
 
 		return acc;
-	}
-
-	private Optional<Pricing> pricing() {
-		Optional<BigDecimal> gridFactor = factor(properties.getGrid());
-		Optional<BigDecimal> solarBase = factor(properties.getSolar());
-		ElectricConsumptionProperties.SolarPriceFactor solarPrice = properties.getSolarPriceFactor();
-
-		if (gridFactor.isEmpty() || solarBase.isEmpty() || solarPrice == null
-				|| solarPrice.getNormal() == null || solarPrice.getHighPeak() == null
-				|| solarPrice.getLowPeak() == null) {
-			return Optional.empty();
-		}
-
-		Map<TouBand, BigDecimal> solarFactor = new EnumMap<>(TouBand.class);
-		solarFactor.put(TouBand.NORMAL, solarBase.get().multiply(solarPrice.getNormal()));
-		solarFactor.put(TouBand.HIGH_PEAK, solarBase.get().multiply(solarPrice.getHighPeak()));
-		solarFactor.put(TouBand.LOW_PEAK, solarBase.get().multiply(solarPrice.getLowPeak()));
-
-		Map<TouBand, BigDecimal> vndOverride = new EnumMap<>(TouBand.class);
-		ElectricConsumptionProperties.BandPrices prices = properties.getBandPrices();
-
-		if (prices != null) {
-			putIfSet(vndOverride, TouBand.NORMAL, prices.getNormal());
-			putIfSet(vndOverride, TouBand.HIGH_PEAK, prices.getHighPeak());
-			putIfSet(vndOverride, TouBand.LOW_PEAK, prices.getLowPeak());
-		}
-
-		return tariffService.load()
-				.map(tariff -> new Pricing(tariff, gridFactor.get(), solarFactor, vndOverride));
-	}
-
-	private void putIfSet(Map<TouBand, BigDecimal> map, TouBand band, BigDecimal value) {
-		if (value != null) {
-			map.put(band, value);
-		}
-	}
-
-	// sepzone / exchangeRate
-	private Optional<BigDecimal> factor(UtilityFinanceProperties.Policy policy) {
-		if (policy == null || policy.getExchangeRate() == null || policy.getExchangeRate().signum() == 0
-				|| policy.getSepzone() == null) {
-			return Optional.empty();
-		}
-
-		return Optional.of(policy.getSepzone().divide(policy.getExchangeRate(), 12, RoundingMode.HALF_UP));
 	}
 
 	// ---------------------------------------------------------------------

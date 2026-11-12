@@ -3,6 +3,7 @@ package com.example.factory_utility_visualization_be.service.overview.solar;
 import com.example.factory_utility_visualization_be.dto.overview.solar.SolarDashboardDto;
 import com.example.factory_utility_visualization_be.repository.overview.solar.projection.SolarDashboardProjection;
 import com.example.factory_utility_visualization_be.repository.overview.solar.SolarDashboardRepo;
+import com.example.factory_utility_visualization_be.service.runtime.ElectricityPricingService;
 import com.example.factory_utility_visualization_be.service.util.FacilityValidator;
 import com.example.factory_utility_visualization_be.service.util.SolarEnvironmentCalculator;
 import lombok.RequiredArgsConstructor;
@@ -31,6 +32,7 @@ public class SolarDashboardService {
 
 	private final SolarDashboardRepo repo;
 	private final SolarMonthlySummaryCacheService summaryCache;
+	private final ElectricityPricingService pricingService;
 
 	@Transactional(readOnly = true)
 	public SolarDashboardDto getSolarDashboardByMonth(
@@ -79,7 +81,8 @@ public class SolarDashboardService {
 								nextMonthStart,
 								now.plusSeconds(1),
 								POWER_NAME,
-								ENERGY_NAME
+								ENERGY_NAME,
+								pricingService.excludedMeterKeys()
 						)
 						: summaryCache.getHistoricalSummary(
 								fac,

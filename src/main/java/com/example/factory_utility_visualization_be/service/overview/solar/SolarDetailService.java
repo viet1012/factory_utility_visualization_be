@@ -2,9 +2,11 @@ package com.example.factory_utility_visualization_be.service.overview.solar;
 
 import com.example.factory_utility_visualization_be.repository.overview.solar.projection.SolarDashboardProjection;
 import com.example.factory_utility_visualization_be.dto.overview.solar.detail.*;
-import com.example.factory_utility_visualization_be.repository.overview.solar.projection.SolarCostProjection;
-import com.example.factory_utility_visualization_be.config.UtilityFinanceProperties;
+import com.example.factory_utility_visualization_be.repository.overview.solar.projection.SolarHourEnergyProjection;
 import com.example.factory_utility_visualization_be.repository.overview.solar.SolarDashboardRepo;
+import com.example.factory_utility_visualization_be.service.runtime.ElectricityPricingService;
+import com.example.factory_utility_visualization_be.service.runtime.ElectricityPricingService.Pricing;
+import com.example.factory_utility_visualization_be.service.runtime.TouTariffService.TouShare;
 import com.example.factory_utility_visualization_be.service.util.FacilityValidator;
 import com.example.factory_utility_visualization_be.service.util.SolarEnvironmentCalculator;
 import lombok.RequiredArgsConstructor;
@@ -20,6 +22,7 @@ import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Optional;
 
 @Service
 @RequiredArgsConstructor
@@ -36,7 +39,7 @@ public class SolarDetailService {
 
 	private final SolarDashboardRepo repo;
 	private final SolarMonthlySummaryCacheService summaryCache;
-	private final UtilityFinanceProperties financeProperties;
+	private final ElectricityPricingService pricingService;
 
 	@Transactional(readOnly = true)
 	public SolarDetailDto getDetail(
@@ -81,7 +84,8 @@ public class SolarDetailService {
 								nextMonthStart,
 								now.plusSeconds(1),
 								POWER_NAME,
-								ENERGY_NAME
+								ENERGY_NAME,
+								pricingService.excludedMeterKeys()
 						)
 						: summaryCache.getHistoricalSummary(
 								fac,
@@ -140,7 +144,8 @@ public class SolarDetailService {
 								fac,
 								monthStart,
 								nextMonthStart,
-								ENERGY_NAME
+								ENERGY_NAME,
+								pricingService.excludedMeterKeys()
 						)
 						.stream()
 						.map(row ->
@@ -157,55 +162,26 @@ public class SolarDetailService {
 
 		// =========================================================
 		// COST
+		//
+		// ElectricityPricingService (same rules as every electricity
+		// API, "F2 electric consumption.xlsx"):
+		// - normal = solar kWh priced as grid (tariff VND, grid $)
+		// - solar  = solar kWh at the solar price (tariff VND x
+		//            solar-price-factor per band, solar $)
+		// - saving = normal - solar
+		// History_Main rows are stamped at the END of their hour, so
+		// the window is shifted by +1h.
 		// =========================================================
 
-		final SolarCostProjection costRow =
-				repo.getSolarMonthlyCost(
-						fac,
-						monthStart,
-						nextMonthStart,
-						ENERGY_NAME
-				);
-
-		final BigDecimal normalVnd =
-				value(
-						costRow == null
-								? null
-								: costRow.getNormalCostVnd()
-				);
-
-		final BigDecimal solarVnd =
-				value(
-						costRow == null
-								? null
-								: costRow.getSolarCostVnd()
-				);
-
-		final BigDecimal savingVnd =
-				value(
-						costRow == null
-								? null
-								: costRow.getSavingVnd()
-				);
-
 		final SolarCostImpactDto costImpact =
-				new SolarCostImpactDto(
-
-						value(
-								costRow == null
-										? null
-										: costRow.getSolarEnergyKwh()
-						),
-
-						normalVnd,
-						solarVnd,
-						savingVnd,
-
-						toUsd(normalVnd),
-						toUsd(solarVnd),
-						toUsd(savingVnd),
-
-						new BigDecimal("17.0")
+				costImpact(
+						repo.findSolarHourlyEnergy(
+								fac,
+								monthStart.plusHours(1),
+								nextMonthStart.plusHours(1),
+								ENERGY_NAME,
+								pricingService.excludedMeterKeys()
+						)
 				);
 
 
@@ -264,7 +240,8 @@ public class SolarDetailService {
 								fac,
 								dayStart,
 								nextDayStart,
-								ENERGY_NAME
+								ENERGY_NAME,
+								pricingService.excludedMeterKeys()
 						)
 						.stream()
 						.map(row ->
@@ -326,25 +303,65 @@ public class SolarDetailService {
 	}
 
 
-	private BigDecimal toUsd(
-			BigDecimal vnd
+	// zeros when the tariff / pricing is not usable (as before)
+	private SolarCostImpactDto costImpact(
+			List<SolarHourEnergyProjection> rows
 	) {
 
-		if (vnd == null) {
-			return BigDecimal.ZERO;
+		BigDecimal kwh = BigDecimal.ZERO;
+		BigDecimal normalVnd = BigDecimal.ZERO;
+		BigDecimal solarVnd = BigDecimal.ZERO;
+		BigDecimal normalUsd = BigDecimal.ZERO;
+		BigDecimal solarUsd = BigDecimal.ZERO;
+
+		final Optional<Pricing> pricing =
+				pricingService.load();
+
+		for (SolarHourEnergyProjection row : rows) {
+
+			if (row.getHourAt() == null || row.getKwh() == null) {
+				continue;
+			}
+
+			kwh = kwh.add(row.getKwh());
+
+			if (pricing.isEmpty()) {
+				continue;
+			}
+
+			for (TouShare share : pricing.get().shares(row.getHourAt())) {
+				normalVnd = normalVnd.add(pricing.get().gridVnd(row.getKwh(), share));
+				solarVnd = solarVnd.add(pricing.get().solarVnd(row.getKwh(), share));
+				normalUsd = normalUsd.add(pricing.get().gridUsd(row.getKwh(), share));
+				solarUsd = solarUsd.add(pricing.get().solarUsd(row.getKwh(), share));
+			}
 		}
 
-		return vnd
-				.divide(
-						financeProperties.getSolar().getExchangeRate(),
-						6,
-						RoundingMode.HALF_UP
-				)
-				.multiply(financeProperties.getSolar().getSepzone())
-				.setScale(
-						2,
-						RoundingMode.HALF_UP
-				);
+		final BigDecimal savingUsd =
+				normalUsd.subtract(solarUsd);
+
+		return new SolarCostImpactDto(
+				money(kwh),
+				money(normalVnd),
+				money(solarVnd),
+				money(normalVnd.subtract(solarVnd)),
+				money(normalUsd),
+				money(solarUsd),
+				money(savingUsd),
+				normalUsd.signum() == 0
+						? BigDecimal.ZERO.setScale(1)
+						: savingUsd.multiply(BigDecimal.valueOf(100))
+								.divide(normalUsd, 1, RoundingMode.HALF_UP)
+		);
+	}
+
+	private BigDecimal money(
+			BigDecimal value
+	) {
+		return value.setScale(
+				2,
+				RoundingMode.HALF_UP
+		);
 	}
 
 

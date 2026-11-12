@@ -1,6 +1,5 @@
 package com.example.factory_utility_visualization_be.service.runtime;
 
-import com.example.factory_utility_visualization_be.config.UtilityFinanceProperties;
 import com.example.factory_utility_visualization_be.dto.runtime.power.PowerUsageResponseDto;
 import com.example.factory_utility_visualization_be.dto.runtime.power.PowerUsageResponseDto.DayTotal;
 import com.example.factory_utility_visualization_be.dto.runtime.power.PowerUsageResponseDto.Factory;
@@ -10,8 +9,8 @@ import com.example.factory_utility_visualization_be.dto.runtime.power.PowerUsage
 import com.example.factory_utility_visualization_be.dto.runtime.power.PowerUsageResponseDto.Total;
 import com.example.factory_utility_visualization_be.repository.runtime.PowerUsageRepo;
 import com.example.factory_utility_visualization_be.repository.runtime.projection.PowerUsageHourProjection;
+import com.example.factory_utility_visualization_be.service.runtime.ElectricityPricingService.Pricing;
 import com.example.factory_utility_visualization_be.service.runtime.TouTariffService.TouShare;
-import com.example.factory_utility_visualization_be.service.runtime.TouTariffService.TouTariff;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -43,8 +42,9 @@ import java.util.function.Function;
  * Same meter split as the KVH daily data: grid = devices without any SOLAR
  * channel, solar = SOLAR devices, MTD rows with value > 0. Every kWh figure
  * (total, byFactory, last7Total, forecast) is grid + solar. Supply mix: grid
- * kWh by tariff band (no solar deduction) and SOLAR priced at tariff x 0.83
- * (same as /api/solar and /hourly). Bands come from the 3 distinct VND rates of
+ * kWh by tariff band (no solar deduction) and SOLAR, both priced by
+ * ElectricityPricingService (same rules as every other electricity
+ * endpoint). Bands come from the 3 distinct VND rates of
  * F2_Utility_Cost_Master (highest = HIGH_PEAK, lowest = LOW_PEAK), since the
  * table has no band column; anything else leaves supplyMix empty.
  *
@@ -58,8 +58,6 @@ public class PowerUsageCalculator {
 	private static final ZoneId APP_ZONE = ZoneId.of("Asia/Ho_Chi_Minh");
 
 	private static final String ENERGY_NAME = "Total Energy Consumption";
-
-	private static final BigDecimal SOLAR_PRICE_FACTOR = new BigDecimal("0.83");
 
 	private static final BigDecimal HUNDRED = BigDecimal.valueOf(100);
 
@@ -78,8 +76,7 @@ public class PowerUsageCalculator {
 			.toList();
 
 	private final PowerUsageRepo repo;
-	private final TouTariffService tariffService;
-	private final UtilityFinanceProperties financeProperties;
+	private final ElectricityPricingService pricingService;
 
 	private enum Band {
 		HIGH_PEAK,
@@ -202,7 +199,8 @@ public class PowerUsageCalculator {
 
 		// rows are stamped at the end of their hour
 		List<PowerUsageHourProjection> rows = repo.findHourlyEnergy(
-				ENERGY_NAME, AIR_CABINET_KEYS, from.plusHours(1), to.plusHours(1));
+				ENERGY_NAME, AIR_CABINET_KEYS, pricingService.excludedMeterKeys(),
+				from.plusHours(1), to.plusHours(1));
 
 		for (PowerUsageHourProjection row : rows) {
 			if (row.getHourAt() == null || row.getKwh() == null || row.getHourAt().isBefore(from)) {
@@ -228,36 +226,24 @@ public class PowerUsageCalculator {
 		return hours;
 	}
 
-	// tariff schedule (TouTariffService); empty when it is not usable or no
-	// exchange rate is configured
-	private Optional<TouTariff> loadTariff() {
-		UtilityFinanceProperties.Policy policy = financeProperties.getPowerUsage();
-
-		if (policy == null || policy.getExchangeRate() == null || policy.getExchangeRate().signum() == 0
-				|| policy.getSepzone() == null) {
-			return Optional.empty();
-		}
-
-		return tariffService.load();
-	}
-
 	// ---------------------------------------------------------------------
 	// Sections
 	// ---------------------------------------------------------------------
 
 	private List<Supply> supplyMix(Map<LocalDateTime, HourUsage> hours, Window window) {
-		Optional<TouTariff> tariff = loadTariff();
+		Optional<Pricing> pricing = pricingService.load();
 
-		if (tariff.isEmpty()) {
+		if (pricing.isEmpty()) {
 			return List.of();
 		}
 
+		Pricing p = pricing.get();
 		Map<Band, BigDecimal> kwhByBand = new EnumMap<>(Band.class);
-		Map<Band, BigDecimal> vndByBand = new EnumMap<>(Band.class);
+		Map<Band, BigDecimal> usdByBand = new EnumMap<>(Band.class);
 
 		for (Band band : Band.values()) {
 			kwhByBand.put(band, BigDecimal.ZERO);
-			vndByBand.put(band, BigDecimal.ZERO);
+			usdByBand.put(band, BigDecimal.ZERO);
 		}
 
 		hours.forEach((hourAt, usage) -> {
@@ -267,15 +253,12 @@ public class PowerUsageCalculator {
 
 			kwhByBand.merge(Band.SOLAR, usage.solar, BigDecimal::add);
 
-			for (TouShare share : tariff.get().shares(hourAt)) {
-				BigDecimal gridPart = usage.grid.multiply(share.fraction());
+			for (TouShare share : p.shares(hourAt)) {
 				Band band = Band.valueOf(share.band().name());
 
-				kwhByBand.merge(band, gridPart, BigDecimal::add);
-				vndByBand.merge(band, gridPart.multiply(share.vnd()), BigDecimal::add);
-				vndByBand.merge(Band.SOLAR,
-						usage.solar.multiply(share.fraction()).multiply(share.vnd()).multiply(SOLAR_PRICE_FACTOR),
-						BigDecimal::add);
+				kwhByBand.merge(band, usage.grid.multiply(share.fraction()), BigDecimal::add);
+				usdByBand.merge(band, p.gridUsd(usage.grid, share), BigDecimal::add);
+				usdByBand.merge(Band.SOLAR, p.solarUsd(usage.solar, share), BigDecimal::add);
 			}
 		});
 
@@ -284,7 +267,7 @@ public class PowerUsageCalculator {
 
 		for (Band band : Band.values()) {
 			BigDecimal bandKwh = kwhByBand.get(band);
-			BigDecimal bandUsd = toUsd(vndByBand.get(band));
+			BigDecimal bandUsd = usdByBand.get(band);
 
 			mix.add(new Supply(
 					band.name(),
@@ -450,14 +433,6 @@ public class PowerUsageCalculator {
 		}
 
 		return total;
-	}
-
-	private BigDecimal toUsd(BigDecimal vnd) {
-		UtilityFinanceProperties.Policy policy = financeProperties.getPowerUsage();
-
-		return vnd
-				.divide(policy.getExchangeRate(), 8, RoundingMode.HALF_UP)
-				.multiply(policy.getSepzone());
 	}
 
 	// null when previous is 0

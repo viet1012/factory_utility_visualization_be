@@ -3,6 +3,7 @@ package com.example.factory_utility_visualization_be.service.overview.solar;
 import com.example.factory_utility_visualization_be.cache_config.UtilityCacheNames;
 import com.example.factory_utility_visualization_be.repository.overview.solar.SolarDashboardRepo;
 import com.example.factory_utility_visualization_be.repository.overview.solar.projection.SolarDashboardProjection;
+import com.example.factory_utility_visualization_be.service.runtime.ElectricityPricingService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
@@ -28,6 +29,7 @@ import java.time.LocalDateTime;
 public class SolarMonthlySummaryCacheService {
 
 	private final SolarDashboardRepo repo;
+	private final ElectricityPricingService pricingService;
 
 	@Cacheable(
 			cacheNames = UtilityCacheNames.SOLAR_MONTHLY_SUMMARY,
@@ -49,7 +51,8 @@ public class SolarMonthlySummaryCacheService {
 				nextMonthStart,
 				now,
 				powerName,
-				energyName
+				energyName,
+				pricingService.excludedMeterKeys()
 		);
 	}
 }

@@ -23,6 +23,7 @@ public interface PowerUsageRepo extends JpaRepository<DummyEntity, Long> {
 	// one is grid; MTD = 'MTD' and value > 0. purposeKey = 'FAC|BOX_ID'
 	// (upper case) when the device has a channel listed in :purposeKeys, else
 	// NULL. Para rows are deduplicated so duplicates do not double count.
+	// :excludedMeters (upper-case box_device_id, never empty) are skipped.
 	@Query(value = """
 			WITH DeviceMap AS (
 			    SELECT
@@ -43,6 +44,7 @@ public interface PowerUsageRepo extends JpaRepository<DummyEntity, Long> {
 			        FROM dbo.F2_Utility_Scada_Channel ch
 			        INNER JOIN dbo.F2_Utility_Scada sc
 			                ON sc.scada_id = ch.scada_id
+			        WHERE UPPER(LTRIM(RTRIM(ch.box_device_id))) NOT IN (:excludedMeters)
 			    ) d
 			    GROUP BY d.box_device_id
 			),
@@ -83,6 +85,7 @@ public interface PowerUsageRepo extends JpaRepository<DummyEntity, Long> {
 	List<PowerUsageHourProjection> findHourlyEnergy(
 			@Param("energyName") String energyName,
 			@Param("purposeKeys") List<String> purposeKeys,
+			@Param("excludedMeters") List<String> excludedMeters,
 			@Param("fromTs") LocalDateTime fromTs,
 			@Param("toTs") LocalDateTime toTs
 	);

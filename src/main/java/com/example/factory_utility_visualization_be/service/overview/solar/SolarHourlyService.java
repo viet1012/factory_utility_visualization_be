@@ -9,6 +9,7 @@ import com.example.factory_utility_visualization_be.model.F2UtilityScada;
 import com.example.factory_utility_visualization_be.model.F2UtilityScadaChannel;
 import com.example.factory_utility_visualization_be.repository.overview.solar.SolarDashboardRepo;
 import com.example.factory_utility_visualization_be.repository.overview.solar.projection.SolarHourlyProfileProjection;
+import com.example.factory_utility_visualization_be.service.runtime.ElectricityPricingService;
 import com.example.factory_utility_visualization_be.service.runtime.UtilityMasterDataCacheService;
 import com.example.factory_utility_visualization_be.service.util.FacilityValidator;
 import lombok.RequiredArgsConstructor;
@@ -72,6 +73,7 @@ public class SolarHourlyService {
 
 	private final SolarDashboardRepo repo;
 	private final UtilityMasterDataCacheService masterData;
+	private final ElectricityPricingService pricingService;
 	private final CacheManager cacheManager;
 
 	@Transactional(readOnly = true)
@@ -143,7 +145,8 @@ public class SolarHourlyService {
 									f,
 									dayStart,
 									nextDayStart,
-									ENERGY_NAME
+									ENERGY_NAME,
+									pricingService.excludedMeterKeys()
 							)
 					);
 
@@ -257,7 +260,8 @@ public class SolarHourlyService {
 								FacilityValidator.DEFAULT_FAC,
 								dayStart,
 								nextDayStart,
-								ENERGY_NAME
+								ENERGY_NAME,
+								pricingService.excludedMeterKeys()
 						)
 				);
 

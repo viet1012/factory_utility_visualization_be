@@ -15,9 +15,8 @@ import java.util.List;
  * "F2 electric consumption.xlsx" daily monitoring sheets:
  * - bill period of month M = [day billingCutoffDay of M-1, day billingCutoffDay of M)
  *   (e.g. Sep = Aug 21 ~ Sep 20), labelled with the month the period ENDS in
- * - grid U.P [$/kWh] = tariff VND * grid.sepzone / grid.exchangeRate (sheet C40..C42)
- * - solar U.P [$/kWh] = tariff VND * solarPriceFactor[band] * solar.sepzone / solar.exchangeRate
- *   (sheet JI36 = 1649.7 / 26316, JI37 = 3058.2 / 26316, low peak = 0)
+ * - prices and excluded meters: ElectricityProperties (utility.electricity),
+ *   shared with every other electricity endpoint
  * - a day counts in averages only when it is over and its meter-hour
  *   coverage is >= minCoveragePct
  */
@@ -59,9 +58,6 @@ public class ElectricConsumptionProperties {
 	// solarOutlierRatio x P90 kWh/hour of that meter
 	private BigDecimal solarOutlierRatio = BigDecimal.valueOf(3);
 
-	// box_device_id not counted at all (duplicate meters)
-	private List<String> excludedMeters = new ArrayList<>();
-
 	// box_device_id -> scope by transformer, overriding the SCADA fac
 	private MeterScope meterScope = new MeterScope();
 
@@ -70,32 +66,5 @@ public class ElectricConsumptionProperties {
 	public static class MeterScope {
 		private List<String> facAb = new ArrayList<>();
 		private List<String> facC = new ArrayList<>();
-	}
-
-	private SolarPriceFactor solarPriceFactor = new SolarPriceFactor();
-
-	// VND/kWh per band like the sheet (C40..C42: 1833 / 3398 / 1190); each
-	// value left empty falls back to the rate of F2_Utility_Cost_Master.
-	// Band time windows always come from F2_Utility_Cost_Master.
-	private BandPrices bandPrices = new BandPrices();
-
-	private UtilityFinanceProperties.Policy grid = new UtilityFinanceProperties.Policy();
-
-	private UtilityFinanceProperties.Policy solar = new UtilityFinanceProperties.Policy();
-
-	@Getter
-	@Setter
-	public static class BandPrices {
-		private BigDecimal normal;
-		private BigDecimal highPeak;
-		private BigDecimal lowPeak;
-	}
-
-	@Getter
-	@Setter
-	public static class SolarPriceFactor {
-		private BigDecimal normal = new BigDecimal("0.9");
-		private BigDecimal highPeak = new BigDecimal("0.9");
-		private BigDecimal lowPeak = BigDecimal.ZERO;
 	}
 }

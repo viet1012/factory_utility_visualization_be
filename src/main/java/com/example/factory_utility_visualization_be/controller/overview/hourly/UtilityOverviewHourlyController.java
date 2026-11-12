@@ -9,8 +9,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.math.BigDecimal;
-
 @RequiredArgsConstructor
 @RestController
 @RequestMapping("/api/utility")
@@ -25,20 +23,13 @@ public class UtilityOverviewHourlyController {
 			String facId,
 
 			@RequestParam(required = false)
-			String nameEn,
-
-			@RequestParam(required = false)
-			BigDecimal exchange,
-
-			@RequestParam(required = false)
-			BigDecimal sepzone
+			String nameEn
 	) {
+		// money uses the shared electricity pricing (utility.electricity)
 		return ResponseEntity.ok(
 				service.getHourlyDashboard(
 						facId,
-						nameEn,
-						exchange,
-						sepzone
+						nameEn
 				)
 		);
 	}

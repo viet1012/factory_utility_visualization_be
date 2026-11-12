@@ -1,6 +1,6 @@
 package com.example.factory_utility_visualization_be.repository.overview.solar;
 
-import com.example.factory_utility_visualization_be.repository.overview.solar.projection.SolarCostProjection;
+import com.example.factory_utility_visualization_be.repository.overview.solar.projection.SolarHourEnergyProjection;
 import com.example.factory_utility_visualization_be.repository.overview.solar.projection.SolarDailyTrendProjection;
 import com.example.factory_utility_visualization_be.repository.overview.solar.projection.SolarDashboardProjection;
 import com.example.factory_utility_visualization_be.repository.overview.solar.projection.SolarHourlyProfileProjection;
@@ -12,6 +12,15 @@ import org.springframework.data.repository.query.Param;
 import java.time.LocalDateTime;
 import java.util.List;
 
+/**
+ * Solar endpoints. Same energy rules as every electricity API
+ * (README "Tính tiền điện"):
+ * - a History_Main row holds the energy of the hour ENDING at pick_at, so its
+ *   hour / day is pick_at - 1h (windows are [start + 1h, end + 1h) on pick_at)
+ * - MTD = 'MTD', value > 0
+ * - a meter with any SOLAR channel is solar, never grid ("solar wins")
+ * - :excludedMeters (upper-case box_device_id, never empty) are skipped
+ */
 public interface SolarDashboardRepo
 		extends JpaRepository<DummyEntity, Long> {
 
@@ -44,6 +53,15 @@ public interface SolarDashboardRepo
                 UPPER(:fac) = 'KVH'
                 OR UPPER(sc.fac) = UPPER(:fac)
             )
+
+            AND NOT EXISTS (
+                SELECT 1
+                FROM dbo.F2_Utility_Scada_Channel chs
+                WHERE chs.box_device_id = pa.box_device_id
+                  AND UPPER(LTRIM(RTRIM(ISNULL(chs.box_id, '')))) = 'SOLAR'
+            )
+
+            AND UPPER(LTRIM(RTRIM(pa.box_device_id))) NOT IN (:excludedMeters)
     ),
 
     SolarElectricityParam AS (
@@ -74,6 +92,8 @@ public interface SolarDashboardRepo
                 UPPER(:fac) = 'KVH'
                 OR UPPER(sc.fac) = UPPER(:fac)
             )
+
+            AND UPPER(LTRIM(RTRIM(pa.box_device_id))) NOT IN (:excludedMeters)
     ),
 
     GridEnergy AS (
@@ -95,8 +115,8 @@ public interface SolarDashboardRepo
            AND hm.plc_address = ep.plc_address
 
         WHERE
-            hm.pick_at >= :monthStart
-            AND hm.pick_at < :nextMonthStart
+            hm.pick_at >= DATEADD(HOUR, 1, :monthStart)
+            AND hm.pick_at < DATEADD(HOUR, 1, :nextMonthStart)
 
             AND hm.[value] > 0
 
@@ -122,8 +142,8 @@ public interface SolarDashboardRepo
            AND hm.plc_address = ep.plc_address
 
         WHERE
-            hm.pick_at >= :monthStart
-            AND hm.pick_at < :nextMonthStart
+            hm.pick_at >= DATEADD(HOUR, 1, :monthStart)
+            AND hm.pick_at < DATEADD(HOUR, 1, :nextMonthStart)
 
             AND hm.[value] > 0
 
@@ -272,7 +292,8 @@ public interface SolarDashboardRepo
 			@Param("nextMonthStart") LocalDateTime nextMonthStart,
 			@Param("now") LocalDateTime now,
 			@Param("powerName") String powerName,
-			@Param("energyName") String energyName
+			@Param("energyName") String energyName,
+			@Param("excludedMeters") List<String> excludedMeters
 	);
 
 
@@ -286,7 +307,7 @@ public interface SolarDashboardRepo
 
         SELECT
             CAST(
-                hi.pick_at AS DATE
+                DATEADD(HOUR, -1, hi.pick_at) AS DATE
             ) AS record_date,
 
             SUM(
@@ -304,8 +325,8 @@ public interface SolarDashboardRepo
            AND pa.name_en = :energyName
 
         WHERE
-            hi.pick_at >= :monthStart
-            AND hi.pick_at < :nextMonthStart
+            hi.pick_at >= DATEADD(HOUR, 1, :monthStart)
+            AND hi.pick_at < DATEADD(HOUR, 1, :nextMonthStart)
 
             AND hi.[value] > 0
 
@@ -336,9 +357,18 @@ public interface SolarDashboardRepo
                     )
             )
 
+            AND NOT EXISTS (
+                SELECT 1
+                FROM dbo.F2_Utility_Scada_Channel chs
+                WHERE chs.box_device_id = hi.box_device_id
+                  AND UPPER(LTRIM(RTRIM(ISNULL(chs.box_id, '')))) = 'SOLAR'
+            )
+
+            AND UPPER(LTRIM(RTRIM(hi.box_device_id))) NOT IN (:excludedMeters)
+
         GROUP BY
             CAST(
-                hi.pick_at AS DATE
+                DATEADD(HOUR, -1, hi.pick_at) AS DATE
             )
     ),
 
@@ -351,7 +381,7 @@ public interface SolarDashboardRepo
 
         SELECT
             CAST(
-                hi.pick_at AS DATE
+                DATEADD(HOUR, -1, hi.pick_at) AS DATE
             ) AS record_date,
 
             SUM(
@@ -369,8 +399,8 @@ public interface SolarDashboardRepo
            AND pa.name_en = :energyName
 
         WHERE
-            hi.pick_at >= :monthStart
-            AND hi.pick_at < :nextMonthStart
+            hi.pick_at >= DATEADD(HOUR, 1, :monthStart)
+            AND hi.pick_at < DATEADD(HOUR, 1, :nextMonthStart)
 
             AND hi.[value] > 0
 
@@ -401,9 +431,11 @@ public interface SolarDashboardRepo
                     )
             )
 
+            AND UPPER(LTRIM(RTRIM(hi.box_device_id))) NOT IN (:excludedMeters)
+
         GROUP BY
             CAST(
-                hi.pick_at AS DATE
+                DATEADD(HOUR, -1, hi.pick_at) AS DATE
             )
     ),
 
@@ -493,332 +525,53 @@ public interface SolarDashboardRepo
 			@Param("fac") String fac,
 			@Param("monthStart") LocalDateTime monthStart,
 			@Param("nextMonthStart") LocalDateTime nextMonthStart,
-			@Param("energyName") String energyName
+			@Param("energyName") String energyName,
+			@Param("excludedMeters") List<String> excludedMeters
 	);
 
 
+	// Solar kWh per hour for the cost impact of /api/solar/detail; priced in
+	// Java by ElectricityPricingService (same rules as every electricity API).
+	// A row holds the energy of the hour ENDING at pick_at, so hourAt =
+	// pick_at hour - 1h; the caller shifts fromTs / toTs by +1h.
+	// :excludedMeters = upper-case box_device_id, never empty.
 	@Query(value = """
-			WITH Hours AS (
-			    SELECT hour_number
-			    FROM (
-			        VALUES
-			            (0),(1),(2),(3),(4),(5),
-			            (6),(7),(8),(9),(10),(11),
-			            (12),(13),(14),(15),(16),(17),
-			            (18),(19),(20),(21),(22),(23)
-			    ) h(hour_number)
-			),
-			
-			SolarParam AS (
+			WITH SolarParam AS (
 			    SELECT DISTINCT
 			        pa.box_device_id,
 			        pa.plc_address
-			
 			    FROM dbo.F2_Utility_Para pa
-			
 			    INNER JOIN dbo.F2_Utility_Scada_Channel ch
-			        ON ch.box_device_id = pa.box_device_id
-			
+			            ON ch.box_device_id = pa.box_device_id
 			    INNER JOIN dbo.F2_Utility_Scada sc
-			        ON sc.scada_id = ch.scada_id
-			
-			    WHERE
-			        pa.name_en = :energyName
-			
-			        AND UPPER(
-			            LTRIM(
-			                RTRIM(
-			                    ISNULL(ch.box_id, '')
-			                )
-			            )
-			        ) = 'SOLAR'
-			
-			        AND (
-			            UPPER(:fac) = 'KVH'
-			            OR UPPER(sc.fac) = UPPER(:fac)
-			        )
-			),
-			
-			SolarRaw AS (
-			    SELECT
-			        CAST(hm.pick_at AS DATE) AS record_date,
-			
-			        DATEPART(
-			            HOUR,
-			            hm.pick_at
-			        ) AS hour_number,
-			
-			        CAST(
-			            hm.[value]
-			            AS DECIMAL(19,6)
-			        ) AS solar_value
-			
-			    FROM SolarParam sp
-			
-			    INNER JOIN dbo.F2_Utility_Para_History_Main hm
+			            ON sc.scada_id = ch.scada_id
+			    WHERE pa.name_en = :energyName
+			      AND UPPER(LTRIM(RTRIM(ISNULL(ch.box_id, '')))) = 'SOLAR'
+			      AND (
+			          UPPER(:fac) = 'KVH'
+			          OR UPPER(sc.fac) = UPPER(:fac)
+			      )
+			      AND UPPER(LTRIM(RTRIM(pa.box_device_id))) NOT IN (:excludedMeters)
+			)
+			SELECT
+			    DATEADD(HOUR, DATEDIFF(HOUR, 0, hm.pick_at) - 1, 0)         AS hourAt,
+			    CAST(SUM(CAST(hm.[value] AS DECIMAL(19, 6))) AS DECIMAL(19, 4)) AS kwh
+			FROM SolarParam sp
+			INNER JOIN dbo.F2_Utility_Para_History_Main hm
 			        ON hm.box_device_id = sp.box_device_id
 			       AND hm.plc_address = sp.plc_address
-			
-			    WHERE
-			        hm.pick_at >= :monthStart
-			        AND hm.pick_at < :nextMonthStart
-			
-			        AND hm.[value] > 0
-			
-			        AND ISNULL(
-			            hm.MTD,
-			            ''
-			        ) = 'MTD'
-			),
-			
-			SolarHourly AS (
-			    SELECT
-			        record_date,
-			        hour_number,
-			
-			        CASE
-			            WHEN (
-			                DATEDIFF(
-			                    DAY,
-			                    CAST('19000101' AS DATE),
-			                    record_date
-			                ) % 7
-			            ) = 6
-			            THEN '1'
-			
-			            ELSE '2-7'
-			        END AS wd,
-			
-			        SUM(
-			            solar_value
-			        ) AS solar_kwh
-			
-			    FROM SolarRaw
-			
-			    GROUP BY
-			        record_date,
-			        hour_number
-			),
-			
-			HourRate AS (
-			    SELECT
-			        c.WD AS wd,
-			        h.hour_number,
-			
-			        SUM(
-			            CASE
-			                WHEN c.frTime < c.toTime
-			                THEN
-			                    CASE
-			                        WHEN h.hour_number < c.toTime
-			                         AND h.hour_number + 1 > c.frTime
-			
-			                        THEN
-			                            (
-			                                CASE
-			                                    WHEN c.toTime < h.hour_number + 1
-			                                    THEN c.toTime
-			                                    ELSE h.hour_number + 1
-			                                END
-			                            )
-			                            -
-			                            (
-			                                CASE
-			                                    WHEN c.frTime > h.hour_number
-			                                    THEN c.frTime
-			                                    ELSE h.hour_number
-			                                END
-			                            )
-			
-			                        ELSE 0
-			                    END
-			
-			                ELSE
-			                    CASE
-			                        WHEN h.hour_number + 1 > c.frTime
-			                        THEN
-			                            (
-			                                24.0
-			                                -
-			                                CASE
-			                                    WHEN c.frTime > h.hour_number
-			                                    THEN c.frTime
-			                                    ELSE h.hour_number
-			                                END
-			                            )
-			
-			                        WHEN h.hour_number < c.toTime
-			                        THEN
-			                            (
-			                                CASE
-			                                    WHEN c.toTime < h.hour_number + 1
-			                                    THEN c.toTime
-			                                    ELSE h.hour_number + 1
-			                                END
-			                            )
-			                            -
-			                            h.hour_number
-			
-			                        ELSE 0
-			                    END
-			            END
-			            * c.vnd
-			        ) AS weighted_vnd,
-			
-			        SUM(
-			            CASE
-			                WHEN c.frTime < c.toTime
-			                THEN
-			                    CASE
-			                        WHEN h.hour_number < c.toTime
-			                         AND h.hour_number + 1 > c.frTime
-			
-			                        THEN
-			                            (
-			                                CASE
-			                                    WHEN c.toTime < h.hour_number + 1
-			                                    THEN c.toTime
-			                                    ELSE h.hour_number + 1
-			                                END
-			                            )
-			                            -
-			                            (
-			                                CASE
-			                                    WHEN c.frTime > h.hour_number
-			                                    THEN c.frTime
-			                                    ELSE h.hour_number
-			                                END
-			                            )
-			
-			                        ELSE 0
-			                    END
-			
-			                ELSE
-			                    CASE
-			                        WHEN h.hour_number + 1 > c.frTime
-			                        THEN
-			                            (
-			                                24.0
-			                                -
-			                                CASE
-			                                    WHEN c.frTime > h.hour_number
-			                                    THEN c.frTime
-			                                    ELSE h.hour_number
-			                                END
-			                            )
-			
-			                        WHEN h.hour_number < c.toTime
-			                        THEN
-			                            (
-			                                CASE
-			                                    WHEN c.toTime < h.hour_number + 1
-			                                    THEN c.toTime
-			                                    ELSE h.hour_number + 1
-			                                END
-			                            )
-			                            -
-			                            h.hour_number
-			
-			                        ELSE 0
-			                    END
-			            END
-			        ) AS total_hours
-			
-			    FROM dbo.F2_Utility_Cost_Master c
-			
-			    CROSS JOIN Hours h
-			
-			    GROUP BY
-			        c.WD,
-			        h.hour_number
-			),
-			
-			FinalRate AS (
-			    SELECT
-			        wd,
-			        hour_number,
-			
-			        weighted_vnd
-			        /
-			        NULLIF(
-			            total_hours,
-			            0
-			        ) AS vnd_rate
-			
-			    FROM HourRate
-			
-			    WHERE
-			        total_hours > 0
-			),
-			
-			CostData AS (
-			    SELECT
-			        sh.solar_kwh,
-			
-			        sh.solar_kwh
-			        *
-			        COALESCE(
-			            fr.vnd_rate,
-			            0
-			        ) AS normal_cost_vnd
-			
-			    FROM SolarHourly sh
-			
-			    LEFT JOIN FinalRate fr
-			        ON fr.wd = sh.wd
-			       AND fr.hour_number = sh.hour_number
-			)
-			
-			SELECT
-			    CAST(
-			        COALESCE(
-			            SUM(solar_kwh),
-			            0
-			        )
-			        AS DECIMAL(19,2)
-			    ) AS solarEnergyKwh,
-			
-			    CAST(
-			        COALESCE(
-			            SUM(normal_cost_vnd),
-			            0
-			        )
-			        AS DECIMAL(19,2)
-			    ) AS normalCostVnd,
-			
-			    CAST(
-			        COALESCE(
-			            SUM(normal_cost_vnd),
-			            0
-			        )
-			        * 0.83
-			        AS DECIMAL(19,2)
-			    ) AS solarCostVnd,
-			
-			    CAST(
-			        COALESCE(
-			            SUM(normal_cost_vnd),
-			            0
-			        )
-			        * 0.17
-			        AS DECIMAL(19,2)
-			    ) AS savingVnd
-			
-			FROM CostData
+			WHERE hm.pick_at >= :fromTs
+			  AND hm.pick_at <  :toTs
+			  AND hm.[value] > 0
+			  AND hm.MTD = 'MTD'
+			GROUP BY DATEADD(HOUR, DATEDIFF(HOUR, 0, hm.pick_at) - 1, 0)
 			""", nativeQuery = true)
-	SolarCostProjection getSolarMonthlyCost(
-
-			@Param("fac")
-			String fac,
-
-			@Param("monthStart")
-			LocalDateTime monthStart,
-
-			@Param("nextMonthStart")
-			LocalDateTime nextMonthStart,
-
-			@Param("energyName")
-			String energyName
+	List<SolarHourEnergyProjection> findSolarHourlyEnergy(
+			@Param("fac") String fac,
+			@Param("fromTs") LocalDateTime fromTs,
+			@Param("toTs") LocalDateTime toTs,
+			@Param("energyName") String energyName,
+			@Param("excludedMeters") List<String> excludedMeters
 	);
 
 	@Query(value = """
@@ -850,12 +603,14 @@ public interface SolarDashboardRepo
 			            UPPER(:fac) = 'KVH'
 			            OR UPPER(sc.fac) = UPPER(:fac)
 			        )
+
+			        AND UPPER(LTRIM(RTRIM(pa.box_device_id))) NOT IN (:excludedMeters)
 			)
-			
+
 			SELECT
 			    DATEPART(
 			        HOUR,
-			        hm.pick_at
+			        DATEADD(HOUR, -1, hm.pick_at)
 			    ) AS scaleHour,
 			
 			    CAST(
@@ -875,8 +630,8 @@ public interface SolarDashboardRepo
 			   AND hm.plc_address = sp.plc_address
 			
 			WHERE
-			    hm.pick_at >= :dayStart
-			    AND hm.pick_at < :nextDayStart
+			    hm.pick_at >= DATEADD(HOUR, 1, :dayStart)
+			    AND hm.pick_at < DATEADD(HOUR, 1, :nextDayStart)
 			
 			    AND hm.[value] > 0
 			
@@ -888,7 +643,7 @@ public interface SolarDashboardRepo
 			GROUP BY
 			    DATEPART(
 			        HOUR,
-			        hm.pick_at
+			        DATEADD(HOUR, -1, hm.pick_at)
 			    )
 			
 			ORDER BY
@@ -906,6 +661,9 @@ public interface SolarDashboardRepo
 			LocalDateTime nextDayStart,
 
 			@Param("energyName")
-			String energyName
+			String energyName,
+
+			@Param("excludedMeters")
+			List<String> excludedMeters
 	);
 }

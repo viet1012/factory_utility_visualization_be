@@ -8,6 +8,7 @@ import com.example.factory_utility_visualization_be.repository.overview.period.p
 import com.example.factory_utility_visualization_be.repository.overview.period.projection.UtilityPeriodBoxProjection;
 import com.example.factory_utility_visualization_be.repository.overview.period.projection.UtilityPeriodTrendProjection;
 import com.example.factory_utility_visualization_be.repository.overview.period.UtilityPeriodRepo;
+import com.example.factory_utility_visualization_be.service.runtime.ElectricityPricingService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -29,6 +30,7 @@ public class UtilityPeriodService {
 	private static final ZoneId APP_ZONE =
 			ZoneId.of("Asia/Ho_Chi_Minh");
 	private final UtilityPeriodRepo repo;
+	private final ElectricityPricingService pricingService;
 
 	@Transactional(readOnly = true)
 	public UtilityPeriodDashboardDto getDashboard(
@@ -383,7 +385,8 @@ public class UtilityPeriodService {
 					repo.getElectricityBoxDaily(
 							fac,
 							fromTime,
-							toTime
+							toTime,
+							pricingService.excludedMeterKeys()
 					);
 
 			return buildElectricityUtilityData(
@@ -615,7 +618,8 @@ public class UtilityPeriodService {
 			case "ELECTRICITY" -> repo.getElectricityTrend(
 					fac,
 					fromTime,
-					toTime
+					toTime,
+					pricingService.excludedMeterKeys()
 			);
 
 			case "WATER" -> repo.getWaterTrend(

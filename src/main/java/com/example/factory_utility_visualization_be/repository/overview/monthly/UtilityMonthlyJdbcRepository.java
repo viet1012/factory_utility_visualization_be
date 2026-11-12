@@ -61,9 +61,10 @@ public class UtilityMonthlyJdbcRepository {
 	 *
 	 * - Thiết bị thường: có channel box_id <> SOLAR thuộc scada của :fac.
 	 *   FAC_A lấy thêm 'Sensor compressed air pressure Data' từ FAC_B.
+	 * - Điện lưới giống KVH và mọi API điện khác: Solar thắng -> meter có bất
+	 *   kỳ channel SOLAR nào không thuộc GRID; value = điện lưới, không trừ Solar.
 	 * - Solar: channel box_id = SOLAR thuộc scada của :fac.
 	 *   Không giữ unit (giống SolarTargetPara cũ).
-	 * - Meter chính đã bao gồm Solar -> net = gross - solar ở bước sau.
 	 */
 	private static final String FAC_DEVICES = """
           SELECT
@@ -102,6 +103,15 @@ public class UtilityMonthlyJdbcRepository {
                     )
                 )
           )
+            AND NOT (
+                pa.name_en = 'Total Energy Consumption'
+                AND EXISTS (
+                    SELECT 1
+                    FROM dbo.F2_Utility_Scada_Channel chs
+                    WHERE chs.box_device_id = pa.box_device_id
+                      AND UPPER(LTRIM(RTRIM(ISNULL(chs.box_id, '')))) = 'SOLAR'
+                )
+            )
 
           UNION ALL
 
@@ -204,11 +214,16 @@ public class UtilityMonthlyJdbcRepository {
 	/*
 	 * #Dev: DISTINCT theo thiết bị trước khi join History,
 	 * để thiết bị map nhiều channel không bị nhân giá trị.
+	 * Meter trong :excludedMeters (trùng, vd P-3.1 = P-3) không tính điện.
 	 *
 	 * #Agg: một lần đọc History_Main, gom theo
 	 * - ENERGY: period, unit, WD, HourNumber
 	 * - SOLAR : period, WD, HourNumber
 	 * - COOLING / PIPELINE / AIR: period
+	 *
+	 * ENERGY / SOLAR: dòng History_Main là điện của giờ KẾT THÚC tại pick_at,
+	 * nên giờ / ngày / kỳ tính theo ts = pick_at - 1h (giống power-usage,
+	 * electric-consumption); môi trường giữ ts = pick_at.
 	 *
 	 * WD: '1' = Chủ nhật (19000101 là thứ Hai), không phụ thuộc SET DATEFIRST.
 	 */
@@ -227,7 +242,9 @@ public class UtilityMonthlyJdbcRepository {
           INTO #Dev
           FROM (
           {DEVICES}
-          ) x;
+          ) x
+          WHERE x.kind NOT IN ('ENERGY', 'SOLAR')
+             OR UPPER(LTRIM(RTRIM(x.box_device_id))) NOT IN (:excludedMeters);
 
           CREATE CLUSTERED INDEX CX_Dev
           ON #Dev(box_device_id, plc_address);
@@ -258,9 +275,16 @@ public class UtilityMonthlyJdbcRepository {
              AND h.plc_address = d.plc_address
           CROSS APPLY (
               SELECT
+                  CASE WHEN d.kind IN ('ENERGY', 'SOLAR')
+                       THEN DATEADD(HOUR, -1, h.pick_at)
+                       ELSE h.pick_at
+                  END AS ts
+          ) t
+          CROSS APPLY (
+              SELECT
                   CASE
-                      WHEN h.pick_at >= :from THEN 'CURRENT'
-                      WHEN h.pick_at < :prevTo THEN 'PREV'
+                      WHEN t.ts >= :from THEN 'CURRENT'
+                      WHEN t.ts < :prevTo THEN 'PREV'
                   END AS period,
 
                   CASE WHEN d.kind IN ('ENERGY', 'SOLAR') THEN 0 ELSE 1 END AS is_env,
@@ -269,17 +293,19 @@ public class UtilityMonthlyJdbcRepository {
 
                   CASE WHEN d.kind IN ('ENERGY', 'SOLAR') THEN
                       CASE
-                          WHEN DATEDIFF(DAY, CAST('19000101' AS DATE), CAST(h.pick_at AS DATE)) % 7 = 6
+                          WHEN DATEDIFF(DAY, CAST('19000101' AS DATE), CAST(t.ts AS DATE)) % 7 = 6
                               THEN '1'
                           ELSE '2-7'
                       END
                   END AS WD,
 
                   CASE WHEN d.kind IN ('ENERGY', 'SOLAR')
-                       THEN DATEPART(HOUR, h.pick_at) END AS HourNumber
+                       THEN DATEPART(HOUR, t.ts) END AS HourNumber
           ) g
           WHERE h.pick_at >= :prevFrom
-            AND h.pick_at < :currentTo
+            AND h.pick_at < DATEADD(HOUR, 1, :currentTo)
+            AND t.ts >= :prevFrom
+            AND t.ts < :currentTo
             AND h.[value] > 0
             AND g.period IS NOT NULL
             AND (g.is_env = 1 OR h.MTD = 'MTD')
@@ -294,10 +320,10 @@ public class UtilityMonthlyJdbcRepository {
           """;
 
 	/*
-	 * Electricity:
-	 * - FAC: value = MAX(0, gross - solar),
-	 *        vndCost = MAX(0, grossCost - solarCost) theo từng khung giờ tariff.
-	 * - KVH: value = grid, vndCost = gridCost (không trừ Solar).
+	 * Electricity (FAC và KVH như nhau, giống mọi API điện khác):
+	 * - value   = điện lưới (meter không có channel SOLAR), không trừ Solar.
+	 * - vndCost = điện lưới x đơn giá F2_Utility_Cost_Master theo từng khung giờ;
+	 *             USD tính ở service bằng ElectricityPricingService.
 	 *
 	 * Tariff hỗ trợ khung giờ qua nửa đêm.
 	 *
@@ -377,21 +403,11 @@ public class UtilityMonthlyJdbcRepository {
                   COALESCE(SUM(CASE WHEN e.period = 'PREV' THEN e.energy_sum END), 0) AS prevGross,
 
                   COALESCE(SUM(CASE WHEN e.period = 'CURRENT' THEN e.energy_sum * r.vnd_rate END), 0) AS grossCost,
-                  COALESCE(SUM(CASE WHEN e.period = 'PREV' THEN e.energy_sum * r.vnd_rate END), 0) AS prevGrossCost,
-
-                  COALESCE(SUM(CASE WHEN e.period = 'CURRENT'
-                                    THEN COALESCE(s.solar_sum, 0) * r.vnd_rate ELSE 0 END), 0) AS solarCost,
-                  COALESCE(SUM(CASE WHEN e.period = 'PREV'
-                                    THEN COALESCE(s.solar_sum, 0) * r.vnd_rate ELSE 0 END), 0) AS prevSolarCost
+                  COALESCE(SUM(CASE WHEN e.period = 'PREV' THEN e.energy_sum * r.vnd_rate END), 0) AS prevGrossCost
               FROM #Agg e
               INNER JOIN Rate r
                   ON r.WD = e.WD
                  AND r.HourNumber = e.HourNumber
-              LEFT JOIN #Agg s
-                  ON s.kind = 'SOLAR'
-                 AND s.period = e.period
-                 AND s.WD = e.WD
-                 AND s.HourNumber = e.HourNumber
               WHERE e.kind = 'ENERGY'
               GROUP BY e.unit_key
           ),
@@ -399,31 +415,10 @@ public class UtilityMonthlyJdbcRepository {
           EnergyNet AS (
               SELECT
                   e.unit,
-
-                  CASE WHEN :isKvh = 1
-                       THEN CAST(e.gross AS DECIMAL(18,2))
-                       ELSE CAST(IIF(e.gross >= sm.solarValue, e.gross - sm.solarValue, 0)
-                                 AS DECIMAL(18,2))
-                  END AS value,
-
-                  CASE WHEN :isKvh = 1
-                       THEN CAST(e.prevGross AS DECIMAL(18,2))
-                       ELSE CAST(IIF(e.prevGross >= sm.prevSolarValue, e.prevGross - sm.prevSolarValue, 0)
-                                 AS DECIMAL(18,2))
-                  END AS prevValue,
-
-                  CASE WHEN :isKvh = 1
-                       THEN CAST(e.grossCost AS DECIMAL(18,2))
-                       ELSE CAST(CAST(IIF(e.grossCost >= e.solarCost, e.grossCost - e.solarCost, 0)
-                                      AS DECIMAL(19,4)) AS DECIMAL(18,2))
-                  END AS vndCost,
-
-                  CASE WHEN :isKvh = 1
-                       THEN CAST(e.prevGrossCost AS DECIMAL(18,2))
-                       ELSE CAST(CAST(IIF(e.prevGrossCost >= e.prevSolarCost, e.prevGrossCost - e.prevSolarCost, 0)
-                                      AS DECIMAL(19,4)) AS DECIMAL(18,2))
-                  END AS prevVndCost,
-
+                  CAST(e.gross AS DECIMAL(18,2)) AS value,
+                  CAST(e.prevGross AS DECIMAL(18,2)) AS prevValue,
+                  CAST(e.grossCost AS DECIMAL(18,2)) AS vndCost,
+                  CAST(e.prevGrossCost AS DECIMAL(18,2)) AS prevVndCost,
                   sm.solarValue,
                   sm.prevSolarValue
               FROM EnergyMonthly e
@@ -569,9 +564,12 @@ public class UtilityMonthlyJdbcRepository {
 			LocalDateTime from,
 			LocalDateTime currentTo,
 			LocalDateTime prevFrom,
-			LocalDateTime prevTo
+			LocalDateTime prevTo,
+			// upper-case box_device_id, never empty
+			List<String> excludedMeters
 	) {
 		MapSqlParameterSource params = new MapSqlParameterSource()
+				.addValue("excludedMeters", excludedMeters)
 				.addValue("fac", fac)
 				.addValue("isKvh", kvh ? 1 : 0)
 				.addValue("from", Timestamp.valueOf(from))
