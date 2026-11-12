@@ -10,14 +10,14 @@ import com.example.factory_utility_visualization_be.dto.runtime.power.PowerUsage
 import com.example.factory_utility_visualization_be.dto.runtime.power.PowerUsageResponseDto.Total;
 import com.example.factory_utility_visualization_be.repository.runtime.PowerUsageRepo;
 import com.example.factory_utility_visualization_be.repository.runtime.projection.PowerUsageHourProjection;
-import com.example.factory_utility_visualization_be.repository.runtime.projection.PowerUsageTariffProjection;
+import com.example.factory_utility_visualization_be.service.runtime.TouTariffService.TouShare;
+import com.example.factory_utility_visualization_be.service.runtime.TouTariffService.TouTariff;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.time.DayOfWeek;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -63,12 +63,6 @@ public class PowerUsageCalculator {
 
 	private static final BigDecimal HUNDRED = BigDecimal.valueOf(100);
 
-	// F2_Utility_Cost_Master.WD
-	private static final String WD_SUNDAY = "1";
-	private static final String WD_OTHER = "2-7";
-
-	private static final int HOURS_PER_DAY = 24;
-
 	private static final int LAST_DAYS = 7;
 
 	// compressed air electricity cabinets: fac + box_id
@@ -84,6 +78,7 @@ public class PowerUsageCalculator {
 			.toList();
 
 	private final PowerUsageRepo repo;
+	private final TouTariffService tariffService;
 	private final UtilityFinanceProperties financeProperties;
 
 	private enum Band {
@@ -127,10 +122,6 @@ public class PowerUsageCalculator {
 		String code() {
 			return "COMPRESSED_AIR_" + fac.toUpperCase(Locale.ROOT) + "_" + boxId.toUpperCase(Locale.ROOT);
 		}
-	}
-
-	// part of one hour of day billed at vnd; fractions of an hour sum to 1
-	private record TariffShare(Band band, BigDecimal vnd, BigDecimal fraction) {
 	}
 
 	@Transactional(readOnly = true)
@@ -237,14 +228,9 @@ public class PowerUsageCalculator {
 		return hours;
 	}
 
-	/**
-	 * Per WD ('1' = Sunday, '2-7') and hour of day, the tariff rows covering
-	 * that hour, weighted by overlap (overnight rows: frTime > toTime), like
-	 * the FinalRate CTE of the monthly / hourly cost queries. Empty when the
-	 * rates cannot be mapped to 3 bands, an hour has no rate, or no exchange
-	 * rate is configured.
-	 */
-	private Optional<Map<String, List<List<TariffShare>>>> loadTariff() {
+	// tariff schedule (TouTariffService); empty when it is not usable or no
+	// exchange rate is configured
+	private Optional<TouTariff> loadTariff() {
 		UtilityFinanceProperties.Policy policy = financeProperties.getPowerUsage();
 
 		if (policy == null || policy.getExchangeRate() == null || policy.getExchangeRate().signum() == 0
@@ -252,82 +238,7 @@ public class PowerUsageCalculator {
 			return Optional.empty();
 		}
 
-		List<PowerUsageTariffProjection> rows = repo.findTariffs().stream()
-				.filter(row -> row.getWd() != null && row.getFrTime() != null
-						&& row.getToTime() != null && row.getVnd() != null)
-				.toList();
-
-		TreeSet<BigDecimal> rates = new TreeSet<>(Comparator.naturalOrder());
-		rows.forEach(row -> rates.add(row.getVnd()));
-
-		if (rates.size() != 3) {
-			return Optional.empty();
-		}
-
-		Map<String, List<List<TariffShare>>> tariff = new HashMap<>();
-
-		for (String wd : List.of(WD_SUNDAY, WD_OTHER)) {
-			List<List<TariffShare>> byHour = new ArrayList<>(HOURS_PER_DAY);
-
-			for (int hour = 0; hour < HOURS_PER_DAY; hour++) {
-				List<TariffShare> shares = new ArrayList<>();
-				BigDecimal covered = BigDecimal.ZERO;
-
-				for (PowerUsageTariffProjection row : rows) {
-					if (!wd.equals(row.getWd())) {
-						continue;
-					}
-
-					BigDecimal overlap = overlap(row.getFrTime(), row.getToTime(), hour);
-
-					if (overlap.signum() > 0) {
-						shares.add(new TariffShare(band(row.getVnd(), rates), row.getVnd(), overlap));
-						covered = covered.add(overlap);
-					}
-				}
-
-				if (covered.signum() == 0) {
-					return Optional.empty();
-				}
-
-				BigDecimal total = covered;
-				byHour.add(shares.stream()
-						.map(share -> new TariffShare(
-								share.band(),
-								share.vnd(),
-								share.fraction().divide(total, 8, RoundingMode.HALF_UP)))
-						.toList());
-			}
-
-			tariff.put(wd, byHour);
-		}
-
-		return Optional.of(tariff);
-	}
-
-	// hours of [frTime, toTime) inside [hour, hour + 1)
-	private BigDecimal overlap(BigDecimal fr, BigDecimal to, int hour) {
-		BigDecimal hourStart = BigDecimal.valueOf(hour);
-		BigDecimal hourEnd = BigDecimal.valueOf(hour + 1L);
-
-		if (fr.compareTo(to) < 0) {
-			return positive(to.min(hourEnd).subtract(fr.max(hourStart)));
-		}
-
-		if (fr.compareTo(to) > 0) {
-			return positive(hourEnd.subtract(fr.max(hourStart)))
-					.add(positive(to.min(hourEnd).subtract(hourStart)));
-		}
-
-		return BigDecimal.ZERO;
-	}
-
-	private Band band(BigDecimal vnd, TreeSet<BigDecimal> rates) {
-		if (vnd.compareTo(rates.first()) == 0) {
-			return Band.LOW_PEAK;
-		}
-
-		return vnd.compareTo(rates.last()) == 0 ? Band.HIGH_PEAK : Band.NORMAL;
+		return tariffService.load();
 	}
 
 	// ---------------------------------------------------------------------
@@ -335,7 +246,7 @@ public class PowerUsageCalculator {
 	// ---------------------------------------------------------------------
 
 	private List<Supply> supplyMix(Map<LocalDateTime, HourUsage> hours, Window window) {
-		Optional<Map<String, List<List<TariffShare>>>> tariff = loadTariff();
+		Optional<TouTariff> tariff = loadTariff();
 
 		if (tariff.isEmpty()) {
 			return List.of();
@@ -354,15 +265,14 @@ public class PowerUsageCalculator {
 				return;
 			}
 
-			String wd = hourAt.getDayOfWeek() == DayOfWeek.SUNDAY ? WD_SUNDAY : WD_OTHER;
-
 			kwhByBand.merge(Band.SOLAR, usage.solar, BigDecimal::add);
 
-			for (TariffShare share : tariff.get().get(wd).get(hourAt.getHour())) {
+			for (TouShare share : tariff.get().shares(hourAt)) {
 				BigDecimal gridPart = usage.grid.multiply(share.fraction());
+				Band band = Band.valueOf(share.band().name());
 
-				kwhByBand.merge(share.band(), gridPart, BigDecimal::add);
-				vndByBand.merge(share.band(), gridPart.multiply(share.vnd()), BigDecimal::add);
+				kwhByBand.merge(band, gridPart, BigDecimal::add);
+				vndByBand.merge(band, gridPart.multiply(share.vnd()), BigDecimal::add);
 				vndByBand.merge(Band.SOLAR,
 						usage.solar.multiply(share.fraction()).multiply(share.vnd()).multiply(SOLAR_PRICE_FACTOR),
 						BigDecimal::add);

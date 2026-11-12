@@ -107,6 +107,20 @@ public class UtilityCacheConfig {
 						buildNativeCache(500, Duration.ofHours(12))
 				);
 
+		// GET /api/utility/electric-consumption, keyed by month + months:
+		// bill period still running (5 min) / already ended (long TTL)
+		final Cache electricConsumptionCurrentCache =
+				new CaffeineCache(
+						UtilityCacheNames.ELECTRIC_CONSUMPTION_CURRENT,
+						buildNativeCache(20, Duration.ofMinutes(5))
+				);
+
+		final Cache electricConsumptionClosedCache =
+				new CaffeineCache(
+						UtilityCacheNames.ELECTRIC_CONSUMPTION_CLOSED,
+						buildNativeCache(100, Duration.ofHours(12))
+				);
+
 		final SimpleCacheManager cacheManager =
 				new SimpleCacheManager();
 
@@ -123,7 +137,9 @@ public class UtilityCacheConfig {
 						weatherCurrentCache,
 						waterCheckCache,
 						powerUsageCurrentCache,
-						powerUsageClosedCache
+						powerUsageClosedCache,
+						electricConsumptionCurrentCache,
+						electricConsumptionClosedCache
 				)
 		);
 

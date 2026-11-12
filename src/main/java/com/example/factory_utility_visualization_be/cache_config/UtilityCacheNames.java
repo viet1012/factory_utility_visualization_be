@@ -38,6 +38,12 @@ public final class UtilityCacheNames {
 	public static final String POWER_USAGE_CLOSED =
 			"utilityPowerUsageClosed";
 
+	public static final String ELECTRIC_CONSUMPTION_CURRENT =
+			"utilityElectricConsumptionCurrent";
+
+	public static final String ELECTRIC_CONSUMPTION_CLOSED =
+			"utilityElectricConsumptionClosed";
+
 	private UtilityCacheNames() {
 	}
 }

@@ -46,6 +46,12 @@ public class GlobalExceptionHandler {
 		return badRequest(ex.getMessage());
 	}
 
+	@ExceptionHandler(ElectricConsumptionBadRequestException.class)
+	public ResponseEntity<Map<String, Object>> handleElectricConsumptionBadRequest(
+			ElectricConsumptionBadRequestException ex) {
+		return badRequest(ex.getMessage());
+	}
+
 	@ExceptionHandler(WeatherProxyException.class)
 	public ResponseEntity<Map<String, Object>> handleWeatherProxy(WeatherProxyException ex) {
 		return error(ex.getStatus(), ex.getMessage());

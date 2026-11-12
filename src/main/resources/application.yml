@@ -43,6 +43,21 @@ utility:
     power-usage:
       exchange-rate: 26005
       sepzone: 1.075
+  # GET /api/utility/electric-consumption (F2 electric consumption.xlsx):
+  # bill period = [day billing-cutoff-day of M-1, same day of M)
+  # grid $/kWh = VND * sepzone / exchange-rate (sheet C40: 1833*1.075/26005)
+  # solar $/kWh = VND * solar-price-factor * sepzone / exchange-rate (sheet JI36: 1649.7/26316)
+  electric-consumption:
+    billing-cutoff-day: 21
+    default-months: 12
+    max-months: 36
+    solar-price-factor: 0.9
+    grid:
+      exchange-rate: 26005
+      sepzone: 1.075
+    solar:
+      exchange-rate: 26316
+      sepzone: 1.0
   # cate_id -> ANALOG | STATUS | COUNTER for GET /api/utility/series/history
   # (default ANALOG). Bracket keys that contain '_' or Spring strips it.
   signal-kind:
