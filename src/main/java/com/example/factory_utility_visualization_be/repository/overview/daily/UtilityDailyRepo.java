@@ -15,6 +15,13 @@ import com.example.factory_utility_visualization_be.repository.overview.daily.pr
 @Repository
 public interface UtilityDailyRepo extends JpaRepository<DummyEntity, Long> {
 
+	// Same energy rules as every electricity API (README "Tính tiền điện"):
+	// a row holds the energy of the hour ENDING at pick_at -> day of
+	// pick_at - 1h; MTD = 'MTD'; Para rows deduplicated; a meter with any
+	// SOLAR channel is solar; excludedMeters are skipped.
+	// Never write a named parameter (colon + name) inside the SQL text, even
+	// in a SQL comment: Hibernate binds it but the SQL Server driver ignores
+	// the marker inside the comment -> parameter count mismatch.
 	@Query(value = """
         WITH DeviceMap AS (
             SELECT
@@ -45,10 +52,6 @@ public interface UtilityDailyRepo extends JpaRepository<DummyEntity, Long> {
                 ch.box_device_id
         ),
 
-        -- Same energy rules as every electricity API (README "Tính tiền điện"):
-        -- a row holds the energy of the hour ENDING at pick_at -> day of
-        -- pick_at - 1h; MTD = 'MTD'; Para rows deduplicated; a meter with any
-        -- SOLAR channel is solar; :excludedMeters are skipped
         EnergyPara AS (
             SELECT DISTINCT
                 pa.box_device_id,
