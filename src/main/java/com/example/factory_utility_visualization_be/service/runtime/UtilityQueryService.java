@@ -5,7 +5,6 @@ import com.example.factory_utility_visualization_be.config.UtilitySignalKindProp
 import com.example.factory_utility_visualization_be.dto.runtime.ChannelDto;
 import com.example.factory_utility_visualization_be.dto.latest.*;
 import com.example.factory_utility_visualization_be.repository.projection.LatestRecordView;
-import com.example.factory_utility_visualization_be.repository.projection.MinutePointView;
 import com.example.factory_utility_visualization_be.model.F2UtilityScada;
 import com.example.factory_utility_visualization_be.model.F2UtilityScadaChannel;
 import com.example.factory_utility_visualization_be.repository.F2UtilityParaHistoryRepo;
@@ -13,7 +12,6 @@ import com.example.factory_utility_visualization_be.service.util.FacilityValidat
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
-import java.time.LocalDateTime;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -330,28 +328,4 @@ public class UtilityQueryService {
 				secondNumber
 		);
 	}
-
-
-	public List<MinutePointView> getSeriesByMinute(LocalDateTime fromTs, LocalDateTime toTs, String facId,
-	                                               String cate,
-	                                               String boxDeviceId,
-	                                               String plcAddress,
-	                                               List<String> cateIds) {
-		String normalizedFac = FacilityValidator.normalizeOptionalOrNull(facId);
-
-		// normalize cateIds
-		List<String> cateIdsNorm = (cateIds == null) ? List.of() : cateIds.stream().filter(s -> s != null && !s.isBlank()).map(String::trim).toList();
-
-		int useCateIds = cateIdsNorm.isEmpty() ? 0 : 1;
-
-		// SQL Server nativeQuery + IN (:cateIds) thường không thích list rỗng
-		List<String> safeCateIds = (useCateIds == 1) ? cateIdsNorm : List.of("__NO_CATE__");
-		return historyRepo.seriesByMinuteLast(fromTs, toTs, blankToNull(boxDeviceId), blankToNull(plcAddress),
-
-				normalizedFac,          // ✅ NEW
-				blankToNull(cate),      // ✅ NEW
-
-				useCateIds, safeCateIds);
-	}
-
 }

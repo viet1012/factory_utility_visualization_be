@@ -21,7 +21,7 @@ import java.util.Map;
  *
  * PowerUsageBadRequestException is thrown only by /power-usage (same reason).
  *
- * WeatherProxyException is thrown only by /weather and carries its own status.
+ * ElectricConsumptionBadRequestException is thrown only by /electric-consumption (same reason).
  */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -52,16 +52,8 @@ public class GlobalExceptionHandler {
 		return badRequest(ex.getMessage());
 	}
 
-	@ExceptionHandler(WeatherProxyException.class)
-	public ResponseEntity<Map<String, Object>> handleWeatherProxy(WeatherProxyException ex) {
-		return error(ex.getStatus(), ex.getMessage());
-	}
-
 	private ResponseEntity<Map<String, Object>> badRequest(String message) {
-		return error(HttpStatus.BAD_REQUEST, message);
-	}
-
-	private ResponseEntity<Map<String, Object>> error(HttpStatus status, String message) {
+		HttpStatus status = HttpStatus.BAD_REQUEST;
 		return ResponseEntity
 				.status(status)
 				.body(

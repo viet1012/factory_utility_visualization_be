@@ -79,13 +79,6 @@ public class UtilityCacheConfig {
 						buildNativeCache(1, Duration.ofMinutes(5))
 				);
 
-		// OpenWeatherMap current weather, keyed by lat/lon rounded to 2 decimals
-		final Cache weatherCurrentCache =
-				new CaffeineCache(
-						UtilityCacheNames.WEATHER_CURRENT,
-						buildNativeCache(100, Duration.ofMinutes(10))
-				);
-
 		// GET /api/utility/water-check, single 'all' entry
 		final Cache waterCheckCache =
 				new CaffeineCache(
@@ -134,7 +127,6 @@ public class UtilityCacheConfig {
 						solarHourlyHistoryCache,
 						alertThresholdCache,
 						rawHistoryOldestCache,
-						weatherCurrentCache,
 						waterCheckCache,
 						powerUsageCurrentCache,
 						powerUsageClosedCache,

@@ -2,13 +2,11 @@ package com.example.factory_utility_visualization_be.repository;
 
 
 import com.example.factory_utility_visualization_be.repository.projection.LatestRecordView;
-import com.example.factory_utility_visualization_be.repository.projection.MinutePointView;
 import com.example.factory_utility_visualization_be.model.F2UtilityParaHistory;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
-import java.time.LocalDateTime;
 import java.util.List;
 
 public interface F2UtilityParaHistoryRepo extends JpaRepository<F2UtilityParaHistory, Long> {
@@ -100,61 +98,5 @@ public interface F2UtilityParaHistoryRepo extends JpaRepository<F2UtilityParaHis
 			@Param("useCateIds") int useCateIds,
 			@Param("cateIds") List<String> cateIds
 	);
-
-
-	@Query(value = """
-			WITH t AS (
-			    SELECT
-			        DATEADD(MINUTE, DATEDIFF(MINUTE, 0, h.recorded_at), 0) AS ts,
-			        h.recorded_at   AS sampleRecordedAt,
-			        h.box_device_id AS boxDeviceId,
-			        h.plc_address   AS plcAddress,
-			        p.cate_id       AS cateId,
-			        p.name_en       AS nameEn,
-			        p.name_vi       AS nameVi,
-			        p.unit          AS unit,      -- ✅ NEW
-			        h.value         AS value,
-			        s.fac           AS fac,
-			        ch.cate         AS cate,
-			        ROW_NUMBER() OVER (
-			            PARTITION BY
-			                h.box_device_id,
-			                h.plc_address,
-			                DATEADD(MINUTE, DATEDIFF(MINUTE, 0, h.recorded_at), 0)
-			            ORDER BY h.recorded_at DESC, h.id DESC
-			        ) rn
-			    FROM f2_utility_para_history h
-			    LEFT JOIN f2_utility_para p
-			           ON p.box_device_id = h.box_device_id
-			          AND p.plc_address   = h.plc_address
-			    LEFT JOIN f2_utility_scada_channel ch
-			           ON ch.box_device_id = h.box_device_id
-			    LEFT JOIN f2_utility_scada s
-			           ON s.scada_id = ch.scada_id
-			    WHERE
-			        h.recorded_at >= :fromTs
-			        AND h.recorded_at <  :toTs
-			        AND (:boxDeviceId IS NULL OR h.box_device_id = :boxDeviceId)
-			        AND (:plcAddress  IS NULL OR h.plc_address   = :plcAddress)
-			        AND (:fac IS NULL OR s.fac = :fac)
-			        AND (:cate IS NULL OR ch.cate = :cate)
-			        AND (:useCateIds = 0 OR p.cate_id IN (:cateIds))
-			)
-			SELECT ts, sampleRecordedAt, value, boxDeviceId, plcAddress, cateId, nameEn, nameVi, unit, fac, cate
-			FROM t
-			WHERE rn = 1
-			ORDER BY ts
-			""", nativeQuery = true)
-	List<MinutePointView> seriesByMinuteLast(
-			@Param("fromTs") LocalDateTime fromTs,
-			@Param("toTs") LocalDateTime toTs,
-			@Param("boxDeviceId") String boxDeviceId,
-			@Param("plcAddress") String plcAddress,
-			@Param("fac") String fac,
-			@Param("cate") String cate,
-			@Param("useCateIds") int useCateIds,
-			@Param("cateIds") List<String> cateIds
-	);
-
 }
 

@@ -54,8 +54,8 @@ import java.util.stream.Collectors;
  * HOURLY_SNAPSHOT, manual 1h falls back to HOURLY_SNAPSHOT and manual
  * sub-hour buckets are rejected.
  *
- * bucket=1d -> DAILY (F2_Utility_Para_History_Main), same rules as
- * /daily-signals, range up to 62 days; never chosen by auto.
+ * bucket=1d -> DAILY (F2_Utility_Para_History_Main), range up to 62 days;
+ * never chosen by auto.
  *
  * boxDeviceId may be repeated or CSV (max 30 boxes, max 300 signals in
  * total); each box is queried on its own so the box_device_id seek is kept.
