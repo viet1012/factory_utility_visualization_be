@@ -19,9 +19,7 @@ public interface UtilityHourlyRepo
 	// ============================================================
 	// SHARED TARIFF-RATE CTE
 	//
-	// Identical in both findHourlyElectricityCompare and
-	// findHourlySolarCompare — extracted once here so the two queries
-	// cannot drift apart textually. Produces FinalRate(wd, hour_number,
+	// Used by findHourlyElectricityCompare. Produces FinalRate(wd, hour_number,
 	// vnd_rate): the VND/kWh rate for each weekday-bucket/hour-of-day,
 	// weighted by how many minutes of that hour each F2_Utility_Cost_Master
 	// tariff row overlaps, including overnight (frTime > toTime) tariffs.
@@ -30,9 +28,8 @@ public interface UtilityHourlyRepo
 	// ============================================================
 	// SHARED HOUR-GENERATOR CTE
 	//
-	// Identical in both findHourlyElectricityCompare and
-	// findHourlySolarCompare — generates the fixed hour_number 0..23 axis
-	// used to join against tariff rows.
+	// Used by findHourlyElectricityCompare — generates the fixed
+	// hour_number 0..23 axis used to join against tariff rows.
 	// ============================================================
 
 	String HOURS_0_23_CTE = """
@@ -402,214 +399,6 @@ public interface UtilityHourlyRepo
         hour_number
     """, nativeQuery = true)
 	List<HourlyEnergyCompareProjection> findHourlyElectricityCompare(
-			@Param("fac") String fac,
-			@Param("fromTime") LocalDateTime fromTime,
-			@Param("toTime") LocalDateTime toTime,
-			@Param("todayDate") LocalDateTime todayDate,
-			@Param("yesterdayDate") LocalDateTime yesterdayDate,
-			@Param("nameEn") String nameEn,
-			@Param("exchange") BigDecimal exchange,
-			@Param("sepzone") BigDecimal sepzone
-	);
-
-
-	// ============================================================
-	// 2. SOLAR
-	//
-	// Giá Solar = giá điện hiện tại - 17%
-	//           = giá điện hiện tại * 0.83
-	// ============================================================
-
-	@Query(value = HOURS_0_23_CTE + """
-    DeviceMap AS (
-        SELECT
-            ch.box_device_id,
-
-            MAX(sc.fac) AS fac,
-
-            MAX(
-                CASE
-                    WHEN UPPER(
-                        LTRIM(
-                            RTRIM(
-                                ISNULL(ch.box_id, '')
-                            )
-                        )
-                    ) = 'SOLAR'
-                    THEN 1
-                    ELSE 0
-                END
-            ) AS is_solar
-
-        FROM dbo.F2_Utility_Scada_Channel ch
-
-        INNER JOIN dbo.F2_Utility_Scada sc
-            ON sc.scada_id = ch.scada_id
-
-        GROUP BY
-            ch.box_device_id
-    ),
-
-    SolarBase AS (
-        SELECT
-            DATEPART(
-                HOUR,
-                hi.pick_at
-            ) AS hour_number,
-
-            CAST(
-                hi.pick_at AS DATE
-            ) AS record_date,
-
-            CAST(
-                hi.[value]
-                AS DECIMAL(19,6)
-            ) AS solar_value
-
-        FROM dbo.F2_Utility_Para_History_Main hi
-
-        INNER JOIN dbo.F2_Utility_Para pa
-            ON pa.box_device_id = hi.box_device_id
-           AND pa.plc_address = hi.plc_address
-
-        INNER JOIN DeviceMap dm
-            ON dm.box_device_id = hi.box_device_id
-
-        WHERE
-            hi.pick_at >= :fromTime
-            AND hi.pick_at < :toTime
-
-            AND hi.[value] > 0
-
-            AND pa.name_en = :nameEn
-
-            -- CHỈ SOLAR
-            AND dm.is_solar = 1
-
-            AND (
-                UPPER(:fac) = 'KVH'
-                OR UPPER(dm.fac) = UPPER(:fac)
-            )
-
-            AND ISNULL(hi.MTD, '') = 'MTD'
-    ),
-
-    HourlySolar AS (
-        SELECT
-            hour_number,
-            record_date,
-
-            CASE
-                WHEN (
-                    DATEDIFF(
-                        DAY,
-                        CAST('19000101' AS DATE),
-                        record_date
-                    ) % 7
-                ) = 6
-                THEN '1'
-
-                ELSE '2-7'
-            END AS wd,
-
-            SUM(
-                solar_value
-            ) AS hour_value
-
-        FROM SolarBase
-
-        GROUP BY
-            hour_number,
-            record_date
-    ),
-
-    """ + HOUR_TARIFF_RATE_CTE + """
-    CostMapped AS (
-        SELECT
-            s.hour_number,
-            s.record_date,
-            s.hour_value,
-            r.vnd_rate
-
-        FROM HourlySolar s
-
-        LEFT JOIN FinalRate r
-            ON r.wd = s.wd
-           AND r.hour_number = s.hour_number
-    )
-
-    SELECT
-        hour_number AS scaleHour,
-
-        CAST(
-            SUM(
-                CASE
-                    WHEN record_date =
-                         CAST(:yesterdayDate AS DATE)
-                    THEN hour_value
-                END
-            )
-            AS DECIMAL(19,4)
-        ) AS yesterday,
-
-        CAST(
-            SUM(
-                CASE
-                    WHEN record_date =
-                         CAST(:todayDate AS DATE)
-                    THEN hour_value
-                END
-            )
-            AS DECIMAL(19,4)
-        ) AS today,
-
-        CAST(
-            SUM(
-                CASE
-                    WHEN record_date =
-                         CAST(:yesterdayDate AS DATE)
-                    THEN
-                        hour_value
-                        * ISNULL(vnd_rate, 0)
-                        * CAST(0.83 AS DECIMAL(19,6))
-                END
-            )
-            /
-            NULLIF(:exchange, 0)
-            *
-            :sepzone
-
-            AS DECIMAL(19,4)
-        ) AS yesterdayUsd,
-
-        CAST(
-            SUM(
-                CASE
-                    WHEN record_date =
-                         CAST(:todayDate AS DATE)
-                    THEN
-                        hour_value
-                        * ISNULL(vnd_rate, 0)
-                        * CAST(0.83 AS DECIMAL(19,6))
-                END
-            )
-            /
-            NULLIF(:exchange, 0)
-            *
-            :sepzone
-
-            AS DECIMAL(19,4)
-        ) AS todayUsd
-
-    FROM CostMapped
-
-    GROUP BY
-        hour_number
-
-    ORDER BY
-        hour_number
-    """, nativeQuery = true)
-	List<HourlyEnergyCompareProjection> findHourlySolarCompare(
 			@Param("fac") String fac,
 			@Param("fromTime") LocalDateTime fromTime,
 			@Param("toTime") LocalDateTime toTime,

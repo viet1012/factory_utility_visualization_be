@@ -10,10 +10,8 @@ public record UtilityHourlyDashboardDto(
 		LocalDateTime generatedAt,
 
 		// Điện tiêu thụ, không bao gồm Solar
+		// (solar theo giờ: GET /api/solar/hourly)
 		List<HourlyCompareDto> electricity,
-
-		// Solar
-		List<HourlyCompareDto> solar,
 
 		// Water
 		List<HourlyTempCompareDto> water,

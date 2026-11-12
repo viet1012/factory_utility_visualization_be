@@ -107,31 +107,7 @@ public class UtilityHourlyService {
 
 
 		// ========================================================
-		// 2. SOLAR
-		//
-		// Solar money:
-		//
-		// electricity rate * 83%
-		//
-		// Query repository đã xử lý phần -17%.
-		// ========================================================
-
-		final List<HourlyEnergyCompareProjection>
-				solarRows =
-				repo.findHourlySolarCompare(
-						fac,
-						fromTime,
-						toTime,
-						todayDate,
-						yesterdayDate,
-						metric,
-						safeExchange,
-						safeSepzone
-				);
-
-
-		// ========================================================
-		// 3. SENSOR
+		// 2. SENSOR
 		// ========================================================
 
 		final List<HourlySensorCompareProjection>
@@ -154,14 +130,6 @@ public class UtilityHourlyService {
 
 
 		// ========================================================
-		// MAPPING SOLAR
-		// ========================================================
-
-		final List<HourlyCompareDto> solar =
-				mapEnergy(solarRows);
-
-
-		// ========================================================
 		// MAPPING WATER / AIR
 		// ========================================================
 
@@ -178,7 +146,6 @@ public class UtilityHourlyService {
 				LocalDateTime.now(),
 
 				List.copyOf(electricity),
-				List.copyOf(solar),
 
 				List.copyOf(sensorSplit.water()),
 				List.copyOf(sensorSplit.air())
@@ -256,10 +223,6 @@ public class UtilityHourlyService {
 
 	// ============================================================
 	// MAPPING ENERGY
-	//
-	// Dùng chung cho:
-	// - electricity
-	// - solar
 	// ============================================================
 
 	private List<HourlyCompareDto> mapEnergy(
