@@ -9,8 +9,8 @@ import com.example.factory_utility_visualization_be.dto.overview.electric.Electr
 import com.example.factory_utility_visualization_be.dto.overview.electric.ElectricConsumptionResponseDto.Scope;
 import com.example.factory_utility_visualization_be.dto.overview.electric.ElectricConsumptionResponseDto.UnitPrices;
 import com.example.factory_utility_visualization_be.dto.overview.electric.ElectricConsumptionResponseDto.Values;
-import com.example.factory_utility_visualization_be.repository.runtime.PowerUsageRepo;
-import com.example.factory_utility_visualization_be.repository.runtime.projection.PowerUsageHourProjection;
+import com.example.factory_utility_visualization_be.repository.overview.electric.ElectricConsumptionRepo;
+import com.example.factory_utility_visualization_be.repository.overview.electric.projection.ElectricConsumptionHourProjection;
 import com.example.factory_utility_visualization_be.service.runtime.TouTariffService;
 import com.example.factory_utility_visualization_be.service.runtime.TouTariffService.TouBand;
 import com.example.factory_utility_visualization_be.service.runtime.TouTariffService.TouShare;
@@ -29,6 +29,7 @@ import java.time.format.DateTimeFormatter;
 import java.time.format.TextStyle;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.List;
@@ -39,13 +40,19 @@ import java.util.Set;
 
 /**
  * Builds GET /api/utility/electric-consumption from the hourly History_Main
- * energy (PowerUsageRepo.findHourlyEnergy: fac x SOLAR flag x hour) and the
- * time-of-use tariff of F2_Utility_Cost_Master.
+ * energy (ElectricConsumptionRepo.findHourlyEnergy: fac x SOLAR flag x hour x
+ * outlier flag) and the time-of-use tariff of F2_Utility_Cost_Master.
+ *
+ * Outlier meter-hours (cumulative / catch-up values, see the repo) are not
+ * counted: that meter-hour is treated as missing, so the day becomes
+ * partial, and the dropped kWh is reported as excludedMwh.
  *
  * The meters in the DB only give hourly kWh, so the Normal / High-peak /
  * Low-peak split of the sheet is rebuilt by putting each hour (or part of an
  * hour) into the band of its tariff time window. Grid = devices without any
- * SOLAR channel, solar = SOLAR devices (same split as /power-usage).
+ * SOLAR channel, solar = SOLAR devices (same split as /power-usage); the
+ * split uses the CURRENT channel config, so a solar meter that had no SOLAR
+ * channel in the past is counted as grid for that time.
  */
 @Service
 @RequiredArgsConstructor
@@ -55,21 +62,21 @@ public class ElectricConsumptionCalculator {
 
 	private static final String ENERGY_NAME = "Total Energy Consumption";
 
-	// no purpose cabinet needed; purpose_key always contains '|', so '' never matches
-	private static final List<String> NO_PURPOSE_KEYS = List.of("");
-
 	private static final BigDecimal THOUSAND = BigDecimal.valueOf(1000);
 
 	private static final int OUT_SCALE = 3;
 
-	private final PowerUsageRepo repo;
+	private static final int HOURS_PER_DAY = 24;
+
+	private final ElectricConsumptionRepo repo;
 	private final TouTariffService tariffService;
 	private final ElectricConsumptionProperties properties;
 
 	// the 3 charts of the sheet: TTL KVH, Fac A&B (Trans No.2), Fac C (Trans No.1)
 	enum ScopeDef {
 		KVH("TTL KVH: A&B + C", Set.of()),
-		FAC_AB("Fac A&B", Set.of("FAC_A", "FAC_B")),
+		// FAC_AB = meters moved to Trans No.2 by meter-scope.fac-ab
+		FAC_AB("Fac A&B", Set.of("FAC_A", "FAC_B", "FAC_AB")),
 		FAC_C("Fac C", Set.of("FAC_C"));
 
 		private final String displayName;
@@ -100,6 +107,12 @@ public class ElectricConsumptionCalculator {
 		private BigDecimal grid = BigDecimal.ZERO;
 		private BigDecimal solar = BigDecimal.ZERO;
 		private BigDecimal solarUsd = BigDecimal.ZERO;
+		private boolean hasGrid;
+		private boolean hasSolar;
+		// grid meters reporting in hour h of the day (meaningful for one day only)
+		private final int[] gridMeters = new int[HOURS_PER_DAY];
+		// kWh dropped as outliers
+		private BigDecimal excluded = BigDecimal.ZERO;
 
 		private Acc() {
 			for (TouBand band : TouBand.values()) {
@@ -114,6 +127,29 @@ public class ElectricConsumptionCalculator {
 			grid = grid.add(other.grid);
 			solar = solar.add(other.solar);
 			solarUsd = solarUsd.add(other.solarUsd);
+			hasGrid |= other.hasGrid;
+			hasSolar |= other.hasSolar;
+			excluded = excluded.add(other.excluded);
+
+			for (int h = 0; h < HOURS_PER_DAY; h++) {
+				gridMeters[h] += other.gridMeters[h];
+			}
+		}
+
+		private boolean hasData() {
+			return hasGrid || hasSolar;
+		}
+
+		private int hoursWithData() {
+			return (int) Arrays.stream(gridMeters).filter(count -> count > 0).count();
+		}
+
+		private int meterHours() {
+			return Arrays.stream(gridMeters).sum();
+		}
+
+		private int maxMeters() {
+			return Arrays.stream(gridMeters).max().orElse(0);
 		}
 
 		private BigDecimal gridUsd() {
@@ -121,8 +157,22 @@ public class ElectricConsumptionCalculator {
 		}
 	}
 
-	// USD per kWh per VND of tariff
-	private record Pricing(TouTariff tariff, BigDecimal gridFactor, BigDecimal solarFactor) {
+	// USD per (kWh x VND of tariff); vndOverride = configured VND/kWh per band
+	private record Pricing(
+			TouTariff tariff,
+			BigDecimal gridFactor,
+			Map<TouBand, BigDecimal> solarFactor,
+			Map<TouBand, BigDecimal> vndOverride
+	) {
+		BigDecimal vnd(TouShare share) {
+			return vndOverride.getOrDefault(share.band(), share.vnd());
+		}
+
+		Optional<BigDecimal> weekdayVnd(TouBand band) {
+			return vndOverride.containsKey(band)
+					? Optional.of(vndOverride.get(band))
+					: tariff.weekdayRate(band);
+		}
 	}
 
 	public Period period(YearMonth month) {
@@ -136,8 +186,13 @@ public class ElectricConsumptionCalculator {
 		return day.getDayOfMonth() >= properties.getBillingCutoffDay() ? month.plusMonths(1) : month;
 	}
 
-	@Transactional(readOnly = true)
+	// hour offset from utility.electric-consumption.hour-offset
 	public ElectricConsumptionResponseDto calculate(YearMonth month, int months) {
+		return calculate(month, months, properties.getHourOffset());
+	}
+
+	@Transactional(readOnly = true)
+	public ElectricConsumptionResponseDto calculate(YearMonth month, int months, int hourOffset) {
 		LocalDateTime lastFullHour = LocalDateTime.now(APP_ZONE).truncatedTo(ChronoUnit.HOURS);
 
 		Period current = period(month);
@@ -148,11 +203,17 @@ public class ElectricConsumptionCalculator {
 		}
 
 		LocalDateTime queryFrom = (history.isEmpty() ? current : history.get(0)).from().atStartOfDay();
+		LocalDate historyStart = properties.getHistoryStartDate();
+
+		// nothing before historyStartDate is loaded, so those days / periods are null
+		if (historyStart != null && queryFrom.isBefore(historyStart.atStartOfDay())) {
+			queryFrom = historyStart.atStartOfDay();
+		}
 		LocalDateTime currentEnd = current.to().atStartOfDay();
 		LocalDateTime dataUntil = currentEnd.isAfter(lastFullHour) ? lastFullHour : currentEnd;
 
 		Optional<Pricing> pricing = pricing();
-		Map<ScopeDef, Map<LocalDate, Acc>> days = loadDays(queryFrom, dataUntil, pricing);
+		Map<ScopeDef, Map<LocalDate, Acc>> days = loadDays(queryFrom, dataUntil, hourOffset, pricing);
 
 		List<Scope> scopes = new ArrayList<>(ScopeDef.values().length);
 
@@ -165,6 +226,10 @@ public class ElectricConsumptionCalculator {
 				new BillPeriod(label(current), current.from().toString(), current.to().toString(), current.days()),
 				dataUntil.isAfter(current.from().atStartOfDay()) ? formatTs(dataUntil) : null,
 				pricing.isPresent(),
+				properties.getMinCoveragePct(),
+				hourOffset,
+				historyStart == null ? null : historyStart.toString(),
+				meterKeys(properties.getExcludedMeters()).stream().filter(key -> !key.isEmpty()).toList(),
 				unitPrices(pricing),
 				scopes
 		);
@@ -177,6 +242,7 @@ public class ElectricConsumptionCalculator {
 	private Map<ScopeDef, Map<LocalDate, Acc>> loadDays(
 			LocalDateTime from,
 			LocalDateTime to,
+			int offset,
 			Optional<Pricing> pricing
 	) {
 		Map<ScopeDef, Map<LocalDate, Acc>> days = new EnumMap<>(ScopeDef.class);
@@ -189,18 +255,28 @@ public class ElectricConsumptionCalculator {
 			return days;
 		}
 
-		// rows are stamped at the end of their hour
-		List<PowerUsageHourProjection> rows = repo.findHourlyEnergy(
-				ENERGY_NAME, NO_PURPOSE_KEYS, from.plusHours(1), to.plusHours(1));
+		// rows are stamped at the end of their hour; hourOffset shifts every
+		// hour, so the query window is shifted the other way
+		ElectricConsumptionProperties.MeterScope meterScope = properties.getMeterScope();
+		List<ElectricConsumptionHourProjection> rows = repo.findHourlyEnergy(
+				ENERGY_NAME, from.plusHours(1L - offset), to.plusHours(1L - offset),
+				properties.getOutlierRatio(), properties.getSolarOutlierRatio(), properties.getOutlierMinKwh(),
+				meterKeys(properties.getExcludedMeters()),
+				meterKeys(meterScope == null ? null : meterScope.getFacAb()),
+				meterKeys(meterScope == null ? null : meterScope.getFacC()));
 
-		for (PowerUsageHourProjection row : rows) {
-			LocalDateTime hourAt = row.getHourAt();
-
-			if (hourAt == null || row.getKwh() == null || hourAt.isBefore(from) || !hourAt.isBefore(to)) {
+		for (ElectricConsumptionHourProjection row : rows) {
+			if (row.getHourAt() == null || row.getKwh() == null) {
 				continue;
 			}
 
-			Acc hour = hourAcc(row, pricing);
+			LocalDateTime hourAt = row.getHourAt().plusHours(offset);
+
+			if (hourAt.isBefore(from) || !hourAt.isBefore(to)) {
+				continue;
+			}
+
+			Acc hour = hourAcc(row, hourAt, pricing);
 			String fac = row.getFac() == null ? "" : row.getFac().trim().toUpperCase(Locale.ROOT);
 			LocalDate day = hourAt.toLocalDate();
 
@@ -214,28 +290,53 @@ public class ElectricConsumptionCalculator {
 		return days;
 	}
 
+	// trimmed upper-case box_device_id for the SQL IN lists; List.of("") when
+	// empty (an empty IN list is invalid SQL, '' matches no meter)
+	static List<String> meterKeys(List<String> meters) {
+		if (meters == null) {
+			return List.of("");
+		}
+
+		List<String> keys = meters.stream()
+				.filter(meter -> meter != null && !meter.isBlank())
+				.map(meter -> meter.trim().toUpperCase(Locale.ROOT))
+				.distinct()
+				.toList();
+
+		return keys.isEmpty() ? List.of("") : keys;
+	}
+
 	// one History_Main row split into tariff bands
-	private Acc hourAcc(PowerUsageHourProjection row, Optional<Pricing> pricing) {
+	private Acc hourAcc(ElectricConsumptionHourProjection row, LocalDateTime hourAt, Optional<Pricing> pricing) {
 		Acc acc = new Acc();
 		BigDecimal kwh = row.getKwh();
 		boolean solar = row.getSolar() != null && row.getSolar() == 1;
 
+		// dropped: counts neither as energy nor as a reporting meter-hour
+		if (row.getOutlier() != null && row.getOutlier() == 1) {
+			acc.excluded = kwh;
+			return acc;
+		}
+
 		if (solar) {
 			acc.solar = kwh;
+			acc.hasSolar = true;
 		} else {
 			acc.grid = kwh;
+			acc.hasGrid = true;
+			acc.gridMeters[hourAt.getHour()] = row.getDevices() == null ? 1 : row.getDevices();
 		}
 
 		if (pricing.isEmpty()) {
 			return acc;
 		}
 
-		for (TouShare share : pricing.get().tariff().shares(row.getHourAt())) {
+		for (TouShare share : pricing.get().tariff().shares(hourAt)) {
 			BigDecimal part = kwh.multiply(share.fraction());
-			BigDecimal vnd = part.multiply(share.vnd());
+			BigDecimal vnd = part.multiply(pricing.get().vnd(share));
 
 			if (solar) {
-				acc.solarUsd = acc.solarUsd.add(vnd.multiply(pricing.get().solarFactor()));
+				acc.solarUsd = acc.solarUsd.add(vnd.multiply(pricing.get().solarFactor().get(share.band())));
 			} else {
 				acc.bandKwh.merge(share.band(), part, BigDecimal::add);
 				acc.bandUsd.merge(share.band(), vnd.multiply(pricing.get().gridFactor()), BigDecimal::add);
@@ -246,25 +347,48 @@ public class ElectricConsumptionCalculator {
 	}
 
 	private Optional<Pricing> pricing() {
-		Optional<BigDecimal> gridFactor = factor(properties.getGrid(), BigDecimal.ONE);
-		Optional<BigDecimal> solarFactor = factor(properties.getSolar(), properties.getSolarPriceFactor());
+		Optional<BigDecimal> gridFactor = factor(properties.getGrid());
+		Optional<BigDecimal> solarBase = factor(properties.getSolar());
+		ElectricConsumptionProperties.SolarPriceFactor solarPrice = properties.getSolarPriceFactor();
 
-		if (gridFactor.isEmpty() || solarFactor.isEmpty()) {
+		if (gridFactor.isEmpty() || solarBase.isEmpty() || solarPrice == null
+				|| solarPrice.getNormal() == null || solarPrice.getHighPeak() == null
+				|| solarPrice.getLowPeak() == null) {
 			return Optional.empty();
 		}
 
-		return tariffService.load().map(tariff -> new Pricing(tariff, gridFactor.get(), solarFactor.get()));
+		Map<TouBand, BigDecimal> solarFactor = new EnumMap<>(TouBand.class);
+		solarFactor.put(TouBand.NORMAL, solarBase.get().multiply(solarPrice.getNormal()));
+		solarFactor.put(TouBand.HIGH_PEAK, solarBase.get().multiply(solarPrice.getHighPeak()));
+		solarFactor.put(TouBand.LOW_PEAK, solarBase.get().multiply(solarPrice.getLowPeak()));
+
+		Map<TouBand, BigDecimal> vndOverride = new EnumMap<>(TouBand.class);
+		ElectricConsumptionProperties.BandPrices prices = properties.getBandPrices();
+
+		if (prices != null) {
+			putIfSet(vndOverride, TouBand.NORMAL, prices.getNormal());
+			putIfSet(vndOverride, TouBand.HIGH_PEAK, prices.getHighPeak());
+			putIfSet(vndOverride, TouBand.LOW_PEAK, prices.getLowPeak());
+		}
+
+		return tariffService.load()
+				.map(tariff -> new Pricing(tariff, gridFactor.get(), solarFactor, vndOverride));
 	}
 
-	// multiplier * sepzone / exchangeRate
-	private Optional<BigDecimal> factor(UtilityFinanceProperties.Policy policy, BigDecimal multiplier) {
+	private void putIfSet(Map<TouBand, BigDecimal> map, TouBand band, BigDecimal value) {
+		if (value != null) {
+			map.put(band, value);
+		}
+	}
+
+	// sepzone / exchangeRate
+	private Optional<BigDecimal> factor(UtilityFinanceProperties.Policy policy) {
 		if (policy == null || policy.getExchangeRate() == null || policy.getExchangeRate().signum() == 0
-				|| policy.getSepzone() == null || multiplier == null) {
+				|| policy.getSepzone() == null) {
 			return Optional.empty();
 		}
 
-		return Optional.of(multiplier.multiply(policy.getSepzone())
-				.divide(policy.getExchangeRate(), 12, RoundingMode.HALF_UP));
+		return Optional.of(policy.getSepzone().divide(policy.getExchangeRate(), 12, RoundingMode.HALF_UP));
 	}
 
 	// ---------------------------------------------------------------------
@@ -282,8 +406,32 @@ public class ElectricConsumptionCalculator {
 		List<MonthPoint> monthly = new ArrayList<>(history.size());
 
 		for (Period period : history) {
-			Acc sum = sumDays(days, period.from(), period.to());
-			BigDecimal divisor = BigDecimal.valueOf(period.days());
+			Acc complete = new Acc();
+			int meters = meters(days, period);
+			int daysWithData = 0;
+			int completeDays = 0;
+			BigDecimal excluded = BigDecimal.ZERO;
+
+			for (LocalDate day = period.from(); day.isBefore(period.to()); day = day.plusDays(1)) {
+				Acc acc = days.get(day);
+
+				if (acc != null) {
+					excluded = excluded.add(acc.excluded);
+				}
+
+				if (acc == null || !acc.hasData()) {
+					continue;
+				}
+
+				daysWithData++;
+
+				if (isComplete(day, acc, dataUntil, expectedMeters(days, day))) {
+					complete.add(acc);
+					completeDays++;
+				}
+			}
+
+			BigDecimal divisor = BigDecimal.valueOf(Math.max(completeDays, 1));
 
 			monthly.add(new MonthPoint(
 					period.month().toString(),
@@ -291,48 +439,134 @@ public class ElectricConsumptionCalculator {
 					period.from().toString(),
 					period.to().toString(),
 					period.days(),
-					mwh(sum, divisor, priced),
-					kusd(sum, divisor, priced)
+					meters,
+					daysWithData,
+					completeDays,
+					completeDays < period.days(),
+					excludedMwh(excluded),
+					completeDays == 0 ? null : mwh(complete, divisor, priced),
+					completeDays == 0 ? null : kusd(complete, divisor, priced)
 			));
 		}
 
 		List<DayPoint> daily = new ArrayList<>(current.days());
 		Acc total = new Acc();
+		Acc complete = new Acc();
+		int meters = meters(days, current);
 		int elapsedDays = 0;
+		int daysWithData = 0;
+		int completeDays = 0;
 
 		for (LocalDate day = current.from(); day.isBefore(current.to()); day = day.plusDays(1)) {
 			String weekday = day.getDayOfWeek().getDisplayName(TextStyle.SHORT, Locale.ENGLISH);
+			Acc acc = days.get(day);
 
-			if (!day.atStartOfDay().isBefore(dataUntil)) {
-				daily.add(new DayPoint(day.toString(), weekday, null, null));
+			if (day.atStartOfDay().isBefore(dataUntil)) {
+				elapsedDays++;
+			}
+
+			if (acc == null || !acc.hasData()) {
+				// only outliers on that day: it has data, none of it usable
+				boolean onlyOutliers = acc != null && acc.excluded.signum() > 0;
+
+				int dayMeters = expectedMeters(days, day);
+
+				daily.add(new DayPoint(day.toString(), weekday, 0, dayMeters,
+						onlyOutliers && dayMeters > 0 ? BigDecimal.ZERO.setScale(1) : null,
+						onlyOutliers, onlyOutliers ? excludedMwh(acc.excluded) : null, null, null));
 				continue;
 			}
 
-			Acc acc = days.getOrDefault(day, new Acc());
+			int dayMeters = expectedMeters(days, day);
+			boolean dayComplete = isComplete(day, acc, dataUntil, dayMeters);
+
 			total.add(acc);
-			elapsedDays++;
+			daysWithData++;
+
+			if (dayComplete) {
+				complete.add(acc);
+				completeDays++;
+			}
 
 			daily.add(new DayPoint(
 					day.toString(),
 					weekday,
+					acc.hoursWithData(),
+					dayMeters,
+					coveragePct(acc, dayMeters),
+					!dayComplete,
+					excludedMwh(acc.excluded),
 					mwh(acc, BigDecimal.ONE, priced),
 					kusd(acc, BigDecimal.ONE, priced)
 			));
 		}
 
-		BigDecimal elapsed = BigDecimal.valueOf(Math.max(elapsedDays, 1));
+		BigDecimal divisor = BigDecimal.valueOf(Math.max(completeDays, 1));
 
 		return new Scope(
 				def.name(),
 				def.displayName,
 				monthly,
 				daily,
+				meters,
+				elapsedDays,
+				daysWithData,
+				completeDays,
 				mwh(total, BigDecimal.ONE, priced),
 				kusd(total, BigDecimal.ONE, priced),
-				elapsedDays == 0 ? null : mwh(total, elapsed, priced),
-				elapsedDays == 0 ? null : kusd(total, elapsed, priced),
-				elapsedDays
+				completeDays == 0 ? null : mwh(complete, divisor, priced),
+				completeDays == 0 ? null : kusd(complete, divisor, priced)
 		);
+	}
+
+	// day is over and meter-hour coverage >= minCoveragePct
+	private boolean isComplete(LocalDate day, Acc acc, LocalDateTime dataUntil, int meters) {
+		return meters > 0
+				&& !day.plusDays(1).atStartOfDay().isAfter(dataUntil)
+				&& BigDecimal.valueOf(acc.meterHours()).multiply(BigDecimal.valueOf(100))
+				.compareTo(properties.getMinCoveragePct()
+						.multiply(BigDecimal.valueOf((long) meters * HOURS_PER_DAY))) >= 0;
+	}
+
+	// most grid meters reporting in one hour within +/- meterWindowDays of day
+	private int expectedMeters(Map<LocalDate, Acc> days, LocalDate day) {
+		int window = Math.max(properties.getMeterWindowDays(), 0);
+		int meters = 0;
+
+		for (LocalDate d = day.minusDays(window); !d.isAfter(day.plusDays(window)); d = d.plusDays(1)) {
+			Acc acc = days.get(d);
+
+			if (acc != null) {
+				meters = Math.max(meters, acc.maxMeters());
+			}
+		}
+
+		return meters;
+	}
+
+	// most grid meters reporting in one hour of the period
+	private int meters(Map<LocalDate, Acc> days, Period period) {
+		int meters = 0;
+
+		for (Map.Entry<LocalDate, Acc> entry : days.entrySet()) {
+			LocalDate day = entry.getKey();
+
+			if (!day.isBefore(period.from()) && day.isBefore(period.to())) {
+				meters = Math.max(meters, entry.getValue().maxMeters());
+			}
+		}
+
+		return meters;
+	}
+
+	private BigDecimal coveragePct(Acc acc, int meters) {
+		if (meters == 0) {
+			return null;
+		}
+
+		return BigDecimal.valueOf(acc.meterHours())
+				.multiply(BigDecimal.valueOf(100))
+				.divide(BigDecimal.valueOf((long) meters * HOURS_PER_DAY), 1, RoundingMode.HALF_UP);
 	}
 
 	private UnitPrices unitPrices(Optional<Pricing> pricing) {
@@ -346,14 +580,14 @@ public class ElectricConsumptionCalculator {
 				price(p, TouBand.NORMAL, p.gridFactor()),
 				price(p, TouBand.HIGH_PEAK, p.gridFactor()),
 				price(p, TouBand.LOW_PEAK, p.gridFactor()),
-				price(p, TouBand.NORMAL, p.solarFactor()),
-				price(p, TouBand.HIGH_PEAK, p.solarFactor()),
-				price(p, TouBand.LOW_PEAK, p.solarFactor())
+				price(p, TouBand.NORMAL, p.solarFactor().get(TouBand.NORMAL)),
+				price(p, TouBand.HIGH_PEAK, p.solarFactor().get(TouBand.HIGH_PEAK)),
+				price(p, TouBand.LOW_PEAK, p.solarFactor().get(TouBand.LOW_PEAK))
 		);
 	}
 
 	private BigDecimal price(Pricing pricing, TouBand band, BigDecimal factor) {
-		return pricing.tariff().weekdayRate(band)
+		return pricing.weekdayVnd(band)
 				.map(vnd -> vnd.multiply(factor).setScale(4, RoundingMode.HALF_UP))
 				.orElse(null);
 	}
@@ -362,35 +596,28 @@ public class ElectricConsumptionCalculator {
 	// Helpers
 	// ---------------------------------------------------------------------
 
-	private Acc sumDays(Map<LocalDate, Acc> days, LocalDate from, LocalDate to) {
-		Acc sum = new Acc();
-
-		days.forEach((day, acc) -> {
-			if (!day.isBefore(from) && day.isBefore(to)) {
-				sum.add(acc);
-			}
-		});
-
-		return sum;
-	}
-
-	// kWh / divisor -> MWh; bands null when not priced
+	// kWh / divisor -> MWh; null when no data, bands null when not priced,
+	// solar null when no SOLAR meter data
 	private Values mwh(Acc acc, BigDecimal divisor, boolean priced) {
+		if (!acc.hasData()) {
+			return null;
+		}
+
 		BigDecimal div = divisor.multiply(THOUSAND);
 
 		return new Values(
 				priced ? out(acc.bandKwh.get(TouBand.NORMAL), div) : null,
 				priced ? out(acc.bandKwh.get(TouBand.HIGH_PEAK), div) : null,
 				priced ? out(acc.bandKwh.get(TouBand.LOW_PEAK), div) : null,
-				out(acc.solar, div),
+				acc.hasSolar ? out(acc.solar, div) : null,
 				out(acc.grid, div),
 				out(acc.grid.add(acc.solar), div)
 		);
 	}
 
-	// USD / divisor -> K$; null when not priced
+	// USD / divisor -> K$; null when no data or not priced
 	private Values kusd(Acc acc, BigDecimal divisor, boolean priced) {
-		if (!priced) {
+		if (!priced || !acc.hasData()) {
 			return null;
 		}
 
@@ -401,17 +628,22 @@ public class ElectricConsumptionCalculator {
 				out(acc.bandUsd.get(TouBand.NORMAL), div),
 				out(acc.bandUsd.get(TouBand.HIGH_PEAK), div),
 				out(acc.bandUsd.get(TouBand.LOW_PEAK), div),
-				out(acc.solarUsd, div),
+				acc.hasSolar ? out(acc.solarUsd, div) : null,
 				out(gridUsd, div),
 				out(gridUsd.add(acc.solarUsd), div)
 		);
+	}
+
+	// kWh dropped as outliers -> MWh, null when nothing was dropped
+	private BigDecimal excludedMwh(BigDecimal kwh) {
+		return kwh.signum() == 0 ? null : out(kwh, THOUSAND);
 	}
 
 	private BigDecimal out(BigDecimal value, BigDecimal divisor) {
 		return value.divide(divisor, OUT_SCALE, RoundingMode.HALF_UP);
 	}
 
-	// "Sep (Aug21 ~ Sep20]" like cell C5 of the sheet
+	// "Sep (Aug21 ~ Sep20]" like cell C5 of the sheet: bill month = month the period ends in
 	private String label(Period period) {
 		LocalDate last = period.to().minusDays(1);
 

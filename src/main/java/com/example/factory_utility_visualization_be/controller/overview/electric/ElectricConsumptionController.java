@@ -19,11 +19,13 @@ public class ElectricConsumptionController {
 	// "Elec. Daily Consumption" charts (F2 electric consumption.xlsx):
 	// KVH / Fac A&B / Fac C, MWh + K$, monthly per-day average + daily bars.
 	//	http://localhost:9999/api/utility/electric-consumption?month=2026-09&months=12
+	//	hour stamp check: ...?month=2026-08&months=0&hourOffset=-1 (and 0, +1)
 	@GetMapping("/electric-consumption")
 	public ResponseEntity<ElectricConsumptionResponseDto> electricConsumption(
 			@RequestParam(required = false) String month,   // bill month yyyy-MM, default = current bill month
-			@RequestParam(required = false) Integer months  // previous bill periods in "monthly", default 12
+			@RequestParam(required = false) Integer months,  // previous bill periods in "monthly", default 12
+			@RequestParam(required = false) Integer hourOffset // -3..3, default utility.electric-consumption.hour-offset
 	) {
-		return ResponseEntity.ok(service.getElectricConsumption(month, months));
+		return ResponseEntity.ok(service.getElectricConsumption(month, months, hourOffset));
 	}
 }

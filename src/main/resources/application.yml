@@ -46,12 +46,48 @@ utility:
   # GET /api/utility/electric-consumption (F2 electric consumption.xlsx):
   # bill period = [day billing-cutoff-day of M-1, same day of M)
   # grid $/kWh = VND * sepzone / exchange-rate (sheet C40: 1833*1.075/26005)
-  # solar $/kWh = VND * solar-price-factor * sepzone / exchange-rate (sheet JI36: 1649.7/26316)
+  # solar $/kWh = VND * solar-price-factor * sepzone / exchange-rate
+  #   (sheet JI36 = 1649.7/26316, JI37 = 3058.2/26316, C61 low peak = 0)
+  # averages only use complete days (see min-coverage-pct)
   electric-consumption:
     billing-cutoff-day: 21
+    # data before this day is ignored (null in the response): meters were still
+    # being installed (Apr 17 -> Jun 30 -> Jul 48 meters), so totals were far too low
+    history-start-date: 2026-06-21
     default-months: 12
     max-months: 36
-    solar-price-factor: 0.9
+    # complete day = meter-hours >= min-coverage-pct % of (expected meters x 24);
+    # expected meters = most meters seen in one hour within +/- meter-window-days
+    min-coverage-pct: 98
+    meter-window-days: 3
+    # shift of the hour stamp (pick_at - 1h) before choosing day / tariff band;
+    # try -1 / +1 against the sheet's Normal / High / Low split
+    hour-offset: 0
+    # meter-hour dropped (= missing) when kWh > outlier-min-kwh AND
+    # kWh > outlier-ratio x median kWh/hour of that meter
+    outlier-ratio: 10
+    outlier-min-kwh: 100
+    # SOLAR meters: kWh > solar-outlier-ratio x P90 kWh/hour of that meter
+    # (median is too low: SOLAR_A_588 reports small values at night too)
+    solar-outlier-ratio: 3
+    # meters not counted at all: P-3.1 reports the same kWh as P-3
+    # (Aug 0.719416 vs 0.719441, Sep 0.756735 vs 0.756770 MWh/day)
+    excluded-meters:
+      - P-3.1_MFM384
+    # move meters to the scope of their transformer (Trans No.2 = A&B,
+    # Trans No.1 = C) when the SCADA fac differs; box_device_id, any case
+    meter-scope:
+      fac-ab: []
+      fac-c: []
+    # VND/kWh like the sheet; remove a line to use F2_Utility_Cost_Master
+    band-prices:
+      normal: 1833
+      high-peak: 3398
+      low-peak: 1190
+    solar-price-factor:
+      normal: 0.9
+      high-peak: 0.9
+      low-peak: 0
     grid:
       exchange-rate: 26005
       sepzone: 1.075

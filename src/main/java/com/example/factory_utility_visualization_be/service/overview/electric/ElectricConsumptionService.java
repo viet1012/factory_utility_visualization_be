@@ -29,14 +29,22 @@ public class ElectricConsumptionService {
 	private final ElectricConsumptionCacheService cacheService;
 	private final ElectricConsumptionProperties properties;
 
-	public ElectricConsumptionResponseDto getElectricConsumption(String month, Integer months) {
+	private static final int MAX_HOUR_OFFSET = 3;
+
+	public ElectricConsumptionResponseDto getElectricConsumption(String month, Integer months, Integer hourOffset) {
 		LocalDateTime now = LocalDateTime.now(APP_ZONE);
 		YearMonth billMonth = parseMonth(month, calculator.billMonthOf(now.toLocalDate()));
 		int monthCount = months == null ? properties.getDefaultMonths() : months;
+		int offset = hourOffset == null ? properties.getHourOffset() : hourOffset;
 
 		if (monthCount < 0 || monthCount > properties.getMaxMonths()) {
 			throw new ElectricConsumptionBadRequestException(
 					"months must be between 0 and " + properties.getMaxMonths());
+		}
+
+		if (Math.abs(offset) > MAX_HOUR_OFFSET) {
+			throw new ElectricConsumptionBadRequestException(
+					"hourOffset must be between -" + MAX_HOUR_OFFSET + " and " + MAX_HOUR_OFFSET);
 		}
 
 		ElectricConsumptionCalculator.Period period = calculator.period(billMonth);
@@ -47,8 +55,8 @@ public class ElectricConsumptionService {
 		}
 
 		return period.to().atStartOfDay().plus(CLOSE_GRACE).isAfter(now)
-				? cacheService.getCurrent(billMonth, monthCount)
-				: cacheService.getClosed(billMonth, monthCount);
+				? cacheService.getCurrent(billMonth, monthCount, offset)
+				: cacheService.getClosed(billMonth, monthCount, offset);
 	}
 
 	private YearMonth parseMonth(String value, YearMonth defaultMonth) {

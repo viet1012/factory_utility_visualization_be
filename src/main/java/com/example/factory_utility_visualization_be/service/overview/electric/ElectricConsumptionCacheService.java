@@ -22,20 +22,20 @@ public class ElectricConsumptionCacheService {
 	// bill period still running
 	@Cacheable(
 			cacheNames = UtilityCacheNames.ELECTRIC_CONSUMPTION_CURRENT,
-			key = "#month.toString() + '_' + #months",
+			key = "#month.toString() + '_' + #months + '_' + #hourOffset",
 			sync = true
 	)
-	public ElectricConsumptionResponseDto getCurrent(YearMonth month, int months) {
-		return calculator.calculate(month, months);
+	public ElectricConsumptionResponseDto getCurrent(YearMonth month, int months, int hourOffset) {
+		return calculator.calculate(month, months, hourOffset);
 	}
 
 	// bill period already ended: cannot change any more
 	@Cacheable(
 			cacheNames = UtilityCacheNames.ELECTRIC_CONSUMPTION_CLOSED,
-			key = "#month.toString() + '_' + #months",
+			key = "#month.toString() + '_' + #months + '_' + #hourOffset",
 			sync = true
 	)
-	public ElectricConsumptionResponseDto getClosed(YearMonth month, int months) {
-		return calculator.calculate(month, months);
+	public ElectricConsumptionResponseDto getClosed(YearMonth month, int months, int hourOffset) {
+		return calculator.calculate(month, months, hourOffset);
 	}
 }
