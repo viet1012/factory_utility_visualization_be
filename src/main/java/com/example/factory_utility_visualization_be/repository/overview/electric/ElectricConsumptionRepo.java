@@ -32,14 +32,21 @@ import java.util.List;
 public interface ElectricConsumptionRepo extends JpaRepository<DummyEntity, Long> {
 
 	@Query(value = """
+			-- per-device filters (excluded meters, transformer scope) are applied
+			-- here once per meter instead of on every History_Main row
 			WITH DeviceMap AS (
 			    SELECT
 			        ch.box_device_id,
-			        MAX(sc.fac) AS fac,
+			        CASE
+			            WHEN UPPER(LTRIM(RTRIM(ch.box_device_id))) IN (:facAbMeters) THEN 'FAC_AB'
+			            WHEN UPPER(LTRIM(RTRIM(ch.box_device_id))) IN (:facCMeters)  THEN 'FAC_C'
+			            ELSE MAX(sc.fac)
+			        END AS fac,
 			        MAX(CASE WHEN UPPER(LTRIM(RTRIM(ISNULL(ch.box_id, '')))) = 'SOLAR' THEN 1 ELSE 0 END) AS is_solar
 			    FROM dbo.F2_Utility_Scada_Channel ch
 			    INNER JOIN dbo.F2_Utility_Scada sc
 			            ON sc.scada_id = ch.scada_id
+			    WHERE UPPER(LTRIM(RTRIM(ch.box_device_id))) NOT IN (:excludedMeters)
 			    GROUP BY ch.box_device_id
 			),
 			EnergyPara AS (
@@ -65,8 +72,8 @@ public interface ElectricConsumptionRepo extends JpaRepository<DummyEntity, Long
 			    WHERE hi.pick_at >= :fromTs
 			      AND hi.pick_at <  :toTs
 			      AND hi.[value] > 0
-			      AND ISNULL(hi.MTD, '') = 'MTD'
-			      AND UPPER(LTRIM(RTRIM(hi.box_device_id))) NOT IN (:excludedMeters)
+			      -- same as ISNULL(MTD, '') = 'MTD' (NULL never equals 'MTD'), but sargable
+			      AND hi.MTD = 'MTD'
 			    GROUP BY
 			        hi.box_device_id,
 			        dm.fac,
@@ -94,23 +101,18 @@ public interface ElectricConsumptionRepo extends JpaRepository<DummyEntity, Long
 			            WHEN wm.is_solar = 0
 			             AND wm.kwh > wm.median_kwh * :outlierRatio THEN 1
 			            ELSE 0
-			        END AS is_outlier,
-			        CASE
-			            WHEN UPPER(LTRIM(RTRIM(wm.box_device_id))) IN (:facAbMeters) THEN 'FAC_AB'
-			            WHEN UPPER(LTRIM(RTRIM(wm.box_device_id))) IN (:facCMeters)  THEN 'FAC_C'
-			            ELSE wm.fac
-			        END AS scope_fac
+			        END AS is_outlier
 			    FROM WithMedian wm
 			)
 			SELECT
-			    m.scope_fac                        AS fac,
+			    m.fac                              AS fac,
 			    m.is_solar                         AS solar,
 			    m.hour_at                          AS hourAt,
 			    m.is_outlier                       AS outlier,
 			    CAST(SUM(m.kwh) AS DECIMAL(19, 4)) AS kwh,
 			    COUNT(DISTINCT m.box_device_id)    AS devices
 			FROM Marked m
-			GROUP BY m.scope_fac, m.is_solar, m.hour_at, m.is_outlier
+			GROUP BY m.fac, m.is_solar, m.hour_at, m.is_outlier
 			ORDER BY m.hour_at
 			""", nativeQuery = true)
 	List<ElectricConsumptionHourProjection> findHourlyEnergy(

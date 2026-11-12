@@ -55,6 +55,11 @@ utility:
     # being installed (Apr 17 -> Jun 30 -> Jul 48 meters), so totals were far too low
     history-start-date: 2026-06-21
     default-months: 12
+    # background refresh of the default request (current bill month,
+    # default-months, hour-offset) so the FE never waits for the query
+    warmup-enabled: true
+    warmup-initial-delay: PT20S
+    warmup-interval: PT10M
     max-months: 36
     # complete day = meter-hours >= min-coverage-pct % of (expected meters x 24);
     # expected meters = most meters seen in one hour within +/- meter-window-days

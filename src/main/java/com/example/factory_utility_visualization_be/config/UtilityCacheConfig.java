@@ -100,12 +100,15 @@ public class UtilityCacheConfig {
 						buildNativeCache(500, Duration.ofHours(12))
 				);
 
-		// GET /api/utility/electric-consumption, keyed by month + months:
-		// bill period still running (5 min) / already ended (long TTL)
+		// GET /api/utility/electric-consumption, keyed by month + months + hourOffset:
+		// bill period still running / already ended (long TTL).
+		// Running period: 20 min > FE poll (10 min) and > warm-up interval
+		// (ElectricConsumptionCacheWarmer, 10 min), so the default request is
+		// always served from cache; data is hourly, so <= 20 min staleness is fine.
 		final Cache electricConsumptionCurrentCache =
 				new CaffeineCache(
 						UtilityCacheNames.ELECTRIC_CONSUMPTION_CURRENT,
-						buildNativeCache(20, Duration.ofMinutes(5))
+						buildNativeCache(20, Duration.ofMinutes(20))
 				);
 
 		final Cache electricConsumptionClosedCache =
