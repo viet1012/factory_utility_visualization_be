@@ -7,6 +7,7 @@ import com.example.factory_utility_visualization_be.dto.overview.electric.Electr
 import com.example.factory_utility_visualization_be.dto.overview.electric.ElectricConsumptionResponseDto.Scope;
 import com.example.factory_utility_visualization_be.repository.overview.electric.ElectricConsumptionRepo;
 import com.example.factory_utility_visualization_be.repository.overview.electric.projection.ElectricConsumptionHourProjection;
+import com.example.factory_utility_visualization_be.repository.overview.electric.projection.ElectricConsumptionMeterProjection;
 import com.example.factory_utility_visualization_be.repository.runtime.PowerUsageRepo;
 import com.example.factory_utility_visualization_be.repository.runtime.projection.PowerUsageTariffProjection;
 import com.example.factory_utility_visualization_be.service.runtime.ElectricityPricingService;
@@ -72,6 +73,8 @@ class ElectricConsumptionCalculatorTest {
 
 	@Test
 	void splitsBandsPerScopeAndBillPeriod() {
+		configuredMeters("Fac_A", "Fac_C");
+
 		when(energyRepo.findHourlyEnergy(anyString(), any(), any(), any(), any(), any(), anyList(), anyList(), anyList())).thenReturn(List.of(
 				// Fri 10:00 high peak, Fac_A grid
 				hour("Fac_A", 0, "2026-08-21T10:00", "100"),
@@ -153,6 +156,7 @@ class ElectricConsumptionCalculatorTest {
 	@Test
 	void daysWithMissingHoursArePartialAndLeftOutOfAverages() {
 		props.setMinCoveragePct(BigDecimal.valueOf(100));
+		configuredMeters("Fac_C");
 
 		List<ElectricConsumptionHourProjection> rows = new java.util.ArrayList<>();
 
@@ -185,6 +189,7 @@ class ElectricConsumptionCalculatorTest {
 	@Test
 	void dayWithMissingMeterIsPartialEvenWith24Hours() {
 		props.setMinCoveragePct(BigDecimal.valueOf(100));
+		configuredMeters("Fac_A", "Fac_A");
 
 		List<ElectricConsumptionHourProjection> rows = new java.util.ArrayList<>();
 
@@ -229,6 +234,7 @@ class ElectricConsumptionCalculatorTest {
 	@Test
 	void outlierMeterHoursAreDroppedAndDayIsPartial() {
 		props.setMinCoveragePct(BigDecimal.valueOf(100));
+		configuredMeters("Fac_B");
 
 		List<ElectricConsumptionHourProjection> rows = new java.util.ArrayList<>();
 
@@ -258,14 +264,14 @@ class ElectricConsumptionCalculatorTest {
 	}
 
 	@Test
-	void meterAddedMidPeriodDoesNotMakeEarlierDaysPartial() {
+	void meterAddedMidPeriodDoesNotMakeEarlierHistoryDaysPartial() {
 		props.setMinCoveragePct(BigDecimal.valueOf(98));
 
 		List<ElectricConsumptionHourProjection> rows = new java.util.ArrayList<>();
 
-		// Aug 21..Aug 30: 1 meter; from Aug 31: 2 meters
-		for (LocalDate day = LocalDate.of(2026, 8, 21); day.isBefore(LocalDate.of(2026, 9, 5)); day = day.plusDays(1)) {
-			int devices = day.isBefore(LocalDate.of(2026, 8, 31)) ? 1 : 2;
+		// previous bill period: Jul 21..Jul 30 1 meter; from Jul 31: 2 meters
+		for (LocalDate day = LocalDate.of(2026, 7, 21); day.isBefore(LocalDate.of(2026, 8, 5)); day = day.plusDays(1)) {
+			int devices = day.isBefore(LocalDate.of(2026, 7, 31)) ? 1 : 2;
 
 			for (int h = 0; h < 24; h++) {
 				rows.add(hour("Fac_C", 0, day.atTime(h, 0).toString(), "10", devices));
@@ -274,16 +280,36 @@ class ElectricConsumptionCalculatorTest {
 
 		when(energyRepo.findHourlyEnergy(anyString(), any(), any(), any(), any(), any(), anyList(), anyList(), anyList())).thenReturn(rows);
 
+		// monthly history still takes expected meters from the data (+/- meterWindowDays)
+		var month = scope(calculator.calculate(YearMonth.of(2026, 9), 1), "FAC_C").monthly().get(0);
+
+		assertThat(month.meters()).isEqualTo(2);
+		assertThat(month.daysWithData()).isEqualTo(15);
+		// Jul 28..30 are within 3 days before the change: 2 expected meters -> 50 %
+		assertThat(month.completeDays()).isEqualTo(12);
+	}
+
+	@Test
+	void configuredMeterWithoutDataMakesCurrentDaysPartial() {
+		props.setMinCoveragePct(BigDecimal.valueOf(98));
+		// 2 configured meters, only 1 reports
+		configuredMeters("Fac_C", "Fac_C");
+
+		List<ElectricConsumptionHourProjection> rows = new java.util.ArrayList<>();
+
+		for (int h = 0; h < 24; h++) {
+			rows.add(hour("Fac_C", 0, String.format("2026-08-21T%02d:00", h), "10"));
+		}
+
+		when(energyRepo.findHourlyEnergy(anyString(), any(), any(), any(), any(), any(), anyList(), anyList(), anyList())).thenReturn(rows);
+
 		Scope c = scope(calculator.calculate(YearMonth.of(2026, 9), 0), "FAC_C");
 
-		// far from the change: 1 expected meter -> complete
-		assertThat(c.daily().get(0).meters()).isEqualTo(1);
-		assertThat(c.daily().get(0).partial()).isFalse();
-		// within 3 days before the change: 2 expected meters -> 50 %
-		assertThat(c.daily().get(8).meters()).isEqualTo(2);
-		assertThat(c.daily().get(8).partial()).isTrue();
-		assertThat(c.daily().get(10).partial()).isFalse();
-		assertThat(c.completeDays()).isEqualTo(12);
+		assertThat(c.meters()).isEqualTo(2);
+		assertThat(c.daily().get(0).meters()).isEqualTo(2);
+		assertThat(c.daily().get(0).coveragePct()).isEqualByComparingTo("50.0");
+		assertThat(c.daily().get(0).partial()).isTrue();
+		assertThat(c.completeDays()).isZero();
 	}
 
 	@Test
@@ -346,6 +372,22 @@ class ElectricConsumptionCalculatorTest {
 	void billMonthRollsOverOnCutoffDay() {
 		assertThat(calculator.billMonthOf(LocalDate.of(2026, 9, 20))).isEqualTo(YearMonth.of(2026, 9));
 		assertThat(calculator.billMonthOf(LocalDate.of(2026, 9, 21))).isEqualTo(YearMonth.of(2026, 10));
+	}
+
+	// configured grid meters (findGridMeters), one per fac given
+	private void configuredMeters(String... facs) {
+		List<ElectricConsumptionMeterProjection> meters = new java.util.ArrayList<>();
+
+		for (int i = 0; i < facs.length; i++) {
+			String meter = "M-" + i;
+			String fac = facs[i];
+			meters.add(new ElectricConsumptionMeterProjection() {
+				public String getMeter() { return meter; }
+				public String getFac() { return fac; }
+			});
+		}
+
+		when(energyRepo.findGridMeters(anyString(), anyList(), anyList(), anyList())).thenReturn(meters);
 	}
 
 	private Scope scope(ElectricConsumptionResponseDto res, String code) {
