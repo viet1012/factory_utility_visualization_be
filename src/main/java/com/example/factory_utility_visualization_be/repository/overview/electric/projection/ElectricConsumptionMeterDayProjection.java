@@ -1,5 +1,6 @@
 package com.example.factory_utility_visualization_be.repository.overview.electric.projection;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 // grid meter x day (ElectricConsumptionRepo.findMeterDays)
@@ -17,6 +18,9 @@ public interface ElectricConsumptionMeterDayProjection {
 
 	// hours dropped as outliers
 	Integer getOutlierHours();
+
+	// kWh of the valid (non-outlier) hours of that day
+	BigDecimal getValidKwh();
 
 	// last valid pick_at of the meter (not shifted by hourOffset), null = never
 	LocalDateTime getLastPickAt();

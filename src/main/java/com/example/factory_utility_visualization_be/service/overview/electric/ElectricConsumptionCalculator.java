@@ -36,6 +36,7 @@ import java.util.Arrays;
 import java.util.Comparator;
 import java.util.EnumMap;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -177,6 +178,9 @@ public class ElectricConsumptionCalculator {
 		private final Map<LocalDate, int[]> hours = new HashMap<>();
 		// end of the last hour with valid data (hourOffset applied), null = never
 		private LocalDateTime lastDataAt;
+		// valid kWh / valid hours over the selected period (estimate of missing hours)
+		private BigDecimal validKwh = BigDecimal.ZERO;
+		private int validHoursTotal;
 
 		private MeterData(String meter, String fac) {
 			this.meter = meter;
@@ -196,13 +200,19 @@ public class ElectricConsumptionCalculator {
 	private static final String PARTIAL = "PARTIAL";
 	private static final String OUTLIER = "OUTLIER";
 
+	// MeterIssue.severity
+	private static final String MAJOR = "MAJOR";
+	private static final String MINOR = "MINOR";
+
 	private static final Comparator<MissingMeter> MISSING_ORDER = Comparator
 			.comparing((MissingMeter m) -> !NO_DATA.equals(m.reason()))
 			.thenComparingInt(MissingMeter::hours)
 			.thenComparing(MissingMeter::meter);
 
+	// MAJOR first, then most missing hours, then name
 	private static final Comparator<MeterIssue> ISSUE_ORDER = Comparator
-			.comparingInt(MeterIssue::missingHours).reversed()
+			.comparing((MeterIssue m) -> !MAJOR.equals(m.severity()))
+			.thenComparing(Comparator.comparingInt(MeterIssue::missingHours).reversed())
 			.thenComparing(MeterIssue::meter);
 
 	public Period period(YearMonth month) {
@@ -332,10 +342,15 @@ public class ElectricConsumptionCalculator {
 				}
 
 				if (row.getDayAt() != null) {
+					int valid = row.getValidHours() == null ? 0 : row.getValidHours();
 					data.hours.put(row.getDayAt().toLocalDate(), new int[] {
-							row.getValidHours() == null ? 0 : row.getValidHours(),
+							valid,
 							row.getOutlierHours() == null ? 0 : row.getOutlierHours()
 					});
+					data.validHoursTotal += valid;
+					if (row.getValidKwh() != null) {
+						data.validKwh = data.validKwh.add(row.getValidKwh());
+					}
 				}
 			}
 		}
@@ -523,6 +538,8 @@ public class ElectricConsumptionCalculator {
 		int pricedDays = 0;
 		int pricedCompleteDays = 0;
 		Map<MeterData, Integer> missingHours = new LinkedHashMap<>();
+		// meters with a whole day of the period without any row (NO_DATA)
+		Set<MeterData> noDataDay = new HashSet<>();
 
 		for (LocalDate day = current.from(); day.isBefore(current.to()); day = day.plusDays(1)) {
 			String weekday = day.getDayOfWeek().getDisplayName(TextStyle.SHORT, Locale.ENGLISH);
@@ -546,6 +563,11 @@ public class ElectricConsumptionCalculator {
 
 				if (valid < dayHours) {
 					missingHours.merge(meter, dayHours - valid, Integer::sum);
+
+					// same rule as missingMeters(): no row on that day = NO_DATA
+					if (!meter.hours.containsKey(day)) {
+						noDataDay.add(meter);
+					}
 				}
 			}
 
@@ -595,11 +617,26 @@ public class ElectricConsumptionCalculator {
 			));
 		}
 
-		List<MeterIssue> meterIssues = missingHours.entrySet().stream()
-				.map(entry -> new MeterIssue(entry.getKey().meter, entry.getKey().fac, entry.getValue(),
-						formatTsOrNull(entry.getKey().lastDataAt)))
-				.sorted(ISSUE_ORDER)
-				.toList();
+		List<MeterIssue> meterIssues = new ArrayList<>(missingHours.size());
+		BigDecimal estimatedMissingKwh = null;
+
+		for (Map.Entry<MeterData, Integer> entry : missingHours.entrySet()) {
+			MeterData meter = entry.getKey();
+			int missing = entry.getValue();
+			boolean major = noDataDay.contains(meter) || missing >= HOURS_PER_DAY;
+
+			meterIssues.add(new MeterIssue(meter.meter, meter.fac, missing,
+					formatTsOrNull(meter.lastDataAt), major ? MAJOR : MINOR));
+
+			// MAJOR only, and only meters with valid hours to take the rate from
+			if (major && meter.validHoursTotal > 0) {
+				BigDecimal perHour = meter.validKwh.divide(
+						BigDecimal.valueOf(meter.validHoursTotal), 6, RoundingMode.HALF_UP);
+				BigDecimal kwh = perHour.multiply(BigDecimal.valueOf(missing));
+				estimatedMissingKwh = estimatedMissingKwh == null ? kwh : estimatedMissingKwh.add(kwh);
+			}
+		}
+		meterIssues.sort(ISSUE_ORDER);
 
 		BigDecimal divisor = BigDecimal.valueOf(Math.max(completeDays, 1));
 		// money only when at least one summed / averaged day has a tariff version
@@ -620,7 +657,8 @@ public class ElectricConsumptionCalculator {
 				completeDays == 0 ? null : mwh(complete, divisor, averagePriced),
 				completeDays == 0 ? null : kusd(complete, divisor, averagePriced),
 				meterIssues,
-				pricedDays < daysWithData
+				pricedDays < daysWithData,
+				estimatedMissingKwh == null ? null : out(estimatedMissingKwh, THOUSAND)
 		);
 	}
 

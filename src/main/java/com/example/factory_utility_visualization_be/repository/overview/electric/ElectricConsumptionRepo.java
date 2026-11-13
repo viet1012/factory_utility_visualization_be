@@ -95,8 +95,9 @@ public interface ElectricConsumptionRepo extends JpaRepository<DummyEntity, Long
 
 	/**
 	 * Per configured grid meter x day of [:periodFrom, end of the window):
-	 * hours with valid data / outlier hours, plus the meter's last valid
-	 * pick_at (lastPickAt, same on every row of the meter).
+	 * hours with valid data / outlier hours, kWh of the valid hours (validKwh,
+	 * used to estimate the energy of missing hours), plus the meter's last
+	 * valid pick_at (lastPickAt, same on every row of the meter).
 	 *
 	 * Window [:fromTs, :toTs) and the outlier rule are the same as
 	 * findHourlyEnergy (median over the whole window), so a meter-hour is an
@@ -142,6 +143,7 @@ public interface ElectricConsumptionRepo extends JpaRepository<DummyEntity, Long
 			    SELECT
 			        wm.box_device_id,
 			        DATEADD(HOUR, :hourOffset, wm.hour_at) AS hour_at,
+			        wm.kwh,
 			        wm.last_pick_at,
 			        -- grid meters only: same rule as the is_solar = 0 branch of findHourlyEnergy
 			        CASE
@@ -156,7 +158,8 @@ public interface ElectricConsumptionRepo extends JpaRepository<DummyEntity, Long
 			        m.box_device_id,
 			        DATEADD(DAY, DATEDIFF(DAY, 0, m.hour_at), 0)       AS day_at,
 			        SUM(CASE WHEN m.is_outlier = 0 THEN 1 ELSE 0 END) AS valid_hours,
-			        SUM(m.is_outlier)                                  AS outlier_hours
+			        SUM(m.is_outlier)                                  AS outlier_hours,
+			        SUM(CASE WHEN m.is_outlier = 0 THEN m.kwh ELSE 0 END) AS valid_kwh
 			    FROM Marked m
 			    WHERE m.hour_at >= :periodFrom
 			    GROUP BY
@@ -194,6 +197,7 @@ public interface ElectricConsumptionRepo extends JpaRepository<DummyEntity, Long
 			    md.day_at                    AS dayAt,
 			    ISNULL(md.valid_hours, 0)    AS validHours,
 			    ISNULL(md.outlier_hours, 0)  AS outlierHours,
+			    CAST(ISNULL(md.valid_kwh, 0) AS DECIMAL(19, 4)) AS validKwh,
 			    ml.last_pick_at              AS lastPickAt
 			FROM GridMeter gm
 			INNER JOIN MeterLast ml

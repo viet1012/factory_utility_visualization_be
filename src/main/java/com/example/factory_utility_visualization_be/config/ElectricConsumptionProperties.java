@@ -32,7 +32,7 @@ public class ElectricConsumptionProperties {
 	// totals are far too low); null = use all data
 	private LocalDate historyStartDate;
 
-	private int defaultMonths = 12;
+	private int defaultMonths = 6;
 
 	private int maxMonths = 36;
 

@@ -67,7 +67,8 @@ utility:
     # data before this day is ignored (null in the response): meters were still
     # being installed (Apr 17 -> Jun 30 -> Jul 48 meters), so totals were far too low
     history-start-date: 2026-06-21
-    default-months: 12
+    # = FE default History (6M), so the warmed cache entry is the one the FE asks for
+    default-months: 6
     # background refresh of the default request (current bill month,
     # default-months, utility.electricity.hour-offset) so the FE never waits for the query
     warmup-enabled: true

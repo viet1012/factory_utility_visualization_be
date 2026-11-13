@@ -96,7 +96,12 @@ public record ElectricConsumptionResponseDto(
 			List<MeterIssue> meterIssues,
 			// some day with data has no tariff version: its bands / K$ are null
 			// in daily[] and left out of dailyTotal / dailyAverage bands and K$
-			boolean priceMissing
+			boolean priceMissing,
+			// rough grid MWh not in dailyTotalMwh because of MAJOR meter issues:
+			// sum over MAJOR meters of (their average kWh per valid hour in the
+			// period x missingHours) / 1000; null = no MAJOR meter with valid
+			// hours to estimate from
+			BigDecimal estimatedMissingMwh
 	) {}
 
 	public record MeterIssue(
@@ -106,7 +111,10 @@ public record ElectricConsumptionResponseDto(
 			// expected hours of the period up to dataUntil - hours with valid data
 			int missingHours,
 			// end of the last hour with valid data (ISO-8601 +07:00), null = never
-			String lastDataAt
+			String lastDataAt,
+			// MAJOR = some day of the period with no data at all (NO_DATA) or
+			// missingHours >= 24; MINOR = only a few hours missing / dropped
+			String severity
 	) {}
 
 	public record MissingMeter(
