@@ -1,5 +1,6 @@
 package com.example.factory_utility_visualization_be.service.overview.electric;
 
+import com.example.factory_utility_visualization_be.config.ElectricConsumptionProperties;
 import com.example.factory_utility_visualization_be.service.overview.monthly.UtilityEnergyMonthlyService;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
@@ -9,6 +10,7 @@ import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.YearMonth;
 import java.time.ZoneId;
@@ -30,6 +32,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * monthly-summary of KVH + Fac_A/B/C for the current month (refreshed) and
  * the previous month (cached if absent). solar/monthly and energy-daily have
  * no response cache; they only need the hourly months, already loaded.
+ * After the dashboards: electric-consumption (hourly months of the current
+ * bill period + defaultMonths previous periods, then the default response).
  *
  * One run at a time (a version change during a run is picked up by the next
  * poll). Errors are only logged: requests still work, they then load on
@@ -53,6 +57,9 @@ public class DashboardEnergyWarmer {
 
 	private final HourlyEnergyCache hourlyCache;
 	private final UtilityEnergyMonthlyService monthlyService;
+	private final ElectricConsumptionCalculator electricCalculator;
+	private final ElectricConsumptionCacheService electricCache;
+	private final ElectricConsumptionProperties electricProperties;
 
 	private final ExecutorService worker = Executors.newSingleThreadExecutor(runnable -> {
 		Thread thread = new Thread(runnable, "dashboard-energy-warmer");
@@ -65,9 +72,18 @@ public class DashboardEnergyWarmer {
 	// data version of the last successful run
 	private volatile LocalDateTime warmedVersion;
 
-	public DashboardEnergyWarmer(HourlyEnergyCache hourlyCache, UtilityEnergyMonthlyService monthlyService) {
+	public DashboardEnergyWarmer(
+			HourlyEnergyCache hourlyCache,
+			UtilityEnergyMonthlyService monthlyService,
+			ElectricConsumptionCalculator electricCalculator,
+			ElectricConsumptionCacheService electricCache,
+			ElectricConsumptionProperties electricProperties
+	) {
 		this.hourlyCache = hourlyCache;
 		this.monthlyService = monthlyService;
+		this.electricCalculator = electricCalculator;
+		this.electricCache = electricCache;
+		this.electricProperties = electricProperties;
 	}
 
 	@PreDestroy
@@ -153,13 +169,54 @@ public class DashboardEnergyWarmer {
 					() -> monthlyService.getMonthlySummary(fac, previous.format(YYYYMM)));
 		}
 
+		long dashboardMs = (System.nanoTime() - started) / 1_000_000;
+
+		ok &= warmElectricConsumption(reason);
+
 		if (ok) {
 			// the version read before the run: newer data triggers another run
 			warmedVersion = version != null ? version : hourlyCache.dataVersion();
 		}
 
-		log.info("dashboard warm-up ({}) {}: current month {} ms, total {} ms",
-				reason, ok ? "done" : "partly failed", currentMs, (System.nanoTime() - started) / 1_000_000);
+		log.info("dashboard warm-up ({}) {}: current month {} ms, dashboards {} ms, total {} ms",
+				reason, ok ? "done" : "partly failed", currentMs, dashboardMs,
+				(System.nanoTime() - started) / 1_000_000);
+	}
+
+	/*
+	 * 5. electric-consumption (after the dashboards): hourly months of the
+	 *    current bill period + defaultMonths previous periods (= the window of
+	 *    the default request), newest first, then the default response itself
+	 *    (current bill month, default months / hourOffset) into the versioned
+	 *    cache (recomputed only when stale).
+	 */
+	private boolean warmElectricConsumption(String reason) {
+		boolean ok = true;
+		LocalDateTime now = LocalDateTime.now(APP_ZONE);
+		YearMonth billMonth = electricCalculator.billMonthOf(now.toLocalDate());
+		int months = electricProperties.getDefaultMonths();
+		int offset = electricCalculator.defaultHourOffset();
+
+		LocalDateTime windowFrom = electricCalculator.period(billMonth.minusMonths(months)).from().atStartOfDay();
+		LocalDate historyStart = electricProperties.getHistoryStartDate();
+
+		if (historyStart != null && windowFrom.isBefore(historyStart.atStartOfDay())) {
+			windowFrom = historyStart.atStartOfDay();
+		}
+
+		// cached months are keyed by raw hour start (before hourOffset)
+		YearMonth first = YearMonth.from(windowFrom.minusHours(offset));
+
+		for (YearMonth m = YearMonth.from(now.minusHours(offset)); !m.isBefore(first); m = m.minusMonths(1)) {
+			YearMonth month = m;
+			ok &= step(reason, "hourly " + month + " (electric-consumption)",
+					() -> hourlyCache.preload(List.of(month)));
+		}
+
+		ok &= step(reason, "electric-consumption " + ElectricConsumptionCacheService.key(billMonth, months, offset),
+				() -> electricCache.getCurrent(billMonth, months, offset));
+
+		return ok;
 	}
 
 	// runs one warm-up step; a failure is only logged

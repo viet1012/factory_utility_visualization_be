@@ -12,15 +12,12 @@ import java.time.YearMonth;
 import java.time.ZoneId;
 
 /**
- * Keeps the default GET /api/utility/electric-consumption request (current
- * bill month, default months / hourOffset = what the FE sends) computed in
- * the background, so the Monitoring tab is served from cache instead of
- * waiting for the History_Main query.
- *
- * Runs at startup (after initial-delay) and then every warmup-interval; the
- * ELECTRIC_CONSUMPTION_CURRENT TTL is longer than the interval, so the
- * default entry never expires. Other month / months values keep the normal
- * on-demand cache. Disable with utility.electric-consumption.warmup-enabled=false.
+ * Fallback heartbeat for the default GET /api/utility/electric-consumption
+ * request (current bill month, default months / hourOffset): every
+ * warmup-interval it asks the versioned cache, which recomputes only when
+ * stale (> 10 min or new data version). The main warm-up after new data is
+ * DashboardEnergyWarmer. Disable with
+ * utility.electric-consumption.warmup-enabled=false.
  */
 @Slf4j
 @Component
@@ -50,7 +47,8 @@ public class ElectricConsumptionCacheWarmer {
 		long started = System.nanoTime();
 
 		try {
-			cacheService.refreshCurrent(month, months, offset);
+			// recomputes only when stale (new data version / older than 10 min)
+			cacheService.getCurrent(month, months, offset);
 			log.info("electric-consumption cache warm-up {} took {} ms",
 					ElectricConsumptionCacheService.key(month, months, offset),
 					(System.nanoTime() - started) / 1_000_000);

@@ -2,6 +2,7 @@ package com.example.factory_utility_visualization_be.service.overview.electric;
 
 import com.example.factory_utility_visualization_be.config.ElectricConsumptionProperties;
 import com.example.factory_utility_visualization_be.dto.overview.electric.ElectricConsumptionResponseDto;
+import com.example.factory_utility_visualization_be.dto.overview.electric.ElectricConsumptionViews;
 import com.example.factory_utility_visualization_be.exception.ElectricConsumptionBadRequestException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -31,7 +32,53 @@ public class ElectricConsumptionService {
 
 	private static final int MAX_HOUR_OFFSET = 3;
 
+	/** ?view= of GET /electric-consumption; null / blank = FULL (unchanged JSON). */
+	public enum View {
+		// measured + official + calibrated + evn (default)
+		FULL,
+		// meter data only, EVN / calibration tables not read
+		MEASURED,
+		// official layer only (EVN when imported, else measured)
+		OFFICIAL;
+
+		public static View parse(String value) {
+			if (value == null || value.isBlank()) {
+				return FULL;
+			}
+
+			return switch (value.trim().toLowerCase(java.util.Locale.ROOT)) {
+				case "measured" -> MEASURED;
+				case "official" -> OFFICIAL;
+				default -> throw new ElectricConsumptionBadRequestException(
+						"view must be measured or official (or omitted for every layer): '" + value.trim() + "'");
+			};
+		}
+	}
+
+	/**
+	 * FULL -> ElectricConsumptionResponseDto (unchanged), MEASURED ->
+	 * ElectricConsumptionViews.MeasuredResponse, OFFICIAL ->
+	 * ElectricConsumptionViews.OfficialResponse. FULL and OFFICIAL share the
+	 * cached full result; MEASURED has its own entry computed without EVN /
+	 * calibration (or reuses a fresh full result of the running period).
+	 */
+	public Object getElectricConsumption(String month, Integer months, Integer hourOffset, String view) {
+		View v = View.parse(view);
+		ElectricConsumptionResponseDto full = getElectricConsumption(month, months, hourOffset, v != View.MEASURED);
+
+		return switch (v) {
+			case FULL -> full;
+			case MEASURED -> ElectricConsumptionViews.MeasuredResponse.of(full);
+			case OFFICIAL -> ElectricConsumptionViews.OfficialResponse.of(full);
+		};
+	}
+
 	public ElectricConsumptionResponseDto getElectricConsumption(String month, Integer months, Integer hourOffset) {
+		return getElectricConsumption(month, months, hourOffset, true);
+	}
+
+	private ElectricConsumptionResponseDto getElectricConsumption(
+			String month, Integer months, Integer hourOffset, boolean withEvn) {
 		LocalDateTime now = LocalDateTime.now(APP_ZONE);
 		YearMonth billMonth = parseMonth(month, calculator.billMonthOf(now.toLocalDate()));
 		int monthCount = months == null ? properties.getDefaultMonths() : months;
@@ -55,8 +102,8 @@ public class ElectricConsumptionService {
 		}
 
 		return period.to().atStartOfDay().plus(CLOSE_GRACE).isAfter(now)
-				? cacheService.getCurrent(billMonth, monthCount, offset)
-				: cacheService.getClosed(billMonth, monthCount, offset);
+				? cacheService.getCurrent(billMonth, monthCount, offset, withEvn)
+				: cacheService.getClosed(billMonth, monthCount, offset, withEvn);
 	}
 
 	private YearMonth parseMonth(String value, YearMonth defaultMonth) {

@@ -4,7 +4,10 @@ import com.example.factory_utility_visualization_be.dto.overview.solar.SolarDash
 import com.example.factory_utility_visualization_be.repository.overview.solar.SolarDashboardRepo;
 import com.example.factory_utility_visualization_be.service.overview.electric.DashboardEnergyService;
 import com.example.factory_utility_visualization_be.service.overview.electric.GridSolarSplit;
+import com.example.factory_utility_visualization_be.service.overview.electric.GridSolarSplit.HourSum;
 import com.example.factory_utility_visualization_be.service.overview.electric.GridSolarSplit.Totals;
+import com.example.factory_utility_visualization_be.service.overview.electric.OfficialEnergyService;
+import com.example.factory_utility_visualization_be.service.overview.electric.OfficialEnergyService.OfficialTotal;
 import com.example.factory_utility_visualization_be.service.util.FacilityValidator;
 import com.example.factory_utility_visualization_be.service.util.SolarEnvironmentCalculator;
 import lombok.RequiredArgsConstructor;
@@ -16,6 +19,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.Map;
 import java.util.Optional;
 
 @Slf4j
@@ -28,6 +32,7 @@ public class SolarDashboardService {
 
 	private final SolarDashboardRepo repo;
 	private final DashboardEnergyService dashboardEnergy;
+	private final OfficialEnergyService officialEnergy;
 
 	@Transactional(readOnly = true)
 	public SolarDashboardDto getSolarDashboardByMonth(
@@ -84,12 +89,27 @@ public class SolarDashboardService {
 		// totalKwh = Σ load (consumption, solar NOT added on top)
 		// share    = solar / load
 		// ============================================================
+		final Map<LocalDateTime, HourSum> hours =
+				dashboardEnergy.facHours(fac, monthStart, nextMonthStart);
+
 		final Totals energy =
 				GridSolarSplit.totals(
-						dashboardEnergy.facHours(fac, monthStart, nextMonthStart),
+						hours,
 						monthStart,
 						nextMonthStart,
 						Optional.empty()
+				);
+
+		// MAINS official: per day EVN (KVH / Fac_C) when imported, else measured grid
+		final OfficialTotal official =
+				OfficialEnergyService.total(
+						officialEnergy.dailyOfficial(
+								hours,
+								monthStart,
+								nextMonthStart,
+								officialEnergy.evnDays(fac, monthStart.toLocalDate(), nextMonthStart.toLocalDate()),
+								Optional.empty()
+						)
 				);
 
 		log.info("solar/monthly {} {}: current power {} ms, hourly energy {} ms, total {} ms",
@@ -153,7 +173,9 @@ public class SolarDashboardService {
 
 				co2Kg,
 				co2Ton,
-				trees
+				trees,
+
+				oneDecimal(official.gridKwh())
 		);
 	}
 

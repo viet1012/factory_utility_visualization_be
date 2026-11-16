@@ -10,15 +10,29 @@ import com.example.factory_utility_visualization_be.dto.overview.electric.Electr
 import com.example.factory_utility_visualization_be.dto.overview.electric.ElectricConsumptionResponseDto.Scope;
 import com.example.factory_utility_visualization_be.dto.overview.electric.ElectricConsumptionResponseDto.UnitPrices;
 import com.example.factory_utility_visualization_be.dto.overview.electric.ElectricConsumptionResponseDto.Values;
+import com.example.factory_utility_visualization_be.dto.overview.electric.ElectricConsumptionResponseDto.Calibrated;
+import com.example.factory_utility_visualization_be.dto.overview.electric.ElectricConsumptionResponseDto.Evn;
+import com.example.factory_utility_visualization_be.dto.overview.electric.ElectricConsumptionResponseDto.Official;
+import com.example.factory_utility_visualization_be.dto.overview.electric.ElectricConsumptionResponseDto.OfficialValues;
 import com.example.factory_utility_visualization_be.repository.overview.electric.ElectricConsumptionRepo;
+import com.example.factory_utility_visualization_be.repository.overview.electric.EvnCalibrationJdbcRepository;
+import com.example.factory_utility_visualization_be.repository.overview.electric.EvnCalibrationJdbcRepository.EvnDay;
+import com.example.factory_utility_visualization_be.repository.overview.electric.EvnCalibrationJdbcRepository.LossCalibration;
 import com.example.factory_utility_visualization_be.repository.overview.electric.projection.ElectricConsumptionMeterDayProjection;
 import com.example.factory_utility_visualization_be.repository.overview.electric.projection.ElectricConsumptionMeterProjection;
+import com.example.factory_utility_visualization_be.repository.overview.electric.projection.ElectricMeterLastPickProjection;
+import com.example.factory_utility_visualization_be.service.overview.electric.HourlyEnergyCache.MeterHour;
 import com.example.factory_utility_visualization_be.service.overview.electric.GridSolarSplit.HourMoney;
 import com.example.factory_utility_visualization_be.service.overview.electric.GridSolarSplit.HourSum;
 import com.example.factory_utility_visualization_be.service.overview.electric.GridSolarSplit.MeterFilter;
 import com.example.factory_utility_visualization_be.service.runtime.ElectricityPricingService;
+import com.example.factory_utility_visualization_be.service.runtime.ElectricityPricingService.Money;
 import com.example.factory_utility_visualization_be.service.runtime.ElectricityPricingService.Pricing;
 import com.example.factory_utility_visualization_be.service.runtime.TouTariffService.TouBand;
+import com.example.factory_utility_visualization_be.service.runtime.TouTariffService.TouShare;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -33,6 +47,7 @@ import java.time.format.TextStyle;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.EnumMap;
 import java.util.HashMap;
@@ -43,12 +58,19 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.function.Predicate;
 
 /**
  * Builds GET /api/utility/electric-consumption from the hourly History_Main
- * energy (ElectricConsumptionRepo.findHourlyEnergy: fac x SOLAR flag x hour x
- * outlier flag) and the time-of-use tariff of F2_Utility_Cost_Master.
+ * energy and the time-of-use tariff of F2_Utility_Cost_Master.
+ *
+ * Energy source (loadEnergy): the meter-hours of HourlyEnergyCache (cached
+ * per month, shared with the dashboards), outliers flagged in memory with
+ * the median / P90 of each meter over the request window [first history
+ * period, dataUntil) - the same window and rule as the old SQL
+ * (findHourlyEnergy / findMeterDays PERCENTILE_CONT), which is only used
+ * when no cache is wired (unit tests). Step timings are logged at INFO.
  *
  * Outlier meter-hours (cumulative / catch-up values, see the repo) are not
  * counted: that meter-hour is treated as missing, so the day becomes
@@ -71,6 +93,7 @@ import java.util.function.Predicate;
  * meters with missing hours are listed (findMeterDays). The monthly history
  * still uses the meters seen in the data (+/- meterWindowDays).
  */
+@Slf4j
 @Service
 public class ElectricConsumptionCalculator {
 
@@ -89,18 +112,79 @@ public class ElectricConsumptionCalculator {
 	private final ElectricConsumptionProperties properties;
 	// load / solar / grid per scope x hour + pricing, shared with the dashboards
 	private final GridSolarSplit split;
+	// F2_Utility_Evn_Daily / F2_Utility_Loss_Calibration; null = none (unit tests)
+	private final EvnCalibrationJdbcRepository evnRepo;
+	// meter-hours cached per month (shared with the dashboards); null = old
+	// SQL path findHourlyEnergy / findMeterDays (unit tests)
+	private final HourlyEnergyCache hourlyCache;
 
-	// same 3 dependencies as before (GridSolarSplit is built from them)
+	// same 3 dependencies as before (GridSolarSplit is built from them); no
+	// EVN / calibration, SQL path
 	public ElectricConsumptionCalculator(
 			ElectricConsumptionRepo repo,
 			ElectricityPricingService pricingService,
 			ElectricConsumptionProperties properties
 	) {
+		this(repo, pricingService, properties, null, null);
+	}
+
+	@Autowired
+	public ElectricConsumptionCalculator(
+			ElectricConsumptionRepo repo,
+			ElectricityPricingService pricingService,
+			ElectricConsumptionProperties properties,
+			EvnCalibrationJdbcRepository evnRepo,
+			HourlyEnergyCache hourlyCache
+	) {
 		this.repo = repo;
 		this.pricingService = pricingService;
 		this.properties = properties;
 		this.split = new GridSolarSplit(repo, pricingService, properties);
+		this.evnRepo = evnRepo;
+		this.hourlyCache = hourlyCache;
 	}
+
+	/**
+	 * Named step durations of one request, for the INFO log line. step()
+	 * charges the time since the previous mark to a name; add() charges a
+	 * slice measured inside a loop (e.g. meterIssues, also part of the
+	 * enclosing step).
+	 */
+	static final class StepTimer {
+		private final long started = System.nanoTime();
+		private long mark = started;
+		private final Map<String, Long> nanos = new LinkedHashMap<>();
+
+		void step(String name) {
+			long now = System.nanoTime();
+			add(name, now - mark);
+			mark = now;
+		}
+
+		void add(String name, long ns) {
+			nanos.merge(name, ns, Long::sum);
+		}
+
+		String summary() {
+			StringBuilder sb = new StringBuilder();
+			nanos.forEach((name, ns) -> sb.append(name).append(' ').append(ns / 1_000_000).append(" ms, "));
+			return sb.append("total ").append((System.nanoTime() - started) / 1_000_000).append(" ms").toString();
+		}
+	}
+
+	/**
+	 * Energy of one window [from, to): load / solar per scope x hour (outliers
+	 * flagged) and the configured grid meters per scope with their valid /
+	 * outlier hours per day from dataFrom.
+	 */
+	private record Energy(
+			Map<ScopeDef, Map<LocalDateTime, HourSum>> hours,
+			Map<ScopeDef, List<MeterData>> meters,
+			int meterHours
+	) {}
+
+	// per meter outlier stats over the window (median: grid, P90: SOLAR)
+	private record MeterStats(BigDecimal median, BigDecimal p90) {}
 
 	// the 3 charts of the sheet: TTL KVH, Fac A&B (Trans No.2), Fac C (Trans No.1)
 	enum ScopeDef {
@@ -124,9 +208,57 @@ public class ElectricConsumptionCalculator {
 	}
 
 	// [from, to) dates of one bill period
-	record Period(YearMonth month, LocalDate from, LocalDate to) {
-		int days() {
+	public record Period(YearMonth month, LocalDate from, LocalDate to) {
+		public int days() {
 			return (int) ChronoUnit.DAYS.between(from, to);
+		}
+	}
+
+	/**
+	 * Measured grid of one scope x day (POST /loss-calibration/recompute).
+	 *
+	 * @param fullCoverage day is over and EVERY configured grid meter of the
+	 *                     scope has 24 valid (non-outlier) hours
+	 */
+	public record MeasuredDay(
+			LocalDate day,
+			// sum over hours of max(load - solar, 0)
+			BigDecimal gridKwh,
+			// sum of the grid sub-meters (consumption = grid + solar)
+			BigDecimal loadKwh,
+			// configured grid meters of the scope
+			int meters,
+			// meter-hours with valid grid data
+			int meterHours,
+			boolean fullCoverage
+	) {
+		// meterHours / (meters x 24) in %, null = no configured meter
+		public BigDecimal coveragePct() {
+			return meters == 0 ? null : BigDecimal.valueOf(meterHours * 100L)
+					.divide(BigDecimal.valueOf((long) meters * HOURS_PER_DAY), 1, RoundingMode.HALF_UP);
+		}
+	}
+
+	/**
+	 * Loss calibration rows; a day uses the row with the highest id (= most
+	 * recent recompute) of its scope whose [effective_from, effective_to]
+	 * contains it, none = no calibrated values that day.
+	 */
+	private static final class CalibrationTable {
+		private static final CalibrationTable EMPTY = new CalibrationTable(List.of());
+
+		// newest id first
+		private final List<LossCalibration> rows;
+		private final Map<String, Optional<LossCalibration>> byScopeDay = new HashMap<>();
+
+		private CalibrationTable(List<LossCalibration> rows) {
+			this.rows = rows.stream().sorted(Comparator.comparingLong(LossCalibration::id).reversed()).toList();
+		}
+
+		private LossCalibration find(String scope, LocalDate day) {
+			return byScopeDay.computeIfAbsent(scope + "|" + day, key -> rows.stream()
+					.filter(row -> scope.equals(row.scope()) && row.covers(day))
+					.findFirst()).orElse(null);
 		}
 	}
 
@@ -155,17 +287,36 @@ public class ElectricConsumptionCalculator {
 		private final int[] gridMeters = new int[HOURS_PER_DAY];
 		// kWh dropped as outliers
 		private BigDecimal excluded = BigDecimal.ZERO;
+		// calibrated grid = measured grid + loss per hour, only hours with grid
+		// (load) data; meaningful for one day only (DayPoint.calibrated)
+		private final Map<TouBand, BigDecimal> calBandKwh = new EnumMap<>(TouBand.class);
+		private BigDecimal calGrid = BigDecimal.ZERO;
+		private int calHours;
+		// kWh added per hour with data (KVH: FAC_AB + FAC_C) and the
+		// F2_Utility_Loss_Calibration ids used; null = not calibrated
+		private BigDecimal calLossPerHour;
+		private List<Long> calIds;
+		// official day built from F2_Utility_Evn_Daily (one day only, not merged by add)
+		private boolean fromEvn;
 
 		private Acc() {
 			for (TouBand band : TouBand.values()) {
 				bandKwh.put(band, BigDecimal.ZERO);
 				bandUsd.put(band, BigDecimal.ZERO);
+				calBandKwh.put(band, BigDecimal.ZERO);
 			}
 		}
 
 		private void add(Acc other) {
 			other.bandKwh.forEach((band, value) -> bandKwh.merge(band, value, BigDecimal::add));
 			other.bandUsd.forEach((band, value) -> bandUsd.merge(band, value, BigDecimal::add));
+			other.calBandKwh.forEach((band, value) -> calBandKwh.merge(band, value, BigDecimal::add));
+			calGrid = calGrid.add(other.calGrid);
+			calHours += other.calHours;
+			if (calIds == null) {
+				calIds = other.calIds;
+				calLossPerHour = other.calLossPerHour;
+			}
 			load = load.add(other.load);
 			grid = grid.add(other.grid);
 			solar = solar.add(other.solar);
@@ -197,6 +348,51 @@ public class ElectricConsumptionCalculator {
 
 		private BigDecimal gridUsd() {
 			return bandUsd.values().stream().reduce(BigDecimal.ZERO, BigDecimal::add);
+		}
+	}
+
+	/**
+	 * Official values summed over a set of days: an EVN day is always in the
+	 * set (never left out as partial / without measured data), a MEASURED day
+	 * follows the measured rule (total: has data, average: complete). Its own
+	 * day count is the average divisor and its own priced days decide money,
+	 * since the set differs from the measured one.
+	 */
+	private static final class OfficialSum {
+		private final Acc acc = new Acc();
+		private int evnDays;
+		private int measuredDays;
+		private int pricedDays;
+
+		private void add(Acc day, boolean dayPriced) {
+			acc.add(day);
+
+			if (day.fromEvn) {
+				evnDays++;
+			} else {
+				measuredDays++;
+			}
+
+			if (dayPriced) {
+				pricedDays++;
+			}
+		}
+
+		private int days() {
+			return evnDays + measuredDays;
+		}
+
+		// sum (average = false) or average per day; null = no day
+		private Values mwh(ElectricConsumptionCalculator calc, boolean average, boolean priced) {
+			return days() == 0 ? null : calc.mwh(acc, divisor(average), priced && pricedDays > 0);
+		}
+
+		private Values kusd(ElectricConsumptionCalculator calc, boolean average, boolean priced) {
+			return days() == 0 ? null : calc.kusd(acc, divisor(average), priced && pricedDays > 0);
+		}
+
+		private BigDecimal divisor(boolean average) {
+			return average ? BigDecimal.valueOf(days()) : BigDecimal.ONE;
 		}
 	}
 
@@ -264,6 +460,16 @@ public class ElectricConsumptionCalculator {
 
 	@Transactional(readOnly = true)
 	public ElectricConsumptionResponseDto calculate(YearMonth month, int months, int hourOffset) {
+		return calculate(month, months, hourOffset, true);
+	}
+
+	/**
+	 * @param withEvn false = measured only (view=measured): F2_Utility_Evn_Daily
+	 *                / F2_Utility_Loss_Calibration are not read, so calibrated /
+	 *                evn are null and official = the measured values
+	 */
+	@Transactional(readOnly = true)
+	public ElectricConsumptionResponseDto calculate(YearMonth month, int months, int hourOffset, boolean withEvn) {
 		LocalDateTime lastFullHour = LocalDateTime.now(APP_ZONE).truncatedTo(ChronoUnit.HOURS);
 
 		Period current = period(month);
@@ -287,18 +493,48 @@ public class ElectricConsumptionCalculator {
 		LocalDateTime currentFrom = current.from().atStartOfDay();
 		LocalDateTime dataFrom = currentFrom.isBefore(queryFrom) ? queryFrom : currentFrom;
 
+		StepTimer timer = new StepTimer();
 		MeterFilter filter = meterFilter();
 		Optional<Pricing> pricing = pricingService.load();
-		Map<ScopeDef, Map<LocalDate, Acc>> days = loadDays(queryFrom, dataUntil, hourOffset, pricing, filter);
-		Map<ScopeDef, List<MeterData>> meters = loadMeters(queryFrom, dataFrom, dataUntil, hourOffset, filter);
+		timer.step("filter+tariff");
+
+		// one window [queryFrom, dataUntil) for the hourly sums AND the meter
+		// days, so both see the same outliers (median over the whole window)
+		Energy energy = loadEnergy(queryFrom, dataFrom, dataUntil, hourOffset, filter, timer);
+		CalibrationTable calibrations = withEvn ? loadCalibrations() : CalibrationTable.EMPTY;
+		timer.step("calibrations");
+		Map<ScopeDef, Map<LocalDate, Acc>> days = loadDays(energy.hours(), pricing, calibrations);
+		timer.step("days+pricing");
+
+		// history periods too: monthly[].official
+		Map<String, Map<LocalDate, EvnDay>> evn = !withEvn ? Map.of() : loadEvn(
+				(history.isEmpty() ? current : history.get(0)).from(), current.to());
+		timer.step("EVN");
+
+		Map<ScopeDef, Map<LocalDate, Acc>> official = new EnumMap<>(ScopeDef.class);
+
+		for (ScopeDef def : ScopeDef.values()) {
+			// KVH: its own EVN row (not FAC_AB + FAC_C)
+			official.put(def, officialDays(days.get(def), evn.getOrDefault(def.name(), Map.of()), pricing));
+		}
+		timer.step("official");
 
 		List<Scope> scopes = new ArrayList<>(ScopeDef.values().length);
 
 		for (ScopeDef def : ScopeDef.values()) {
-			scopes.add(scope(def, days.get(def), meters.get(def), history, current, dataFrom, dataUntil,
+			scopes.add(scope(def, days.get(def), energy.meters().get(def), history, current, dataFrom, dataUntil,
 					pricing.isPresent(),
-					day -> pricing.isPresent() && pricing.get().priced(day)));
+					day -> pricing.isPresent() && pricing.get().priced(day),
+					evn.getOrDefault(def.name(), Map.of()),
+					official.get(def),
+					timer));
 		}
+		// includes meterIssues (also logged on its own)
+		timer.step("scopes");
+
+		log.info("electric-consumption {} months {} offset {} [{} , {}): {} meter-hours ({}), {}",
+				month, months, hourOffset, queryFrom, dataUntil, energy.meterHours(),
+				hourlyCache == null ? "SQL" : "hourly cache", timer.summary());
 
 		return new ElectricConsumptionResponseDto(
 				month.toString(),
@@ -324,17 +560,151 @@ public class ElectricConsumptionCalculator {
 	}
 
 	/**
-	 * Configured grid meters per scope, with their valid / outlier hours per
-	 * day of [dataFrom, dataUntil). The outlier window is [from, dataUntil),
-	 * the same as loadDays, so both see the same outliers.
+	 * Energy of the window [from, to) (hour start, hourOffset applied) and the
+	 * meter days from dataFrom:
+	 * - HourlyEnergyCache (default): meter-hours of the cached months, median /
+	 *   P90 per meter over EXACTLY this window in memory (= the PERCENTILE_CONT
+	 *   OVER (PARTITION BY box_device_id) of the SQL), outlier flag
+	 *   GridSolarSplit.isOutlier, then the hourly sums AND the meter days from
+	 *   the same flagged rows: no findHourlyEnergy / findMeterDays any more
+	 * - SQL (hourlyCache null, unit tests): findHourlyEnergy + findMeterDays
 	 */
-	private Map<ScopeDef, List<MeterData>> loadMeters(
+	private Energy loadEnergy(
 			LocalDateTime from,
 			LocalDateTime dataFrom,
-			LocalDateTime dataUntil,
+			LocalDateTime to,
 			int offset,
-			MeterFilter filter
+			MeterFilter filter,
+			StepTimer timer
 	) {
+		if (hourlyCache != null) {
+			return cachedEnergy(from, dataFrom, to, offset, filter, timer);
+		}
+
+		Map<ScopeDef, Map<LocalDateTime, HourSum>> hours = split.hourSums(
+				from, to, offset, filter, List.of(ScopeDef.values()), ScopeDef::includes);
+		timer.step("hourly query (SQL)");
+		Map<ScopeDef, List<MeterData>> meters = loadMeters(from, dataFrom, to, offset, filter);
+		timer.step("meter days query (SQL)");
+
+		return new Energy(hours, meters, -1);
+	}
+
+	private Energy cachedEnergy(
+			LocalDateTime from,
+			LocalDateTime dataFrom,
+			LocalDateTime to,
+			int offset,
+			MeterFilter filter,
+			StepTimer timer
+	) {
+		Map<String, MeterData> gridMeters = gridMeters(filter);
+		Map<ScopeDef, Map<LocalDateTime, HourSum>> hours = new EnumMap<>(ScopeDef.class);
+
+		for (ScopeDef def : ScopeDef.values()) {
+			hours.put(def, new TreeMap<>());
+		}
+
+		timer.step("grid meters");
+
+		// 1) meter-hours with hourAt + offset in [from, to) (same as the SQL
+		// window pick_at in [from + 1h - offset, to + 1h - offset))
+		List<MeterHour> rows = hourlyCache.rows(from.minusHours(offset), to.minusHours(offset));
+		timer.step("hourly rows (cache)");
+
+		// 2) median (grid) / P90 (SOLAR) kWh per hour of each meter over the window
+		Map<String, List<BigDecimal>> byMeter = new HashMap<>();
+		Map<String, Boolean> solarMeter = new HashMap<>();
+
+		for (MeterHour row : rows) {
+			byMeter.computeIfAbsent(row.meter(), key -> new ArrayList<>()).add(row.kwh());
+			solarMeter.putIfAbsent(row.meter(), row.solar());
+		}
+
+		Map<String, MeterStats> stats = new HashMap<>(byMeter.size() * 2);
+
+		byMeter.forEach((meter, values) -> {
+			Collections.sort(values);
+			boolean solar = solarMeter.get(meter);
+			stats.put(meter, new MeterStats(
+					solar ? null : GridSolarSplit.percentile(values, 0.5),
+					solar ? GridSolarSplit.percentile(values, 0.9) : null));
+		});
+		timer.step("median/outlier");
+
+		// 3) flag + hourly sums per scope + grid meter days (from dataFrom)
+		boolean meterDays = dataFrom.isBefore(to);
+		// last pick_at of a non-outlier hour in the window (findMeterDays MeterLast.lv)
+		Map<String, LocalDateTime> lastValidPick = new HashMap<>();
+
+		for (MeterHour row : rows) {
+			MeterStats s = stats.get(row.meter());
+			boolean outlier = GridSolarSplit.isOutlier(row.kwh(), row.solar(), s.median(), s.p90(), properties);
+			LocalDateTime hourAt = row.hourAt().plusHours(offset);
+
+			for (ScopeDef def : ScopeDef.values()) {
+				if (def.includes(row.fac())) {
+					hours.get(def).computeIfAbsent(hourAt, key -> new HourSum()).add(row.kwh(), row.solar(), outlier, 1);
+				}
+			}
+
+			MeterData meter = row.solar() || !meterDays ? null : gridMeters.get(row.meter());
+
+			if (meter == null) {
+				continue;
+			}
+
+			if (!outlier && row.lastPickAt() != null) {
+				lastValidPick.merge(row.meter(), row.lastPickAt(), (a, b) -> a.isAfter(b) ? a : b);
+			}
+
+			if (!hourAt.isBefore(dataFrom)) {
+				int[] h = meter.hours.computeIfAbsent(hourAt.toLocalDate(), key -> new int[2]);
+
+				if (outlier) {
+					h[1]++;
+				} else {
+					h[0]++;
+					meter.validHoursTotal++;
+					meter.validKwh = meter.validKwh.add(row.kwh());
+				}
+			}
+		}
+		timer.step("aggregate");
+
+		if (meterDays) {
+			// meters without a valid hour in the window: last pick_at before it
+			List<String> missing = gridMeters.keySet().stream()
+					.filter(meter -> !lastValidPick.containsKey(meter))
+					.map(meter -> meter.toUpperCase(Locale.ROOT))
+					.toList();
+
+			if (!missing.isEmpty()) {
+				for (ElectricMeterLastPickProjection row : repo.findGridMeterLastPickBefore(
+						ENERGY_NAME, from.plusHours(1L - offset), missing,
+						filter.excluded(), filter.facAb(), filter.facC())) {
+					if (row.getMeter() != null && row.getLastPickAt() != null) {
+						lastValidPick.putIfAbsent(row.getMeter().trim(), row.getLastPickAt());
+					}
+				}
+			}
+
+			// pick_at is stamped at the end of its hour -> end of the last valid hour
+			lastValidPick.forEach((meter, pickAt) -> {
+				MeterData data = gridMeters.get(meter);
+
+				if (data != null) {
+					data.lastDataAt = pickAt.truncatedTo(ChronoUnit.HOURS).plusHours(offset);
+				}
+			});
+			timer.step("meter last pick");
+		}
+
+		return new Energy(hours, byScope(gridMeters), rows.size());
+	}
+
+	// configured grid meters (findGridMeters), box_device_id trimmed -> meter
+	private Map<String, MeterData> gridMeters(MeterFilter filter) {
 		Map<String, MeterData> byMeter = new LinkedHashMap<>();
 
 		for (ElectricConsumptionMeterProjection row : repo.findGridMeters(
@@ -343,6 +713,34 @@ public class ElectricConsumptionCalculator {
 				byMeter.putIfAbsent(row.getMeter().trim(), new MeterData(row.getMeter().trim(), facKey(row.getFac())));
 			}
 		}
+
+		return byMeter;
+	}
+
+	private static Map<ScopeDef, List<MeterData>> byScope(Map<String, MeterData> byMeter) {
+		Map<ScopeDef, List<MeterData>> meters = new EnumMap<>(ScopeDef.class);
+
+		for (ScopeDef def : ScopeDef.values()) {
+			meters.put(def, byMeter.values().stream().filter(m -> def.includes(m.fac)).toList());
+		}
+
+		return meters;
+	}
+
+	/**
+	 * SQL path (unit tests): configured grid meters per scope, with their
+	 * valid / outlier hours per day of [dataFrom, dataUntil). The outlier
+	 * window is [from, dataUntil), the same as findHourlyEnergy, so both see
+	 * the same outliers.
+	 */
+	private Map<ScopeDef, List<MeterData>> loadMeters(
+			LocalDateTime from,
+			LocalDateTime dataFrom,
+			LocalDateTime dataUntil,
+			int offset,
+			MeterFilter filter
+	) {
+		Map<String, MeterData> byMeter = gridMeters(filter);
 
 		if (dataFrom.isBefore(dataUntil)) {
 			List<ElectricConsumptionMeterDayProjection> rows = repo.findMeterDays(
@@ -377,25 +775,18 @@ public class ElectricConsumptionCalculator {
 			}
 		}
 
-		Map<ScopeDef, List<MeterData>> meters = new EnumMap<>(ScopeDef.class);
-
-		for (ScopeDef def : ScopeDef.values()) {
-			meters.put(def, byMeter.values().stream().filter(m -> def.includes(m.fac)).toList());
-		}
-
-		return meters;
+		return byScope(byMeter);
 	}
 
 	private static String facKey(String fac) {
 		return GridSolarSplit.facKey(fac);
 	}
 
+	// load / solar per scope x hour (loadEnergy) -> days with grid / bands / money
 	private Map<ScopeDef, Map<LocalDate, Acc>> loadDays(
-			LocalDateTime from,
-			LocalDateTime to,
-			int offset,
+			Map<ScopeDef, Map<LocalDateTime, HourSum>> hours,
 			Optional<Pricing> pricing,
-			MeterFilter filter
+			CalibrationTable calibrations
 	) {
 		Map<ScopeDef, Map<LocalDate, Acc>> days = new EnumMap<>(ScopeDef.class);
 
@@ -403,20 +794,229 @@ public class ElectricConsumptionCalculator {
 			days.put(def, new HashMap<>());
 		}
 
-		// load / solar per scope x hour (GridSolarSplit, shared with the dashboards)
-		Map<ScopeDef, Map<LocalDateTime, HourSum>> hours = split.hourSums(
-				from, to, offset, filter, List.of(ScopeDef.values()), ScopeDef::includes);
-
 		// grid = max(load - solar, 0) per scope x hour, then bands / money
 		for (ScopeDef def : ScopeDef.values()) {
 			Map<LocalDate, Acc> scopeDays = days.get(def);
 
-			hours.get(def).forEach((hourAt, sum) -> scopeDays
-					.computeIfAbsent(hourAt.toLocalDate(), key -> new Acc())
-					.add(toAcc(sum, hourAt, pricing)));
+			hours.get(def).forEach((hourAt, sum) -> {
+				Acc acc = toAcc(sum, hourAt, pricing);
+
+				if (def == ScopeDef.KVH) {
+					calibrateKvh(acc, hours, hourAt, calibrations, pricing);
+				} else {
+					LossCalibration calibration = calibrations.find(def.name(), hourAt.toLocalDate());
+
+					// only hours with grid (load) data get the loss: missing meters / hours are not filled
+					if (calibration != null && sum.hasLoad()) {
+						calibrate(acc, List.of(calibration.id()), calibration.lossKwhPerHour(),
+								sum.grid().add(calibration.lossKwhPerHour()), hourAt, pricing);
+					}
+				}
+
+				scopeDays.computeIfAbsent(hourAt.toLocalDate(), key -> new Acc()).add(acc);
+			});
 		}
 
 		return days;
+	}
+
+	/**
+	 * KVH is never calibrated on its own: per hour, calibrated KVH =
+	 * calibrated FAC_AB + calibrated FAC_C, each = fac grid + fac loss when that
+	 * fac has grid data in the hour. Needs a calibration of BOTH facs on the
+	 * day, else KVH has no calibrated value (a half-calibrated KVH would not
+	 * equal FAC_AB + FAC_C). KVH rows of F2_Utility_Loss_Calibration are ignored.
+	 */
+	private static void calibrateKvh(
+			Acc acc,
+			Map<ScopeDef, Map<LocalDateTime, HourSum>> hours,
+			LocalDateTime hourAt,
+			CalibrationTable calibrations,
+			Optional<Pricing> pricing
+	) {
+		LocalDate day = hourAt.toLocalDate();
+		LossCalibration ab = calibrations.find(ScopeDef.FAC_AB.name(), day);
+		LossCalibration c = calibrations.find(ScopeDef.FAC_C.name(), day);
+
+		if (ab == null || c == null) {
+			return;
+		}
+
+		BigDecimal grid = BigDecimal.ZERO;
+		boolean any = false;
+
+		for (Map.Entry<ScopeDef, LossCalibration> fac : Map.of(ScopeDef.FAC_AB, ab, ScopeDef.FAC_C, c).entrySet()) {
+			HourSum sum = hours.get(fac.getKey()).get(hourAt);
+
+			if (sum != null && sum.hasLoad()) {
+				grid = grid.add(sum.grid()).add(fac.getValue().lossKwhPerHour());
+				any = true;
+			}
+		}
+
+		if (any) {
+			calibrate(acc, List.of(ab.id(), c.id()), ab.lossKwhPerHour().add(c.lossKwhPerHour()), grid, hourAt,
+					pricing);
+		}
+	}
+
+	// calibrated grid of one scope x hour (measured grid + loss), same band split as the grid
+	private static void calibrate(
+			Acc acc,
+			List<Long> calibrationIds,
+			BigDecimal lossPerHour,
+			BigDecimal grid,
+			LocalDateTime hourAt,
+			Optional<Pricing> pricing
+	) {
+		acc.calGrid = grid;
+		acc.calHours = 1;
+		acc.calIds = calibrationIds;
+		acc.calLossPerHour = lossPerHour;
+
+		if (pricing.isPresent()) {
+			for (TouShare share : pricing.get().shares(hourAt)) {
+				acc.calBandKwh.merge(share.band(), grid.multiply(share.fraction()), BigDecimal::add);
+			}
+		}
+	}
+
+	// every calibration row; table missing / unreadable -> none (GET must keep working)
+	private CalibrationTable loadCalibrations() {
+		if (evnRepo == null) {
+			return CalibrationTable.EMPTY;
+		}
+
+		try {
+			return new CalibrationTable(evnRepo.findCalibrations());
+		} catch (DataAccessException e) {
+			log.warn("F2_Utility_Loss_Calibration not readable, no calibrated values: {}", e.getMessage());
+			return CalibrationTable.EMPTY;
+		}
+	}
+
+	// scope -> day -> EVN row of [from, to); table missing -> none
+	private Map<String, Map<LocalDate, EvnDay>> loadEvn(LocalDate from, LocalDate to) {
+		if (evnRepo == null) {
+			return Map.of();
+		}
+
+		try {
+			Map<String, Map<LocalDate, EvnDay>> evn = new HashMap<>();
+
+			for (EvnDay row : evnRepo.findEvnDays(from, to, null)) {
+				evn.computeIfAbsent(row.scope(), key -> new HashMap<>()).put(row.day(), row);
+			}
+
+			return evn;
+		} catch (DataAccessException e) {
+			log.warn("F2_Utility_Evn_Daily not readable, no evn values: {}", e.getMessage());
+			return Map.of();
+		}
+	}
+
+	/**
+	 * Official kWh / USD of one scope per day: the EVN row of the day when
+	 * imported (evnAcc), else the measured day itself (same Acc, so the
+	 * MEASURED values are an exact copy of mwh / kusd). Never calibrated.
+	 */
+	private static Map<LocalDate, Acc> officialDays(
+			Map<LocalDate, Acc> measured,
+			Map<LocalDate, EvnDay> evn,
+			Optional<Pricing> pricing
+	) {
+		Map<LocalDate, Acc> official = new HashMap<>(measured);
+		evn.forEach((day, row) -> official.put(day, evnAcc(row, measured.get(day), pricing)));
+		return official;
+	}
+
+	/**
+	 * One EVN day: grid / bands = EVN kWh, band USD = band kWh x grid price of
+	 * the band on that day (same tariff and factor as the measured grid);
+	 * solar kWh / USD = measured; load = grid + solar. Bands / USD stay 0 when
+	 * the day has no tariff version (same as a measured day, money null).
+	 */
+	private static Acc evnAcc(EvnDay row, Acc measured, Optional<Pricing> pricing) {
+		Acc acc = new Acc();
+
+		acc.fromEvn = true;
+		acc.hasLoad = true;
+		acc.grid = row.totalKwh();
+
+		if (measured != null && measured.hasSolar) {
+			acc.hasSolar = true;
+			acc.solar = measured.solar;
+			acc.solarUsd = measured.solarUsd;
+		}
+
+		acc.load = acc.grid.add(acc.solar);
+
+		if (pricing.isPresent() && pricing.get().priced(row.day())) {
+			// shared EVN pricing (also used by the dashboards)
+			Map<TouBand, Money> money = OfficialEnergyService.bandMoney(row, pricing.get());
+
+			OfficialEnergyService.bandKwh(row).forEach((band, kwh) -> {
+				acc.bandKwh.put(band, kwh);
+
+				Money m = money.get(band);
+
+				if (m != null) {
+					acc.bandUsd.put(band, m.usd());
+				}
+			});
+		}
+
+		return acc;
+	}
+
+	/**
+	 * Measured grid per day of [from, to) for one scope (KVH | FAC_AB | FAC_C)
+	 * with the same rules as the daily chart (outliers dropped, grid =
+	 * max(load - solar, 0) per hour), for the loss calibration. Only days with
+	 * grid data; days not over yet are never fullCoverage. Outliers are judged
+	 * against the meter's median over [from, to) (GET uses its own window, so
+	 * a borderline meter-hour can differ).
+	 */
+	@Transactional(readOnly = true)
+	public Map<LocalDate, MeasuredDay> measuredDays(String scope, LocalDate from, LocalDate to, int hourOffset) {
+		ScopeDef def = ScopeDef.valueOf(scope);
+		LocalDateTime lastFullHour = LocalDateTime.now(APP_ZONE).truncatedTo(ChronoUnit.HOURS);
+		LocalDateTime start = from.atStartOfDay();
+		LocalDateTime end = to.atStartOfDay().isAfter(lastFullHour) ? lastFullHour : to.atStartOfDay();
+		LocalDate historyStart = properties.getHistoryStartDate();
+
+		if (historyStart != null && start.isBefore(historyStart.atStartOfDay())) {
+			start = historyStart.atStartOfDay();
+		}
+
+		Map<LocalDate, MeasuredDay> result = new java.util.TreeMap<>();
+
+		if (!start.isBefore(end)) {
+			return result;
+		}
+
+		MeterFilter filter = meterFilter();
+		StepTimer timer = new StepTimer();
+		Energy energy = loadEnergy(start, start, end, hourOffset, filter, timer);
+		Map<LocalDate, Acc> days = loadDays(energy.hours(), Optional.empty(), CalibrationTable.EMPTY).get(def);
+		List<MeterData> meters = energy.meters().get(def);
+		LocalDateTime until = end;
+		log.debug("measured days {} [{} , {}): {}", scope, start, end, timer.summary());
+
+		days.forEach((day, acc) -> {
+			if (!acc.hasLoad) {
+				return;
+			}
+
+			boolean over = !day.plusDays(1).atStartOfDay().isAfter(until);
+			boolean everyMeterFull = !meters.isEmpty()
+					&& meters.stream().allMatch(m -> m.validHours(day) >= HOURS_PER_DAY);
+
+			result.put(day, new MeasuredDay(day, acc.grid, acc.load, meters.size(), acc.meterHours(),
+					over && everyMeterFull));
+		});
+
+		return result;
 	}
 
 	// one scope x hour: grid = max(load - solar, 0) split into tariff bands
@@ -453,12 +1053,19 @@ public class ElectricConsumptionCalculator {
 			LocalDateTime dataUntil,
 			boolean priced,
 			// a tariff version is in effect on that day (else daily bands / K$ = null)
-			Predicate<LocalDate> pricedOn
+			Predicate<LocalDate> pricedOn,
+			// F2_Utility_Evn_Daily rows of the scope (history + selected period)
+			Map<LocalDate, EvnDay> evn,
+			// officialDays(): EVN day when imported, else the measured day
+			Map<LocalDate, Acc> official,
+			StepTimer timer
 	) {
 		List<MonthPoint> monthly = new ArrayList<>(history.size());
 
 		for (Period period : history) {
 			Acc complete = new Acc();
+			// official average: every EVN day + complete MEASURED days
+			OfficialSum officialAverage = new OfficialSum();
 			int meters = meters(days, period);
 			int daysWithData = 0;
 			int completeDays = 0;
@@ -472,6 +1079,14 @@ public class ElectricConsumptionCalculator {
 					excluded = excluded.add(acc.excluded);
 				}
 
+				// an EVN day always counts as complete, measured data or not
+				Acc dayOfficial = official.get(day);
+				boolean evnDay = dayOfficial != null && dayOfficial.fromEvn;
+
+				if (evnDay) {
+					officialAverage.add(dayOfficial, pricedOn.test(day));
+				}
+
 				if (acc == null || !acc.hasData()) {
 					continue;
 				}
@@ -482,6 +1097,10 @@ public class ElectricConsumptionCalculator {
 				if (isComplete(day, acc, dataUntil, (long) expectedMeters(days, day) * HOURS_PER_DAY)) {
 					complete.add(acc);
 					completeDays++;
+
+					if (!evnDay) {
+						officialAverage.add(acc, pricedOn.test(day));
+					}
 
 					if (pricedOn.test(day)) {
 						pricedCompleteDays++;
@@ -506,13 +1125,22 @@ public class ElectricConsumptionCalculator {
 					excludedMwh(excluded),
 					completeDays == 0 ? null : mwh(complete, divisor, monthPriced),
 					completeDays == 0 ? null : kusd(complete, divisor, monthPriced),
-					pricedCompleteDays < completeDays
+					pricedCompleteDays < completeDays,
+					officialAverage.days() == 0 ? null : new OfficialValues(
+							officialAverage.mwh(this, true, priced),
+							officialAverage.kusd(this, true, priced)),
+					officialAverage.evnDays,
+					officialAverage.measuredDays
 			));
 		}
 
 		List<DayPoint> daily = new ArrayList<>(current.days());
 		Acc total = new Acc();
 		Acc complete = new Acc();
+		// official: total = every EVN day + MEASURED days with data,
+		// average = every EVN day + complete MEASURED days
+		OfficialSum officialTotal = new OfficialSum();
+		OfficialSum officialAverage = new OfficialSum();
 		// selected period: expected meters = configured grid meters of the scope
 		int meters = gridMeters.size();
 		int elapsedDays = 0;
@@ -536,6 +1164,7 @@ public class ElectricConsumptionCalculator {
 			int dayHours = expectedHours(day, dataFrom, dataUntil);
 			long expectedMeterHours = (long) meters * dayHours;
 			int reportingMeters = 0;
+			long issuesStarted = System.nanoTime();
 
 			for (MeterData meter : gridMeters) {
 				int valid = meter.validHours(day);
@@ -555,6 +1184,16 @@ public class ElectricConsumptionCalculator {
 			}
 
 			List<MissingMeter> missingMeters = missingMeters(gridMeters, day, dayHours);
+			timer.add("meterIssues", System.nanoTime() - issuesStarted);
+
+			// an EVN day always counts (total and average), measured data or not
+			Acc dayOfficial = official.get(day);
+			boolean evnDay = dayOfficial != null && dayOfficial.fromEvn;
+
+			if (evnDay) {
+				officialTotal.add(dayOfficial, pricedOn.test(day));
+				officialAverage.add(dayOfficial, pricedOn.test(day));
+			}
 
 			if (acc == null || !acc.hasData()) {
 				// only outliers on that day: it has data, none of it usable
@@ -563,7 +1202,9 @@ public class ElectricConsumptionCalculator {
 				daily.add(new DayPoint(day.toString(), weekday, 0, meters,
 						onlyOutliers && expectedMeterHours > 0 ? BigDecimal.ZERO.setScale(1) : null,
 						onlyOutliers, onlyOutliers ? excludedMwh(acc.excluded) : null, null, null,
-						reportingMeters, missingMeters));
+						reportingMeters, missingMeters, null, evn(evn.get(day)),
+						// EVN day without measured data: solar null, total = totalElectricity
+						official(dayOfficial, pricedOn.test(day))));
 				continue;
 			}
 
@@ -572,6 +1213,10 @@ public class ElectricConsumptionCalculator {
 			total.add(acc);
 			daysWithData++;
 
+			if (!evnDay) {
+				officialTotal.add(acc, pricedOn.test(day));
+			}
+
 			if (pricedOn.test(day)) {
 				pricedDays++;
 			}
@@ -579,6 +1224,10 @@ public class ElectricConsumptionCalculator {
 			if (dayComplete) {
 				complete.add(acc);
 				completeDays++;
+
+				if (!evnDay) {
+					officialAverage.add(acc, pricedOn.test(day));
+				}
 
 				if (pricedOn.test(day)) {
 					pricedCompleteDays++;
@@ -596,10 +1245,14 @@ public class ElectricConsumptionCalculator {
 					mwh(acc, BigDecimal.ONE, pricedOn.test(day)),
 					kusd(acc, BigDecimal.ONE, pricedOn.test(day)),
 					reportingMeters,
-					missingMeters
+					missingMeters,
+					calibrated(acc, pricedOn.test(day)),
+					evn(evn.get(day)),
+					official(dayOfficial, pricedOn.test(day))
 			));
 		}
 
+		long issuesStarted = System.nanoTime();
 		List<MeterIssue> meterIssues = new ArrayList<>(missingHours.size());
 		BigDecimal estimatedMissingKwh = null;
 
@@ -620,6 +1273,7 @@ public class ElectricConsumptionCalculator {
 			}
 		}
 		meterIssues.sort(ISSUE_ORDER);
+		timer.add("meterIssues", System.nanoTime() - issuesStarted);
 
 		BigDecimal divisor = BigDecimal.valueOf(Math.max(completeDays, 1));
 		// money only when at least one summed / averaged day has a tariff version
@@ -641,7 +1295,14 @@ public class ElectricConsumptionCalculator {
 				completeDays == 0 ? null : kusd(complete, divisor, averagePriced),
 				meterIssues,
 				pricedDays < daysWithData,
-				estimatedMissingKwh == null ? null : out(estimatedMissingKwh, THOUSAND)
+				estimatedMissingKwh == null ? null : out(estimatedMissingKwh, THOUSAND),
+				// EVN days always included (see OfficialSum)
+				officialTotal.mwh(this, false, priced),
+				officialTotal.kusd(this, false, priced),
+				officialAverage.mwh(this, true, priced),
+				officialAverage.kusd(this, true, priced),
+				officialTotal.evnDays,
+				officialTotal.measuredDays
 		);
 	}
 
@@ -805,6 +1466,53 @@ public class ElectricConsumptionCalculator {
 				out(gridUsd, div),
 				load,
 				load
+		);
+	}
+
+	// measured grid + loss (one day) -> MWh; null when no calibration covers
+	// the day or no hour with grid data; bands null when not priced
+	private Calibrated calibrated(Acc acc, boolean priced) {
+		if (acc.calIds == null || acc.calHours == 0) {
+			return null;
+		}
+
+		return new Calibrated(
+				priced ? out(acc.calBandKwh.get(TouBand.NORMAL), THOUSAND) : null,
+				priced ? out(acc.calBandKwh.get(TouBand.HIGH_PEAK), THOUSAND) : null,
+				priced ? out(acc.calBandKwh.get(TouBand.LOW_PEAK), THOUSAND) : null,
+				out(acc.calGrid, THOUSAND),
+				acc.calLossPerHour,
+				acc.calHours,
+				acc.calIds,
+				true
+		);
+	}
+
+	// official day (officialDays) -> MWh / K$ with its source; MEASURED = the
+	// measured Acc itself, so mwh / kusd are copied exactly; null = no data
+	private Official official(Acc acc, boolean priced) {
+		if (acc == null || !acc.hasData()) {
+			return null;
+		}
+
+		return new Official(mwh(acc, BigDecimal.ONE, priced), kusd(acc, BigDecimal.ONE, priced),
+				acc.fromEvn ? "EVN" : "MEASURED");
+	}
+
+	// F2_Utility_Evn_Daily row (kWh) -> MWh, null = no row
+	private Evn evn(EvnDay row) {
+		if (row == null) {
+			return null;
+		}
+
+		return new Evn(
+				out(row.normalKwh(), THOUSAND),
+				out(row.highKwh(), THOUSAND),
+				out(row.lowKwh(), THOUSAND),
+				out(row.totalKwh(), THOUSAND),
+				row.solarKwh() == null ? null : out(row.solarKwh(), THOUSAND),
+				row.sourceFile(),
+				formatTsOrNull(row.importedAt())
 		);
 	}
 
