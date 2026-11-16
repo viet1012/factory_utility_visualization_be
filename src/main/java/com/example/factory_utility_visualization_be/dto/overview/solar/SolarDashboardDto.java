@@ -23,7 +23,11 @@ public record SolarDashboardDto(
 
 		BigDecimal todayCo2Ton,
 
-		BigDecimal todayEquivalentTrees
+		BigDecimal todayEquivalentTrees,
+
+		// MAINS official: per day EVN grid when F2_Utility_Evn_Daily has (day,
+		// scope), else the measured grid; solarSharePercent stays on measured load
+		BigDecimal officialGridKwh
 
 ) {
 }

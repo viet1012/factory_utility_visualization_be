@@ -15,6 +15,13 @@ spring:
       max-lifetime: 1800000  # 30 ph�t reset connection
       connection-timeout: 5000  # 5s timeout n?u kh�ng l?y ???c connection
 
+  # POST /api/utility/evn-daily/import: F2 electric consumption.xlsx is ~6 MB
+  # (default limit 1 MB)
+  servlet:
+    multipart:
+      max-file-size: 30MB
+      max-request-size: 30MB
+
   jpa:
     database-platform: org.hibernate.dialect.SQLServerDialect
     # SQL logging off by default (heavy native batches); turn it on with the

@@ -105,7 +105,18 @@ public record ElectricConsumptionResponseDto(
 			// sum over MAJOR meters of (their average kWh per valid hour in the
 			// period x missingHours) / 1000; null = no MAJOR meter with valid
 			// hours to estimate from
-			BigDecimal estimatedMissingMwh
+			BigDecimal estimatedMissingMwh,
+			// sum / average of DayPoint.official; an EVN day always counts (even
+			// partial / without measured data):
+			// total = every EVN day + MEASURED days with data,
+			// average = every EVN day + complete MEASURED days (divisor = their count)
+			Values officialTotalMwh,
+			Values officialTotalKusd,
+			Values officialAverageMwh,
+			Values officialAverageKusd,
+			// days of officialTotal* from EVN / from the measured values
+			int evnDays,
+			int measuredDays
 	) {}
 
 	public record MeterIssue(
@@ -162,7 +173,13 @@ public record ElectricConsumptionResponseDto(
 			Values perDayKusd,
 			// some complete day has no tariff version (its bands / K$ are not
 			// in the averages)
-			boolean priceMissing
+			boolean priceMissing,
+			// average per day of the official values over every EVN day +
+			// complete MEASURED days; null = no such day
+			OfficialValues official,
+			// days of official from EVN / from the measured values
+			int evnDays,
+			int measuredDays
 	) {}
 
 	public record DayPoint(
@@ -187,7 +204,81 @@ public record ElectricConsumptionResponseDto(
 			int reportingMeters,
 			// configured meters with fewer valid hours than expected for the day
 			// (NO_DATA first, then fewest hours, then name); [] after dataUntil
-			List<MissingMeter> missingMeters
+			List<MissingMeter> missingMeters,
+			// ESTIMATE: measured grid + loss calibration, null = no calibration
+			// covers the day or no grid data (see Calibrated)
+			Calibrated calibrated,
+			// official EVN main meter (F2_Utility_Evn_Daily), null = not imported
+			Evn evn,
+			// EVN when imported, else = mwh / kusd; null = neither
+			Official official
+	) {}
+
+	/**
+	 * Official value of one scope x day (never the calibrated estimate):
+	 * - source EVN (F2_Utility_Evn_Daily row of that day and scope; KVH from
+	 *   its own KVH row, not FAC_AB + FAC_C): bands / totalElectricity = EVN
+	 *   kWh, K$ = band kWh x grid price of that band on that day (same tariff
+	 *   as the grid); solar (MWh, K$) = measured, null when the day has no
+	 *   measured solar; total = load = totalElectricity + solar (no solar ->
+	 *   = totalElectricity)
+	 * - source MEASURED: copy of mwh / kusd
+	 * Bands / K$ null when the day has no tariff version (same rule as Values).
+	 */
+	public record Official(
+			Values mwh,
+			Values kusd,
+			// EVN | MEASURED
+			String source
+	) {}
+
+	// monthly[]: average per complete day of the official values
+	public record OfficialValues(
+			Values mwh,
+			Values kusd
+	) {}
+
+	/**
+	 * Measured grid of the day + loss_kwh_per_hour (F2_Utility_Loss_Calibration)
+	 * for EVERY HOUR WITH GRID DATA, split into bands per hour like the
+	 * measured grid. Hours without data (partial day / missing meters) get
+	 * nothing: a partial day stays partial (no fill of the missing meters).
+	 * KVH is not calibrated on its own: per hour, calibrated KVH = calibrated
+	 * FAC_AB + calibrated FAC_C; null unless BOTH facs have a calibration on
+	 * that day. (Measured KVH grid = max(load - solar, 0) over all facs, so it
+	 * can differ a little from FAC_AB grid + FAC_C grid.)
+	 * MWh; bands null when not priced (same rule as Values).
+	 */
+	public record Calibrated(
+			BigDecimal normal,
+			BigDecimal highPeak,
+			BigDecimal lowPeak,
+			BigDecimal totalElectricity,
+			// kWh per hour added (F2_Utility_Loss_Calibration.loss_kwh_per_hour);
+			// KVH = FAC_AB loss + FAC_C loss (an hour where only one fac has
+			// data gets only that fac's loss)
+			BigDecimal calibrationLossPerHour,
+			// hours the loss was added to (= hours with grid data)
+			int calibratedHours,
+			// F2_Utility_Loss_Calibration.id used: [id] for FAC_AB / FAC_C,
+			// [FAC_AB id, FAC_C id] for KVH
+			List<Long> calibrationIds,
+			// always true: not a measured value
+			@JsonProperty("isEstimated")
+			boolean isEstimated
+	) {}
+
+	/** F2_Utility_Evn_Daily row of the day, MWh (from the sheet). */
+	public record Evn(
+			BigDecimal normal,
+			BigDecimal highPeak,
+			BigDecimal lowPeak,
+			BigDecimal totalElectricity,
+			// "Total Solar" row of the sheet, KVH only, else null
+			BigDecimal solar,
+			String sourceFile,
+			// ISO-8601 +07:00
+			String importedAt
 	) {}
 
 	/**

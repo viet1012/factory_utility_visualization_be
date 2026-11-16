@@ -7,6 +7,9 @@ import com.example.factory_utility_visualization_be.repository.overview.daily.pr
 import com.example.factory_utility_visualization_be.repository.overview.daily.UtilityDailyRepo;
 import com.example.factory_utility_visualization_be.service.overview.electric.DashboardEnergyService;
 import com.example.factory_utility_visualization_be.service.overview.electric.GridSolarSplit;
+import com.example.factory_utility_visualization_be.service.overview.electric.GridSolarSplit.HourSum;
+import com.example.factory_utility_visualization_be.service.overview.electric.OfficialEnergyService;
+import com.example.factory_utility_visualization_be.service.overview.electric.OfficialEnergyService.OfficialDay;
 import lombok.extern.slf4j.Slf4j;
 import com.example.factory_utility_visualization_be.service.util.FacilityValidator;
 import com.example.factory_utility_visualization_be.service.util.YearMonthParser;
@@ -16,11 +19,15 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 
 @Slf4j
 @Service
@@ -32,6 +39,7 @@ public class UtilityEnergyDailyService {
 
 	private final UtilityDailyRepo repo;
 	private final DashboardEnergyService dashboardEnergy;
+	private final OfficialEnergyService officialEnergy;
 
 	@Transactional(readOnly = true)
 	public UtilityDailyDashboardDto getDailyDashboard(
@@ -82,15 +90,29 @@ public class UtilityEnergyDailyService {
 		final List<DailyElectricityStackDto> electricity =
 				new ArrayList<>();
 
-		GridSolarSplit.byDay(dashboardEnergy.facHours(fac, from, to))
+		final Map<LocalDateTime, HourSum> hours = dashboardEnergy.facHours(fac, from, to);
+
+		// official grid per day: EVN (KVH / Fac_C) when imported, else measured
+		final Map<LocalDate, OfficialDay> official = new HashMap<>();
+
+		for (OfficialDay day : officialEnergy.dailyOfficial(hours, from, to,
+				officialEnergy.evnDays(fac, from.toLocalDate(), to.toLocalDate()), Optional.empty())) {
+			official.put(day.day(), day);
+		}
+
+		GridSolarSplit.byDay(hours)
 				.forEach((day, t) -> {
 					if (t.hasData()) {
+						final OfficialDay o = official.get(day);
+
 						electricity.add(
 								new DailyElectricityStackDto(
 										day,
 										oneDecimal(t.grid()),
 										oneDecimal(t.solar()),
-										oneDecimal(t.load())
+										oneDecimal(t.load()),
+										oneDecimal(o == null ? t.grid() : o.gridKwh()),
+										o == null ? OfficialEnergyService.MEASURED : o.source()
 								)
 						);
 					}

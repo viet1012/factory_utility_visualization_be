@@ -87,7 +87,33 @@ public record MonthlySummaryDto(
 		/**
 		 * Như priceMissing, cho kỳ trước.
 		 */
-		Boolean prevPriceMissing
+		Boolean prevPriceMissing,
+
+		// ============================
+		// Official (Electricity only, null for Water / Air)
+		//
+		// Per day: F2_Utility_Evn_Daily row of (day, scope) -> EVN, else the
+		// measured grid (value); never calibrated. KVH -> EVN KVH, Fac_C ->
+		// EVN FAC_C; Fac_A / Fac_B have no EVN row (EVN only has FAC_AB) ->
+		// always measured (evnDays = 0). Costs: EVN band kWh x grid price of
+		// the band on that day; null when no tariff.
+		// ============================
+
+		BigDecimal officialValue,
+		BigDecimal officialUsdCost,
+		BigDecimal officialVndCost,
+		BigDecimal officialPrevValue,
+		BigDecimal officialPrevUsdCost,
+		BigDecimal officialPrevVndCost,
+
+		// (officialValue - officialPrevValue) / officialPrevValue * 100
+		BigDecimal officialDeltaPercent,
+
+		// days of officialValue / officialPrevValue from EVN / measured
+		Integer evnDays,
+		Integer measuredDays,
+		Integer prevEvnDays,
+		Integer prevMeasuredDays
 
 ) {
 }

@@ -52,6 +52,12 @@ public class GlobalExceptionHandler {
 		return badRequest(ex.getMessage());
 	}
 
+	// thrown only by /evn-daily/import and /loss-calibration/recompute
+	@ExceptionHandler(EvnCalibrationBadRequestException.class)
+	public ResponseEntity<Map<String, Object>> handleEvnCalibrationBadRequest(EvnCalibrationBadRequestException ex) {
+		return badRequest(ex.getMessage());
+	}
+
 	private ResponseEntity<Map<String, Object>> badRequest(String message) {
 		HttpStatus status = HttpStatus.BAD_REQUEST;
 		return ResponseEntity

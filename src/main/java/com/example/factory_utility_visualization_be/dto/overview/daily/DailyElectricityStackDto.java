@@ -12,7 +12,14 @@ public record DailyElectricityStackDto(
 
 		BigDecimal solarKwh,
 
-		BigDecimal totalKwh
+		BigDecimal totalKwh,
+
+		// EVN grid when F2_Utility_Evn_Daily has (day, scope), else = gridKwh
+		// (Fac_A / Fac_B: always measured); never calibrated
+		BigDecimal officialGridKwh,
+
+		// EVN | MEASURED
+		String source
 
 ) {
 }

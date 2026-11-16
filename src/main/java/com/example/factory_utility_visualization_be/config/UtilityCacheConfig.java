@@ -100,21 +100,23 @@ public class UtilityCacheConfig {
 						buildNativeCache(500, Duration.ofHours(12))
 				);
 
-		// GET /api/utility/electric-consumption, keyed by month + months + hourOffset:
-		// bill period still running / already ended (long TTL).
-		// Running period: 20 min > FE poll (10 min) and > warm-up interval
-		// (ElectricConsumptionCacheWarmer, 10 min), so the default request is
-		// always served from cache; data is hourly, so <= 20 min staleness is fine.
+		// GET /api/utility/electric-consumption, keyed by month + months + hourOffset.
+		// Running bill period: no longer this cache - ElectricConsumptionCacheService
+		// keeps it per data version (max 10 min); the name stays registered
+		// (cleared by ElectricConsumptionCacheEvictor, harmless).
 		final Cache electricConsumptionCurrentCache =
 				new CaffeineCache(
 						UtilityCacheNames.ELECTRIC_CONSUMPTION_CURRENT,
 						buildNativeCache(20, Duration.ofMinutes(20))
 				);
 
+		// Ended bill period: its window is fixed, so it only changes with EVN
+		// rows / loss calibration (ElectricConsumptionCacheEvictor clears it);
+		// 7 days only as a safety net (tariff / late History_Main rows).
 		final Cache electricConsumptionClosedCache =
 				new CaffeineCache(
 						UtilityCacheNames.ELECTRIC_CONSUMPTION_CLOSED,
-						buildNativeCache(100, Duration.ofHours(12))
+						buildNativeCache(100, Duration.ofDays(7))
 				);
 
 		final SimpleCacheManager cacheManager =

@@ -5,6 +5,7 @@ import com.example.factory_utility_visualization_be.repository.overview.electric
 import com.example.factory_utility_visualization_be.repository.overview.electric.projection.ElectricConsumptionMeterDayProjection;
 import com.example.factory_utility_visualization_be.repository.overview.electric.projection.ElectricConsumptionMeterProjection;
 import com.example.factory_utility_visualization_be.repository.overview.electric.projection.ElectricLastPickProjection;
+import com.example.factory_utility_visualization_be.repository.overview.electric.projection.ElectricMeterLastPickProjection;
 import com.example.factory_utility_visualization_be.repository.overview.electric.projection.ElectricMeterHourProjection;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -342,6 +343,40 @@ public interface ElectricConsumptionRepo extends JpaRepository<DummyEntity, Long
 			@Param("energyName") String energyName,
 			@Param("fromTs") LocalDateTime fromTs,
 			@Param("toTs") LocalDateTime toTs,
+			@Param("excludedMeters") List<String> excludedMeters,
+			@Param("facAbMeters") List<String> facAbMeters,
+			@Param("facCMeters") List<String> facCMeters);
+
+	/**
+	 * Last pick_at < :beforeTs (value > 0, MTD, no outlier check) of the given
+	 * grid meters (upper-case box_device_id): the lastPickAt fallback of
+	 * findMeterDays (MeterLast.prev) for meters without a valid hour in the
+	 * window, used by ElectricConsumptionCalculator with HourlyEnergyCache.
+	 * One backward index seek per meter (box_device_id, plc_address, pick_at).
+	 */
+	@Query(value = DEVICE_CTES + """
+			SELECT
+			    gm.box_device_id AS meter,
+			    x.last_pick_at   AS lastPickAt
+			FROM GridMeter gm
+			CROSS APPLY (
+			    SELECT MAX(hi.pick_at) AS last_pick_at
+			    FROM dbo.F2_Utility_Para_History_Main hi
+			    INNER JOIN EnergyPara ep
+			            ON ep.box_device_id = hi.box_device_id
+			           AND ep.plc_address = hi.plc_address
+			    WHERE hi.box_device_id = gm.box_device_id
+			      AND hi.pick_at < :beforeTs
+			      AND hi.[value] > 0
+			      AND hi.MTD = 'MTD'
+			) x
+			WHERE UPPER(LTRIM(RTRIM(gm.box_device_id))) IN (:meters)
+			""", nativeQuery = true)
+	List<ElectricMeterLastPickProjection> findGridMeterLastPickBefore(
+			@Param("energyName") String energyName,
+			@Param("beforeTs") LocalDateTime beforeTs,
+			// upper-case box_device_id, never empty
+			@Param("meters") List<String> meters,
 			@Param("excludedMeters") List<String> excludedMeters,
 			@Param("facAbMeters") List<String> facAbMeters,
 			@Param("facCMeters") List<String> facCMeters);
