@@ -1,0 +1,5 @@
+# Profile dev: bật lại in SQL của JPA/Hibernate
+# (chạy với --spring.profiles.active=dev hoặc SPRING_PROFILES_ACTIVE=dev)
+spring:
+  jpa:
+    show-sql: true

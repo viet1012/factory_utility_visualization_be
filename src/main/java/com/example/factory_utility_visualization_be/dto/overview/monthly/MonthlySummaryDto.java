@@ -21,7 +21,8 @@ public record MonthlySummaryDto(
 		BigDecimal prevMaxValue,
 
 		/**
-		 * Electricity: điện tiêu thụ đã loại Solar.
+		 * Electricity: grid = Σ giờ max(load - solar, 0) (điện mua lưới,
+		 * GridSolarSplit); vndCost/usdCost = tiền grid theo giá grid.
 		 * Water/Air: null.
 		 */
 		BigDecimal value,
@@ -60,17 +61,17 @@ public record MonthlySummaryDto(
 		BigDecimal prevSolarValue,
 
 		/**
-		 * value + solarValue.
+		 * load = Σ sub-meter (tổng tiêu thụ = grid + solar, solar không cộng thêm).
 		 */
 		BigDecimal totalEnergyValue,
 
 		/**
-		 * prevValue + prevSolarValue.
+		 * load của kỳ trước.
 		 */
 		BigDecimal prevTotalEnergyValue,
 
 		/**
-		 * solarValue / totalEnergyValue * 100.
+		 * solarValue / totalEnergyValue (load) * 100.
 		 */
 		BigDecimal solarSharePercent,
 

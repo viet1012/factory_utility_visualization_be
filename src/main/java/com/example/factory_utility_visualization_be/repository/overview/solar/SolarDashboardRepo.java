@@ -9,6 +9,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -294,6 +295,66 @@ public interface SolarDashboardRepo
 			@Param("powerName") String powerName,
 			@Param("energyName") String energyName,
 			@Param("excludedMeters") List<String> excludedMeters
+	);
+
+
+	/**
+	 * currentPowerKw of getSolarDashboardByMonth ONLY (same CTEs, without the
+	 * month energy sums, which /api/solar/monthly now takes from
+	 * DashboardEnergyService): sum of the latest 'Total Power' of every SOLAR
+	 * device of :fac (KVH = all) recorded at or before :now.
+	 */
+	@Query(value = """
+    WITH SolarPowerDevices AS (
+        SELECT DISTINCT
+            ch.box_device_id
+        FROM dbo.F2_Utility_Scada_Channel ch
+        INNER JOIN dbo.F2_Utility_Scada sc
+            ON sc.scada_id = ch.scada_id
+        WHERE
+            UPPER(LTRIM(RTRIM(ISNULL(ch.box_id, '')))) = 'SOLAR'
+            AND (
+                UPPER(:fac) = 'KVH'
+                OR UPPER(sc.fac) = UPPER(:fac)
+            )
+    ),
+
+    SolarPowerParams AS (
+        SELECT DISTINCT
+            pa.box_device_id,
+            pa.plc_address
+        FROM dbo.F2_Utility_Para pa
+        INNER JOIN SolarPowerDevices sd
+            ON sd.box_device_id = pa.box_device_id
+        WHERE
+            pa.name_en = :powerName
+    ),
+
+    LatestPowerRanked AS (
+        SELECT
+            CAST(hi.[value] AS DECIMAL(19,6)) AS power_value,
+            ROW_NUMBER() OVER (
+                PARTITION BY hi.box_device_id, hi.plc_address
+                ORDER BY hi.recorded_at DESC
+            ) AS row_num
+        FROM dbo.F2_Utility_Para_History hi
+        INNER JOIN SolarPowerParams sp
+            ON sp.box_device_id = hi.box_device_id
+           AND sp.plc_address = hi.plc_address
+        WHERE
+            hi.recorded_at <= :now
+            AND hi.[value] >= 0
+    )
+
+    SELECT
+        CAST(COALESCE(SUM(power_value), 0) AS DECIMAL(19,1)) AS currentPowerKw
+    FROM LatestPowerRanked
+    WHERE row_num = 1
+    """, nativeQuery = true)
+	BigDecimal getSolarCurrentPowerKw(
+			@Param("fac") String fac,
+			@Param("now") LocalDateTime now,
+			@Param("powerName") String powerName
 	);
 
 

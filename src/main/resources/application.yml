@@ -17,7 +17,9 @@ spring:
 
   jpa:
     database-platform: org.hibernate.dialect.SQLServerDialect
-    show-sql: true
+    # SQL logging off by default (heavy native batches); turn it on with the
+    # dev profile: --spring.profiles.active=dev (application-dev.yml)
+    show-sql: false
     hibernate:
       naming:
         physical-strategy: org.hibernate.boot.model.naming.PhysicalNamingStrategyStandardImpl
@@ -74,6 +76,13 @@ utility:
     warmup-enabled: true
     warmup-initial-delay: PT20S
     warmup-interval: PT10M
+    # Overview dashboards (monthly-summary, solar/monthly, energy-daily):
+    # hourly kWh cached per month (HourlyEnergyCache); running month reloaded
+    # when the latest energy pick_at changes (checked every
+    # dashboard-version-check) or after 10 min; DashboardEnergyWarmer
+    # pre-computes current + previous month at startup and on new data
+    dashboard-warmup-enabled: true
+    dashboard-version-check: PT1M
     max-months: 36
     # complete day = meter-hours >= min-coverage-pct % of (expected meters x 24);
     # expected meters = configured grid meters of the scope (selected period);
@@ -112,3 +121,7 @@ utility:
   history:
     # from up to this many minutes before the oldest raw sample still uses RAW
     raw-tolerance-minutes: 60
+
+logging:
+  level:
+    com.example.factory_utility_visualization_be.service.overview: DEBUG
