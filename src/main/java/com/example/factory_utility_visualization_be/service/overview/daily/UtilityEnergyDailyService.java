@@ -4,9 +4,10 @@ import com.example.factory_utility_visualization_be.dto.overview.daily.DailyDto;
 import com.example.factory_utility_visualization_be.dto.overview.daily.DailyElectricityStackDto;
 import com.example.factory_utility_visualization_be.dto.overview.daily.UtilityDailyDashboardDto;
 import com.example.factory_utility_visualization_be.repository.overview.daily.projection.UtilityDailyDashboardProjection;
-import com.example.factory_utility_visualization_be.repository.overview.daily.projection.UtilityDailyElectricityStackProjection;
 import com.example.factory_utility_visualization_be.repository.overview.daily.UtilityDailyRepo;
-import com.example.factory_utility_visualization_be.service.runtime.ElectricityPricingService;
+import com.example.factory_utility_visualization_be.service.overview.electric.DashboardEnergyService;
+import com.example.factory_utility_visualization_be.service.overview.electric.GridSolarSplit;
+import lombok.extern.slf4j.Slf4j;
 import com.example.factory_utility_visualization_be.service.util.FacilityValidator;
 import com.example.factory_utility_visualization_be.service.util.YearMonthParser;
 import lombok.RequiredArgsConstructor;
@@ -21,6 +22,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class UtilityEnergyDailyService {
@@ -29,7 +31,7 @@ public class UtilityEnergyDailyService {
 			DateTimeFormatter.ofPattern("yyyyMM");
 
 	private final UtilityDailyRepo repo;
-	private final ElectricityPricingService pricingService;
+	private final DashboardEnergyService dashboardEnergy;
 
 	@Transactional(readOnly = true)
 	public UtilityDailyDashboardDto getDailyDashboard(
@@ -66,64 +68,39 @@ public class UtilityEnergyDailyService {
 						.atStartOfDay();
 
 		// =====================================================
-		// 3. ELECTRICITY
+		// 3. ELECTRICITY (GridSolarSplit, same as /electric-consumption)
 		//
-		// API trả:
-		// gridKwh
-		// solarKwh
-		// totalKwh
-		//
-		// Dùng cho stacked column chart.
+		// per hour: load = Σ sub-meter, grid = max(load - solar, 0)
+		// gridKwh  = Σ grid of the day (bar "Electricity")
+		// solarKwh = Σ solar of the day (stacked on top)
+		// totalKwh = Σ load of the day (= grid + solar, except hours
+		//            where solar > load)
 		// =====================================================
 
-		final List<UtilityDailyElectricityStackProjection> energyRows =
-				repo.getDailyElectricityByDateRange(
-						fac,
-						from,
-						to,
-						pricingService.excludedMeterKeys()
-				);
+		final long started = System.nanoTime();
 
 		final List<DailyElectricityStackDto> electricity =
 				new ArrayList<>();
 
-		if (energyRows != null) {
-
-			for (UtilityDailyElectricityStackProjection row : energyRows) {
-
-				if (
-						row == null
-								|| row.getRecordDate() == null
-				) {
-					continue;
-				}
-
-				electricity.add(
-						new DailyElectricityStackDto(
-								row.getRecordDate(),
-
-								// Grid electricity
-								oneDecimal(
-										row.getGridKwh()
-								),
-
-								// Solar
-								oneDecimal(
-										row.getSolarKwh()
-								),
-
-								// Total = Grid + Solar
-								oneDecimal(
-										row.getTotalKwh()
+		GridSolarSplit.byDay(dashboardEnergy.facHours(fac, from, to))
+				.forEach((day, t) -> {
+					if (t.hasData()) {
+						electricity.add(
+								new DailyElectricityStackDto(
+										day,
+										oneDecimal(t.grid()),
+										oneDecimal(t.solar()),
+										oneDecimal(t.load())
 								)
-						)
-				);
-			}
-		}
+						);
+					}
+				});
 
 		// =====================================================
 		// 4. WATER + AIR
 		// =====================================================
+
+		final long electricityNs = System.nanoTime();
 
 		final List<UtilityDailyDashboardProjection> utilityRows =
 				repo.getDailyWaterAndAirByDateRange(
@@ -131,6 +108,11 @@ public class UtilityEnergyDailyService {
 						from,
 						to
 				);
+
+		log.info("energy-daily {} {}: electricity (hourly energy) {} ms, water/air SQL {} ms",
+				fac, monthYyyyMm,
+				(electricityNs - started) / 1_000_000,
+				(System.nanoTime() - electricityNs) / 1_000_000);
 
 		final List<DailyDto> water =
 				new ArrayList<>();

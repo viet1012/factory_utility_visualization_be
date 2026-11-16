@@ -1,5 +1,7 @@
 package com.example.factory_utility_visualization_be.dto.overview.electric;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
+
 import java.math.BigDecimal;
 import java.util.List;
 
@@ -10,14 +12,16 @@ import java.util.List;
  * Per scope (KVH = A&B + C, FAC_AB, FAC_C) two chart blocks, each in MWh and K$:
  * - monthly: the previous bill periods, values = average PER COMPLETE DAY
  * - daily: every day of the selected bill period
- * Stacked bars = normal / highPeak / lowPeak (+ solar), line = total
- * (totalElectricity + solar) or totalElectricity.
+ * Stacked bars = normal / highPeak / lowPeak (grid bought from EVN, per
+ * band) + solar, line = total (= load = consumption) or totalElectricity
+ * (= grid). The sub-meters measure the load; grid = max(load - solar, 0) per
+ * scope and hour, before the band split.
  *
  * null rules:
  * - a Values object is null when there is no data to show (no data at all /
  *   day not started / no complete day for an average)
  * - Values.solar is null when no SOLAR meter reported in that day / period
- *   (total is then totalElectricity only)
+ *   (grid = load then)
  * - bands and every K$ value are null when no tariff is usable, and per day
  *   when that day has no tariff version (Scope / MonthPoint.priceMissing)
  *
@@ -121,14 +125,22 @@ public record ElectricConsumptionResponseDto(
 			// box_device_id
 			String meter,
 			String fac,
-			// hours with valid data on that day
-			int hours,
+			// hours WITH valid data on that day (not the missing hours)
+			int validHours,
 			// NO_DATA = no row at all, OUTLIER = some hours dropped as outliers,
 			// PARTIAL = some hours without data
 			String reason,
 			// end of the last hour with valid data (ISO-8601 +07:00), null = never
 			String lastDataAt
-	) {}
+	) {
+		// old JSON name of validHours, still written for the FE; remove once
+		// the FE reads validHours
+		@Deprecated
+		@JsonProperty("hours")
+		public int hours() {
+			return validHours;
+		}
+	}
 
 	public record MonthPoint(
 			// bill month yyyy-MM = month the period ends in
@@ -178,14 +190,22 @@ public record ElectricConsumptionResponseDto(
 			List<MissingMeter> missingMeters
 	) {}
 
+	/**
+	 * Per hour and scope: load = sum of the grid sub-meters (consumption),
+	 * grid = max(load - solar, 0) = bought from EVN.
+	 */
 	public record Values(
+			// grid per tariff band (normal + highPeak + lowPeak = totalElectricity)
 			BigDecimal normal,
 			BigDecimal highPeak,
 			BigDecimal lowPeak,
 			// null = no SOLAR meter data
 			BigDecimal solar,
+			// grid = bought from EVN (compare with the EVN bill / sheet)
 			BigDecimal totalElectricity,
-			// totalElectricity + solar
+			// consumption = sub-meter sum (K$: grid money + solar money)
+			BigDecimal load,
+			// = load (grid + solar, solar is not added on top of load)
 			BigDecimal total
 	) {}
 }

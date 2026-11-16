@@ -4,6 +4,8 @@ import com.example.factory_utility_visualization_be.model.DummyEntity;
 import com.example.factory_utility_visualization_be.repository.overview.electric.projection.ElectricConsumptionHourProjection;
 import com.example.factory_utility_visualization_be.repository.overview.electric.projection.ElectricConsumptionMeterDayProjection;
 import com.example.factory_utility_visualization_be.repository.overview.electric.projection.ElectricConsumptionMeterProjection;
+import com.example.factory_utility_visualization_be.repository.overview.electric.projection.ElectricLastPickProjection;
+import com.example.factory_utility_visualization_be.repository.overview.electric.projection.ElectricMeterHourProjection;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -39,7 +41,8 @@ import java.util.List;
  */
 public interface ElectricConsumptionRepo extends JpaRepository<DummyEntity, Long> {
 
-	// shared device filter; params :excludedMeters, :facAbMeters, :facCMeters, :energyName
+	// shared device filter; params :excludedMeters, :facAbMeters, :facCMeters,
+	// :energyName
 	String DEVICE_CTES = """
 			-- per-device filters (excluded meters, transformer scope) are applied
 			-- here once per meter instead of on every History_Main row
@@ -90,8 +93,7 @@ public interface ElectricConsumptionRepo extends JpaRepository<DummyEntity, Long
 			@Param("energyName") String energyName,
 			@Param("excludedMeters") List<String> excludedMeters,
 			@Param("facAbMeters") List<String> facAbMeters,
-			@Param("facCMeters") List<String> facCMeters
-	);
+			@Param("facCMeters") List<String> facCMeters);
 
 	/**
 	 * Per configured grid meter x day of [:periodFrom, end of the window):
@@ -217,8 +219,7 @@ public interface ElectricConsumptionRepo extends JpaRepository<DummyEntity, Long
 			// upper-case box_device_id lists; never empty (pass List.of("") for none)
 			@Param("excludedMeters") List<String> excludedMeters,
 			@Param("facAbMeters") List<String> facAbMeters,
-			@Param("facCMeters") List<String> facCMeters
-	);
+			@Param("facCMeters") List<String> facCMeters);
 
 	@Query(value = DEVICE_CTES + """
 			,
@@ -291,6 +292,86 @@ public interface ElectricConsumptionRepo extends JpaRepository<DummyEntity, Long
 			// upper-case box_device_id lists; never empty (pass List.of("") for none)
 			@Param("excludedMeters") List<String> excludedMeters,
 			@Param("facAbMeters") List<String> facAbMeters,
-			@Param("facCMeters") List<String> facCMeters
-	);
+			@Param("facCMeters") List<String> facCMeters);
+
+	/**
+	 * kWh per meter x hour of pick_at in [:fromTs, :toTs), every meter of
+	 * DeviceMap (grid + SOLAR), same filters as findHourlyEnergy but WITHOUT
+	 * the median / outlier window functions (the dashboards cache these rows
+	 * per month and flag outliers in Java, HourlyEnergyCache /
+	 * DashboardEnergyService). hourAt = pick_at hour - 1h, no hourOffset.
+	 */
+	@Query(value = DEVICE_CTES + """
+			,
+			-- energy para unit per meter (Electricity row of monthly-summary)
+			EnergyUnit AS (
+			    SELECT
+			        pa.box_device_id,
+			        MAX(pa.unit) AS unit
+			    FROM dbo.F2_Utility_Para pa
+			    WHERE pa.name_en = :energyName
+			    GROUP BY pa.box_device_id
+			)
+			SELECT
+			    hi.box_device_id                                    AS meter,
+			    dm.fac                                              AS fac,
+			    dm.is_solar                                         AS solar,
+			    DATEADD(HOUR, DATEDIFF(HOUR, 0, hi.pick_at) - 1, 0) AS hourAt,
+			    SUM(CAST(hi.[value] AS DECIMAL(19, 6)))            AS kwh,
+			    MAX(hi.pick_at)                                     AS lastPickAt,
+			    MAX(eu.unit)                                        AS unit
+			FROM dbo.F2_Utility_Para_History_Main hi
+			INNER JOIN EnergyPara ep
+			        ON ep.box_device_id = hi.box_device_id
+			       AND ep.plc_address = hi.plc_address
+			INNER JOIN DeviceMap dm
+			        ON dm.box_device_id = hi.box_device_id
+			LEFT JOIN EnergyUnit eu
+			       ON eu.box_device_id = hi.box_device_id
+			WHERE hi.pick_at >= :fromTs
+			  AND hi.pick_at <  :toTs
+			  AND hi.[value] > 0
+			  AND hi.MTD = 'MTD'
+			GROUP BY
+			    hi.box_device_id,
+			    dm.fac,
+			    dm.is_solar,
+			    DATEADD(HOUR, DATEDIFF(HOUR, 0, hi.pick_at) - 1, 0)
+			""", nativeQuery = true)
+	List<ElectricMeterHourProjection> findMeterHourlyEnergy(
+			@Param("energyName") String energyName,
+			@Param("fromTs") LocalDateTime fromTs,
+			@Param("toTs") LocalDateTime toTs,
+			@Param("excludedMeters") List<String> excludedMeters,
+			@Param("facAbMeters") List<String> facAbMeters,
+			@Param("facCMeters") List<String> facCMeters);
+
+	/**
+	 * Data version of the dashboards: latest pick_at >= :since of any energy
+	 * row (value > 0, MTD) of a DeviceMap meter. One index seek per energy
+	 * para (box_device_id, plc_address, pick_at), so it is cheap enough to
+	 * poll every minute once IX_History_Main_Device_Pick exists.
+	 */
+	@Query(value = DEVICE_CTES + """
+			SELECT
+			    MAX(x.last_pick_at) AS lastPickAt
+			FROM EnergyPara ep
+			INNER JOIN DeviceMap dm
+			        ON dm.box_device_id = ep.box_device_id
+			CROSS APPLY (
+			    SELECT MAX(hi.pick_at) AS last_pick_at
+			    FROM dbo.F2_Utility_Para_History_Main hi
+			    WHERE hi.box_device_id = ep.box_device_id
+			      AND hi.plc_address = ep.plc_address
+			      AND hi.pick_at >= :since
+			      AND hi.[value] > 0
+			      AND hi.MTD = 'MTD'
+			) x
+			""", nativeQuery = true)
+	ElectricLastPickProjection findLastEnergyPickAt(
+			@Param("energyName") String energyName,
+			@Param("since") LocalDateTime since,
+			@Param("excludedMeters") List<String> excludedMeters,
+			@Param("facAbMeters") List<String> facAbMeters,
+			@Param("facCMeters") List<String> facCMeters);
 }

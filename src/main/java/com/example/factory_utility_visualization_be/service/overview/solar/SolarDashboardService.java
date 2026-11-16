@@ -1,12 +1,14 @@
 package com.example.factory_utility_visualization_be.service.overview.solar;
 
 import com.example.factory_utility_visualization_be.dto.overview.solar.SolarDashboardDto;
-import com.example.factory_utility_visualization_be.repository.overview.solar.projection.SolarDashboardProjection;
 import com.example.factory_utility_visualization_be.repository.overview.solar.SolarDashboardRepo;
-import com.example.factory_utility_visualization_be.service.runtime.ElectricityPricingService;
+import com.example.factory_utility_visualization_be.service.overview.electric.DashboardEnergyService;
+import com.example.factory_utility_visualization_be.service.overview.electric.GridSolarSplit;
+import com.example.factory_utility_visualization_be.service.overview.electric.GridSolarSplit.Totals;
 import com.example.factory_utility_visualization_be.service.util.FacilityValidator;
 import com.example.factory_utility_visualization_be.service.util.SolarEnvironmentCalculator;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -14,9 +16,9 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.YearMonth;
-import java.time.ZoneId;
+import java.util.Optional;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class SolarDashboardService {
@@ -24,15 +26,8 @@ public class SolarDashboardService {
 	private static final String POWER_NAME =
 			"Total Power";
 
-	private static final String ENERGY_NAME =
-			"Total Energy Consumption";
-
-	private static final ZoneId APP_ZONE =
-			ZoneId.of("Asia/Ho_Chi_Minh");
-
 	private final SolarDashboardRepo repo;
-	private final SolarMonthlySummaryCacheService summaryCache;
-	private final ElectricityPricingService pricingService;
+	private final DashboardEnergyService dashboardEnergy;
 
 	@Transactional(readOnly = true)
 	public SolarDashboardDto getSolarDashboardByMonth(
@@ -63,73 +58,62 @@ public class SolarDashboardService {
 		final LocalDateTime now =
 				LocalDateTime.now();
 
-		// ============================================================
-		// QUERY
-		//
-		// Current month: always fresh, never cached (accumulating MTD
-		// totals + live current power). Completed months: cached, since
-		// the query window is closed and the result cannot change.
-		// ============================================================
-		final YearMonth requestedMonth =
-				YearMonth.from(selectedMonth);
-
-		final SolarDashboardProjection p =
-				requestedMonth.equals(YearMonth.now(APP_ZONE))
-						? repo.getSolarDashboardByMonth(
-								fac,
-								monthStart,
-								nextMonthStart,
-								now.plusSeconds(1),
-								POWER_NAME,
-								ENERGY_NAME,
-								pricingService.excludedMeterKeys()
-						)
-						: summaryCache.getHistoricalSummary(
-								fac,
-								requestedMonth.toString(),
-								monthStart,
-								nextMonthStart,
-								now.plusSeconds(1),
-								POWER_NAME,
-								ENERGY_NAME
-						);
+		final long started = System.nanoTime();
 
 		// ============================================================
-		// MAPPING
+		// CURRENT POWER (live gauge): light query, latest 'Total Power'
+		// of the SOLAR devices only (the month energy sums of
+		// getSolarDashboardByMonth are no longer needed, see below)
 		// ============================================================
 		final BigDecimal currentPower =
 				oneDecimal(
-						p == null
-								? null
-								: p.getCurrentPowerKw()
+						repo.getSolarCurrentPowerKw(
+								fac,
+								now.plusSeconds(1),
+								POWER_NAME
+						)
 				);
+		final long powerNs = System.nanoTime();
+
+		// ============================================================
+		// ENERGY: DashboardEnergyService / GridSolarSplit (same as
+		// /electric-consumption, hourly data cached per month)
+		//
+		// per hour: load = Σ sub-meter, grid = max(load - solar, 0)
+		// gridKwh  = Σ grid (bought from EVN)
+		// totalKwh = Σ load (consumption, solar NOT added on top)
+		// share    = solar / load
+		// ============================================================
+		final Totals energy =
+				GridSolarSplit.totals(
+						dashboardEnergy.facHours(fac, monthStart, nextMonthStart),
+						monthStart,
+						nextMonthStart,
+						Optional.empty()
+				);
+
+		log.info("solar/monthly {} {}: current power {} ms, hourly energy {} ms, total {} ms",
+				fac, month,
+				(powerNs - started) / 1_000_000,
+				(System.nanoTime() - powerNs) / 1_000_000,
+				(System.nanoTime() - started) / 1_000_000);
 
 		final BigDecimal solarKwh =
-				oneDecimal(
-						p == null
-								? null
-								: p.getSolarKwh()
-				);
+				oneDecimal(energy.solar());
 
 		final BigDecimal gridKwh =
-				oneDecimal(
-						p == null
-								? null
-								: p.getGridKwh()
-				);
+				oneDecimal(energy.grid());
 
 		final BigDecimal totalKwh =
-				oneDecimal(
-						p == null
-								? null
-								: p.getTotalKwh()
-				);
+				oneDecimal(energy.load());
 
 		final BigDecimal solarShare =
 				oneDecimal(
-						p == null
-								? null
-								: p.getSolarSharePercent()
+						energy.load().signum() > 0
+								? energy.solar()
+										.multiply(BigDecimal.valueOf(100))
+										.divide(energy.load(), 6, RoundingMode.HALF_UP)
+								: null
 				);
 
 		// ============================================================
