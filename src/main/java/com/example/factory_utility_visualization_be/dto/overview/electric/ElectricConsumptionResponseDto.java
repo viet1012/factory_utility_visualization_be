@@ -129,7 +129,15 @@ public record ElectricConsumptionResponseDto(
 			String lastDataAt,
 			// MAJOR = some day of the period with no data at all (NO_DATA) or
 			// missingHours >= 24; MINOR = only a few hours missing / dropped
-			String severity
+			String severity,
+			// MAJOR only: avg kWh per valid hour of this meter x missingHours, in MWh;
+			// null for MINOR or a meter without any valid hour. Sum over meters =
+			// Scope.estimatedMissingMwh (up to rounding)
+			BigDecimal estimatedMissingMwh,
+			// estimatedMissingMwh x the scope's average measured grid price of the
+			// period (all bands), in K$; null when estimatedMissingMwh is null or
+			// no day of the period is priced
+			BigDecimal estimatedMissingKusd
 	) {}
 
 	public record MissingMeter(

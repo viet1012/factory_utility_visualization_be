@@ -349,6 +349,12 @@ public class ElectricConsumptionCalculator {
 		private BigDecimal gridUsd() {
 			return bandUsd.values().stream().reduce(BigDecimal.ZERO, BigDecimal::add);
 		}
+
+		// average grid USD per kWh over the priced hours; null = nothing priced
+		private BigDecimal gridUsdPerKwh() {
+			BigDecimal kwh = bandKwh.values().stream().reduce(BigDecimal.ZERO, BigDecimal::add);
+			return kwh.signum() <= 0 ? null : gridUsd().divide(kwh, 8, RoundingMode.HALF_UP);
+		}
 	}
 
 	/**
@@ -1255,22 +1261,30 @@ public class ElectricConsumptionCalculator {
 		long issuesStarted = System.nanoTime();
 		List<MeterIssue> meterIssues = new ArrayList<>(missingHours.size());
 		BigDecimal estimatedMissingKwh = null;
+		// missing kWh is spread over every band -> priced at the scope's average
+		// measured grid price of the period (null when no priced day)
+		BigDecimal usdPerKwh = priced && pricedDays > 0 ? total.gridUsdPerKwh() : null;
 
 		for (Map.Entry<MeterData, Integer> entry : missingHours.entrySet()) {
 			MeterData meter = entry.getKey();
 			int missing = entry.getValue();
 			boolean major = noDataDay.contains(meter) || missing >= HOURS_PER_DAY;
 
-			meterIssues.add(new MeterIssue(meter.meter, meter.fac, missing,
-					formatTsOrNull(meter.lastDataAt), major ? MAJOR : MINOR));
-
 			// MAJOR only, and only meters with valid hours to take the rate from
+			BigDecimal meterMissingKwh = null;
 			if (major && meter.validHoursTotal > 0) {
 				BigDecimal perHour = meter.validKwh.divide(
 						BigDecimal.valueOf(meter.validHoursTotal), 6, RoundingMode.HALF_UP);
-				BigDecimal kwh = perHour.multiply(BigDecimal.valueOf(missing));
-				estimatedMissingKwh = estimatedMissingKwh == null ? kwh : estimatedMissingKwh.add(kwh);
+				meterMissingKwh = perHour.multiply(BigDecimal.valueOf(missing));
+				estimatedMissingKwh = estimatedMissingKwh == null
+						? meterMissingKwh : estimatedMissingKwh.add(meterMissingKwh);
 			}
+
+			meterIssues.add(new MeterIssue(meter.meter, meter.fac, missing,
+					formatTsOrNull(meter.lastDataAt), major ? MAJOR : MINOR,
+					meterMissingKwh == null ? null : out(meterMissingKwh, THOUSAND),
+					meterMissingKwh == null || usdPerKwh == null
+							? null : out(meterMissingKwh.multiply(usdPerKwh), THOUSAND)));
 		}
 		meterIssues.sort(ISSUE_ORDER);
 		timer.add("meterIssues", System.nanoTime() - issuesStarted);
