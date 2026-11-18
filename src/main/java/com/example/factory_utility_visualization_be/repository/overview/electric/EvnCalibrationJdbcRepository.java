@@ -91,24 +91,47 @@ public class EvnCalibrationJdbcRepository {
 				""", params, (rs, i) -> evnDay(rs));
 	}
 
+	private static final String INSERT_EVN_DAY = """
+			INSERT INTO dbo.F2_Utility_Evn_Daily
+			    (day, scope, normal_kwh, high_kwh, low_kwh, total_kwh, solar_kwh,
+			     source_file, imported_at, imported_by)
+			VALUES (:day, :scope, :normal, :high, :low, :total, :solar,
+			        :sourceFile, :importedAt, :importedBy)
+			""";
+
+	private static final String UPDATE_EVN_DAY = """
+			UPDATE dbo.F2_Utility_Evn_Daily
+			SET normal_kwh = :normal, high_kwh = :high, low_kwh = :low, total_kwh = :total,
+			    solar_kwh = :solar, source_file = :sourceFile, imported_at = :importedAt,
+			    imported_by = :importedBy
+			WHERE day = :day AND scope = :scope
+			""";
+
+	// JDBC batch size (a whole workbook is ~4,500 rows)
+	private static final int BATCH = 500;
+
 	public void insertEvnDay(EvnDay row) {
-		jdbc.update("""
-				INSERT INTO dbo.F2_Utility_Evn_Daily
-				    (day, scope, normal_kwh, high_kwh, low_kwh, total_kwh, solar_kwh,
-				     source_file, imported_at, imported_by)
-				VALUES (:day, :scope, :normal, :high, :low, :total, :solar,
-				        :sourceFile, :importedAt, :importedBy)
-				""", evnParams(row));
+		jdbc.update(INSERT_EVN_DAY, evnParams(row));
 	}
 
 	public void updateEvnDay(EvnDay row) {
-		jdbc.update("""
-				UPDATE dbo.F2_Utility_Evn_Daily
-				SET normal_kwh = :normal, high_kwh = :high, low_kwh = :low, total_kwh = :total,
-				    solar_kwh = :solar, source_file = :sourceFile, imported_at = :importedAt,
-				    imported_by = :importedBy
-				WHERE day = :day AND scope = :scope
-				""", evnParams(row));
+		jdbc.update(UPDATE_EVN_DAY, evnParams(row));
+	}
+
+	public void insertEvnDays(List<EvnDay> rows) {
+		batch(INSERT_EVN_DAY, rows);
+	}
+
+	public void updateEvnDays(List<EvnDay> rows) {
+		batch(UPDATE_EVN_DAY, rows);
+	}
+
+	private void batch(String sql, List<EvnDay> rows) {
+		for (int i = 0; i < rows.size(); i += BATCH) {
+			jdbc.batchUpdate(sql, rows.subList(i, Math.min(i + BATCH, rows.size())).stream()
+					.map(EvnCalibrationJdbcRepository::evnParams)
+					.toArray(MapSqlParameterSource[]::new));
+		}
 	}
 
 	private static MapSqlParameterSource evnParams(EvnDay row) {

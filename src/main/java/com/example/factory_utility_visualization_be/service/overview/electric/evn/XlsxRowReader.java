@@ -1,6 +1,7 @@
 package com.example.factory_utility_visualization_be.service.overview.electric.evn;
 
 import org.apache.poi.openxml4j.opc.OPCPackage;
+import org.apache.poi.openxml4j.util.ZipSecureFile;
 import org.apache.poi.ss.usermodel.DateUtil;
 import org.apache.poi.ss.util.CellReference;
 import org.apache.poi.xssf.eventusermodel.ReadOnlySharedStringsTable;
@@ -52,6 +53,17 @@ public final class XlsxRowReader {
 
 		public Map<Integer, Cell> row(int row) {
 			return rows.getOrDefault(row, Map.of());
+		}
+	}
+
+	// F2 electric consumption.xlsx has ~1,800 zip entries (650 charts):
+	// over POI's default limit of 1,000 ("file appears to be potentially malicious").
+	// The zip-bomb guards (inflate ratio, entry size) stay at their defaults.
+	private static final long MAX_ZIP_ENTRIES = 20_000;
+
+	static {
+		if (ZipSecureFile.getMaxFileCount() < MAX_ZIP_ENTRIES) {
+			ZipSecureFile.setMaxFileCount(MAX_ZIP_ENTRIES);
 		}
 	}
 
