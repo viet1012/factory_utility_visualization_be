@@ -15,7 +15,9 @@ import java.sql.Timestamp;
 import java.sql.Types;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * F2_Utility_Evn_Daily (official EVN kWh from the F2 sheet) and
@@ -89,6 +91,22 @@ public class EvnCalibrationJdbcRepository {
 				  AND (:scope IS NULL OR scope = :scope)
 				ORDER BY day, scope
 				""", params, (rs, i) -> evnDay(rs));
+	}
+
+	/** Last day with total_kwh > 0 per scope (scopes without rows absent). */
+	public Map<String, LocalDate> lastEvnDays() {
+		Map<String, LocalDate> result = new HashMap<>();
+
+		jdbc.query("""
+				SELECT scope, MAX(day) AS last_day
+				FROM dbo.F2_Utility_Evn_Daily
+				WHERE total_kwh > 0
+				GROUP BY scope
+				""", new MapSqlParameterSource(), rs -> {
+			result.put(rs.getString("scope").trim(), rs.getDate("last_day").toLocalDate());
+		});
+
+		return result;
 	}
 
 	private static final String INSERT_EVN_DAY = """
