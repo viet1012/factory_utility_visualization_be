@@ -31,7 +31,7 @@ public class EvnCalibrationController {
 	@PostMapping(value = "/evn-daily/import", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
 	public ResponseEntity<EvnImportResultDto> importEvnDaily(
 			@RequestPart("file") MultipartFile file,
-			@RequestParam(required = false) String sheet,     // exact sheet name, default = every "FY..-<Mon> + Solar1"
+			@RequestParam(required = false) String sheet,     // exact sheet name, default = every monthly sheet (FY22-Sep .. FY26-Sep + Solar1)
 			@RequestParam(required = false) String month,     // bill month yyyy-MM overriding the sheet name (needs sheet)
 			@RequestParam(required = false) String importedBy,
 			@RequestParam(defaultValue = "false") boolean dryRun // true = validate + count only, nothing written
