@@ -1,5 +1,6 @@
 package com.example.factory_utility_visualization_be.service.overview.electric.evn;
 
+import com.example.factory_utility_visualization_be.config.ElectricConsumptionProperties;
 import com.example.factory_utility_visualization_be.dto.overview.electric.EvnImportResultDto;
 import com.example.factory_utility_visualization_be.repository.overview.electric.EvnCalibrationJdbcRepository;
 import com.example.factory_utility_visualization_be.service.overview.electric.ElectricConsumptionCacheEvictor;
@@ -9,6 +10,7 @@ import org.springframework.mock.web.MockMultipartFile;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.LocalDate;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -31,7 +33,11 @@ class EvnDailyImportServiceWorkbookTest {
 		EvnCalibrationJdbcRepository repo = mock(EvnCalibrationJdbcRepository.class);
 		when(repo.findEvnDays(any(), any(), any())).thenReturn(List.of());
 
-		EvnDailyImportService service = new EvnDailyImportService(repo, mock(ElectricConsumptionCacheEvictor.class));
+		ElectricConsumptionProperties properties = new ElectricConsumptionProperties();
+		properties.setHistoryStartDate(LocalDate.of(2026, 6, 21));
+
+		EvnDailyImportService service = new EvnDailyImportService(repo, mock(ElectricConsumptionCacheEvictor.class),
+				properties);
 		MockMultipartFile file = new MockMultipartFile("file", FILE.getFileName().toString(),
 				"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", Files.readAllBytes(FILE));
 
@@ -48,5 +54,13 @@ class EvnDailyImportServiceWorkbookTest {
 		assertThat(result.sheets()).hasSize(49);
 		assertThat(result.inserted()).isGreaterThan(4000);
 		verify(repo, never()).insertEvnDays(anyList());
+
+		// last EVN day with data = 2026-08-19 (Aug 20 and FY26-Sep still 0), measured history from 2026-06-21
+		System.out.println("  calibration " + result.calibration());
+		assertThat(result.calibration().available()).isTrue();
+		assertThat(result.calibration().lastEvnDay()).isEqualTo("2026-08-19");
+		assertThat(result.calibration().until()).isEqualTo("2026-08-20");
+		assertThat(result.calibration().from()).isEqualTo("2026-06-21");
+		assertThat(result.calibration().days()).isEqualTo(60);
 	}
 }

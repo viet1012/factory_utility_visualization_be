@@ -1,6 +1,8 @@
 package com.example.factory_utility_visualization_be.service.overview.electric.evn;
 
+import com.example.factory_utility_visualization_be.config.ElectricConsumptionProperties;
 import com.example.factory_utility_visualization_be.dto.overview.electric.EvnImportResultDto;
+import com.example.factory_utility_visualization_be.dto.overview.electric.EvnImportResultDto.CalibrationWindow;
 import com.example.factory_utility_visualization_be.dto.overview.electric.EvnImportResultDto.SheetInfo;
 import com.example.factory_utility_visualization_be.exception.EvnCalibrationBadRequestException;
 import com.example.factory_utility_visualization_be.repository.overview.electric.EvnCalibrationJdbcRepository;
@@ -65,8 +67,12 @@ public class EvnDailyImportService {
 
 	private static final List<String> SCOPES = List.of(EvnSheetParser.KVH, EvnSheetParser.FAC_AB, EvnSheetParser.FAC_C);
 
+	// LossCalibrationService accepts 1..366 days
+	private static final int MAX_CALIBRATION_DAYS = 366;
+
 	private final EvnCalibrationJdbcRepository repo;
 	private final ElectricConsumptionCacheEvictor cacheEvictor;
+	private final ElectricConsumptionProperties properties;
 
 	@Transactional
 	public EvnImportResultDto importFile(
@@ -190,7 +196,43 @@ public class EvnDailyImportService {
 				sourceFile, dryRun, infos.size(), counts[0], counts[1], counts[2], skipped, rejected.size(), errors.size());
 
 		return new EvnImportResultDto(sourceFile, dryRun, infos, counts[0], counts[1], counts[2], skipped,
-				rejected.size(), errors, warnings);
+				rejected.size(), errors, warnings, calibrationWindow(accepted));
+	}
+
+	/**
+	 * until = last day with EVN of both FAC_AB and FAC_C + 1 (not after today),
+	 * from = max(history-start-date, until - 366). Rows of this file count
+	 * too, so a dry run already shows the window of the real import.
+	 */
+	private CalibrationWindow calibrationWindow(List<ParsedRow> accepted) {
+		Map<String, LocalDate> last = new HashMap<>(repo.lastEvnDays());
+
+		for (ParsedRow row : accepted) {
+			last.merge(row.scope(), row.day(), (a, b) -> a.isAfter(b) ? a : b);
+		}
+
+		LocalDate ab = last.get(EvnSheetParser.FAC_AB);
+		LocalDate c = last.get(EvnSheetParser.FAC_C);
+
+		if (ab == null || c == null) {
+			return new CalibrationWindow(false, null, null, null, null);
+		}
+
+		LocalDate lastDay = ab.isBefore(c) ? ab : c;
+		LocalDate today = LocalDate.now(APP_ZONE);
+		LocalDate until = lastDay.plusDays(1).isAfter(today) ? today : lastDay.plusDays(1);
+		LocalDate from = until.minusDays(MAX_CALIBRATION_DAYS);
+		LocalDate historyStart = properties.getHistoryStartDate();
+
+		if (historyStart != null && historyStart.isAfter(from)) {
+			from = historyStart;
+		}
+
+		int days = (int) ChronoUnit.DAYS.between(from, until);
+
+		return days < 1
+				? new CalibrationWindow(false, lastDay.toString(), null, null, null)
+				: new CalibrationWindow(true, lastDay.toString(), until.toString(), days, from.toString());
 	}
 
 	// ---------------------------------------------------------------------

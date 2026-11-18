@@ -22,8 +22,28 @@ public record EvnImportResultDto(
 		// rows rejected by a check (see errors)
 		int rejected,
 		List<Error> errors,
-		List<String> warnings
+		List<String> warnings,
+		// parameters for POST /loss-calibration/recompute after this import
+		CalibrationWindow calibration
 ) {
+
+	/**
+	 * Window [until - days, until) for POST /loss-calibration/recompute
+	 * (scope=FAC_AB then scope=FAC_C): days with EVN rows (DB + this file
+	 * when dryRun) and measured data (history-start-date).
+	 */
+	public record CalibrationWindow(
+			// false = no EVN day inside the measured history: recompute would answer 400
+			boolean available,
+			// yyyy-MM-dd, last day with EVN total > 0 of BOTH FAC_AB and FAC_C, null = none
+			String lastEvnDay,
+			// yyyy-MM-dd exclusive = lastEvnDay + 1 (not after today), null when not available
+			String until,
+			// 1..366, null when not available
+			Integer days,
+			// yyyy-MM-dd first day of the window, null when not available
+			String from
+	) {}
 
 	public record SheetInfo(
 			String sheet,
