@@ -83,6 +83,7 @@ public class UtilityEnergyDailyService {
 		// solarKwh = Σ solar of the day (stacked on top)
 		// totalKwh = Σ load of the day (= grid + solar, except hours
 		//            where solar > load)
+		// officialTotalKwh = officialGridKwh (EVN / measured) + solarKwh
 		// =====================================================
 
 		final long started = System.nanoTime();
@@ -104,14 +105,18 @@ public class UtilityEnergyDailyService {
 				.forEach((day, t) -> {
 					if (t.hasData()) {
 						final OfficialDay o = official.get(day);
+						final BigDecimal solar = oneDecimal(t.solar());
+						final BigDecimal officialGrid = oneDecimal(o == null ? t.grid() : o.gridKwh());
 
 						electricity.add(
 								new DailyElectricityStackDto(
 										day,
 										oneDecimal(t.grid()),
-										oneDecimal(t.solar()),
+										solar,
 										oneDecimal(t.load()),
-										oneDecimal(o == null ? t.grid() : o.gridKwh()),
+										officialGrid,
+										// sum of the rounded parts, so Grid + Solar on the UI adds up exactly
+										officialGrid.add(solar),
 										o == null ? OfficialEnergyService.MEASURED : o.source()
 								)
 						);

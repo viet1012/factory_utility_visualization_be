@@ -18,6 +18,9 @@ public record DailyElectricityStackDto(
 		// (Fac_A / Fac_B: always measured); never calibrated
 		BigDecimal officialGridKwh,
 
+		// officialGridKwh + solarKwh (total of the official stack: Grid + Solar)
+		BigDecimal officialTotalKwh,
+
 		// EVN | MEASURED
 		String source
 
